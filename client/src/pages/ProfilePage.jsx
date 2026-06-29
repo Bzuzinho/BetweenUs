@@ -47,13 +47,16 @@ export default function ProfilePage() {
   const [modal, setModal] = useState(null)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
+  const [isAdmin, setIsAdmin] = useState(false)
 
   useEffect(() => {
     Promise.all([
       api.get('/profiles/me').then(r => setProfile(r.data)).catch(() => {}),
       api.get('/photos/me').then(r => setPhotos(r.data.photos || [])).catch(() => {}),
       api.get('/privacy').then(r => setPrivacy(r.data)).catch(() => {}),
-      api.get('/subscriptions/me').then(r => setSub(r.data)).catch(() => {})
+      api.get('/subscriptions/me').then(r => setSub(r.data)).catch(() => {}),
+      // Verificar se é admin tentando aceder às stats
+      api.get('/beta/stats').then(() => setIsAdmin(true)).catch(() => {})
     ]).finally(() => setLoading(false))
   }, [])
 
@@ -164,7 +167,7 @@ export default function ProfilePage() {
 
       {/* Quick links */}
       <div style={{ margin:'0 16px 16px', display:'flex', gap:10 }}>
-        <button onClick={() => navigate('/couple')}
+        <button onClick={() => navigate('/couple-link')}
           style={{ flex:1, background:colors.bgCard,
             border:`1px solid ${colors.plum}`, borderRadius:14,
             padding:'12px 16px', cursor:'pointer', textAlign:'left',
@@ -174,7 +177,7 @@ export default function ProfilePage() {
             Perfil de Casal
           </div>
           <div style={{ fontSize:10, color:colors.muted }}>
-            Double Consent Match
+            Vincular parceiro/a
           </div>
         </button>
         <button onClick={() => navigate('/photos')}
@@ -294,6 +297,28 @@ export default function ProfilePage() {
         </div>
       )}
 
+      {/* Admin / Convites */}
+      {isAdmin && (
+        <div style={{ margin:'0 16px 16px' }}>
+          <button onClick={() => navigate('/admin')}
+            style={{ width:'100%', background:`rgba(201,149,107,0.08)`,
+              border:`1px solid rgba(201,149,107,0.3)`, borderRadius:14,
+              padding:'14px 16px', cursor:'pointer', textAlign:'left',
+              display:'flex', alignItems:'center', gap:14 }}>
+            <div style={{ fontSize:22 }}>🎟️</div>
+            <div>
+              <div style={{ fontSize:13, fontWeight:600, color:colors.accent }}>
+                Convidar pessoas para o beta
+              </div>
+              <div style={{ fontSize:11, color:colors.muted, marginTop:2 }}>
+                Criar e gerir códigos de convite · Painel admin
+              </div>
+            </div>
+            <div style={{ marginLeft:'auto', color:colors.muted, fontSize:16 }}>›</div>
+          </button>
+        </div>
+      )}
+
       {/* Logout */}
       <div style={{ margin:'0 16px 16px' }}>
         <button onClick={handleLogout}
@@ -323,8 +348,8 @@ export default function ProfilePage() {
               WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>
               ✦ Between Premium
             </div>
-            {[{plan:'PREMIUM', name:'Premium', price:'€9,99/mês'},
-              {plan:'COUPLE_PREMIUM', name:'Casal Premium', price:'€14,99/mês'}
+            {[{plan:'PREMIUM', name:'Premium', price:'€4,99/mês'},
+              {plan:'COUPLE_PREMIUM', name:'Casal Premium', price:'€9,99/mês (2 perfis)'}
             ].map(p => (
               <button key={p.plan}
                 onClick={async () => {

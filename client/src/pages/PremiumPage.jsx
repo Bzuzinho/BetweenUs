@@ -12,34 +12,36 @@ const PLANS = [
   {
     id: 'PREMIUM',
     name: 'Between Premium',
-    price: '€9,99',
+    price: '€4,99',
     period: '/mês',
     icon: '✦',
     color: colors.accent,
+    badge: null,
     features: [
       '👁 Modo Invisível — navega sem seres visto',
       '✈️ Travel Mode — explora antes de chegar',
-      '❤️ Ver quem deu like',
+      '❤️ Ver quem deu like em ti',
       '🔒 Bloqueio de contactos',
       '📷 Soft Reveal avançado',
       '🔍 Filtros premium',
-      '⚡ Prioridade no discovery',
+      '✅ Verificação de perfil',
     ]
   },
   {
     id: 'COUPLE_PREMIUM',
     name: 'Between Casal',
-    price: '€14,99',
+    price: '€9,99',
     period: '/mês',
     icon: '💑',
     color: colors.lavLight,
+    badge: 'Dois perfis, um preço',
     features: [
-      'Tudo do Premium',
+      '✨ Tudo do Premium para os dois',
       '🤝 Double Consent Match completo',
       '📋 Modo Acordo avançado',
-      '🏠 Sala Privada a três',
-      '💑 Perfil de casal premium',
-      '🔔 Notificações de casal',
+      '🏠 Sala Privada partilhada',
+      '💑 Vincular dois perfis como casal',
+      '💳 Um pagamento cobre ambos os parceiros',
     ]
   }
 ]
@@ -155,6 +157,16 @@ export default function PremiumPage() {
           <div key={plan.id} style={{ background:colors.bgCard,
             border:`1px solid ${colors.plum}`, borderRadius:24,
             padding:24, marginBottom:16 }}>
+
+            {/* Badge */}
+            {plan.badge && (
+              <div style={{ display:'inline-block', background:`rgba(184,169,212,0.15)`,
+                border:`1px solid rgba(184,169,212,0.3)`, borderRadius:50,
+                padding:'4px 12px', fontSize:11, color:colors.lavLight,
+                marginBottom:12, fontWeight:600 }}>
+                {plan.badge}
+              </div>
+            )}
 
             {/* Plan header */}
             <div style={{ display:'flex', alignItems:'flex-start',

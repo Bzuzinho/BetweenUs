@@ -36,6 +36,8 @@ router.post('/stripe', async (req: Request, res: Response) => {
         const { userId, plan } = session.metadata || {}
         if (!userId || !plan) break
 
+        const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+
         await prisma.subscription.upsert({
           where: { userId },
           update: {
@@ -44,17 +46,52 @@ router.post('/stripe', async (req: Request, res: Response) => {
             providerCustomerId: session.customer,
             providerSubscriptionId: session.subscription,
             currentPeriodStart: new Date(),
-            currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+            currentPeriodEnd: periodEnd
           },
           create: {
             userId, plan, status: 'ACTIVE',
             providerCustomerId: session.customer,
             providerSubscriptionId: session.subscription,
             currentPeriodStart: new Date(),
-            currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+            currentPeriodEnd: periodEnd
           }
         })
         console.log('[WEBHOOK] Subscription activated for user:', userId, plan)
+
+        // COUPLE_PREMIUM: ativar subscrição do parceiro gratuitamente
+        if (plan === 'COUPLE_PREMIUM') {
+          const couple = await prisma.coupleProfile.findFirst({
+            where: {
+              OR: [{ partnerOneUserId: userId }, { partnerTwoUserId: userId }],
+              coupleStatus: 'ACTIVE'
+            }
+          })
+          if (couple) {
+            const partnerUserId = couple.partnerOneUserId === userId
+              ? couple.partnerTwoUserId
+              : couple.partnerOneUserId
+
+            if (partnerUserId) {
+              await prisma.subscription.upsert({
+                where: { userId: partnerUserId },
+                update: {
+                  plan: 'COUPLE_PREMIUM',
+                  status: 'ACTIVE',
+                  currentPeriodStart: new Date(),
+                  currentPeriodEnd: periodEnd
+                },
+                create: {
+                  userId: partnerUserId,
+                  plan: 'COUPLE_PREMIUM',
+                  status: 'ACTIVE',
+                  currentPeriodStart: new Date(),
+                  currentPeriodEnd: periodEnd
+                }
+              })
+              console.log('[WEBHOOK] COUPLE_PREMIUM propagated to partner:', partnerUserId)
+            }
+          }
+        }
         break
       }
 

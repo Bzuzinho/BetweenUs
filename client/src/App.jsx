@@ -4,6 +4,7 @@ import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import CreateProfilePage from './pages/CreateProfilePage'
 import CouplePage, { CoupleInvitePage } from './pages/CouplePage'
+import CoupleLinkPage, { CoupleJoinPage } from './pages/CoupleLinkPage'
 import PhotosPage from './pages/PhotosPage'
 import ContactsBlockPage from './pages/ContactsBlockPage'
 import VerificationPage from './pages/VerificationPage'
@@ -57,10 +58,12 @@ export default function App() {
         <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
         <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
         <Route path="/couple-invite/:token" element={<CoupleInvitePage />} />
+        <Route path="/couple-join/:token" element={<CoupleJoinPage />} />
         <Route path="/create-profile" element={
           <PrivateRoute requireProfile={false}><CreateProfilePage /></PrivateRoute>
         } />
         <Route path="/couple" element={<PrivateRoute><CouplePage /></PrivateRoute>} />
+        <Route path="/couple-link" element={<PrivateRoute><CoupleLinkPage /></PrivateRoute>} />
         <Route path="/photos" element={<PrivateRoute><PhotosPage /></PrivateRoute>} />
         <Route path="/contacts/block" element={
           <PrivateRoute><ContactsBlockPage /></PrivateRoute>

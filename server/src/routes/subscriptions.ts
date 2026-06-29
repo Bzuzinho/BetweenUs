@@ -20,27 +20,32 @@ const STRIPE_PRICES: Record<string, string> = {
 const PLANS = {
   premium: {
     name: 'Between Premium',
-    price: 9.99,
+    price: 4.99,
     currency: 'EUR',
+    for: 'individual',
     features: [
       'Modo Invisível',
       'Travel Mode',
-      'Ver quem gostou',
+      'Ver quem gostou de ti',
       'Bloqueio de contactos',
       'Soft Reveal avançado',
-      'Filtros premium'
+      'Filtros premium',
+      'Verificação de perfil'
     ]
   },
   couple_premium: {
     name: 'Between Casal',
-    price: 14.99,
+    price: 9.99,
     currency: 'EUR',
+    for: 'couple',
+    coversTwo: true,
     features: [
-      'Tudo do Premium',
-      'Perfil de casal avançado',
+      'Tudo do Premium para os dois',
+      'Vincular dois perfis como casal',
       'Double Consent Match',
       'Modo Acordo completo',
-      'Sala Privada a três'
+      'Sala Privada partilhada',
+      'Um pagamento cobre ambos os parceiros'
     ]
   }
 }
@@ -198,19 +203,35 @@ router.post('/upgrade', requireAuth, async (req: AuthRequest, res: Response) => 
     if (!['PREMIUM', 'COUPLE_PREMIUM'].includes(plan)) {
       return res.status(400).json({ error: 'Plano inválido.' })
     }
+    const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     const sub = await prisma.subscription.upsert({
       where: { userId: req.userId! },
-      update: {
-        plan, status: 'ACTIVE',
-        currentPeriodStart: new Date(),
-        currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-      },
-      create: {
-        userId: req.userId!, plan, status: 'ACTIVE',
-        currentPeriodStart: new Date(),
-        currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-      }
+      update: { plan, status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd },
+      create: { userId: req.userId!, plan, status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd }
     })
+
+    // COUPLE_PREMIUM: propagar ao parceiro vinculado
+    if (plan === 'COUPLE_PREMIUM') {
+      const couple = await prisma.coupleProfile.findFirst({
+        where: {
+          OR: [{ partnerOneUserId: req.userId! }, { partnerTwoUserId: req.userId! }],
+          coupleStatus: 'ACTIVE'
+        }
+      })
+      if (couple) {
+        const partnerUserId = couple.partnerOneUserId === req.userId
+          ? couple.partnerTwoUserId
+          : couple.partnerOneUserId
+        if (partnerUserId) {
+          await prisma.subscription.upsert({
+            where: { userId: partnerUserId },
+            update: { plan: 'COUPLE_PREMIUM', status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd },
+            create: { userId: partnerUserId, plan: 'COUPLE_PREMIUM', status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd }
+          })
+        }
+      }
+    }
+
     res.json({ ok: true, subscription: sub })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro ao ativar plano.' })
