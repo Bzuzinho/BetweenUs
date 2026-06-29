@@ -1,58 +1,125 @@
 import { Router, Response } from 'express'
-import { createHash } from 'crypto'
+import { createHmac } from 'crypto'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
 
-const hashContact = (value: string) =>
-  createHash('sha256').update(value.toLowerCase().trim()).digest('hex')
+const hashContact = (value: string) => {
+  const secret = process.env.CONTACT_HASH_SECRET || 'between-us-contact-secret-2026'
+  return createHmac('sha256', secret).update(value.toLowerCase().trim()).digest('hex')
+}
 
+// C.3 — Calcular badges de verificação
+const getVerificationBadges = (profile: any, user: any, verification: any): string[] => {
+  const badges: string[] = []
+  if (user?.emailVerifiedAt) badges.push('email_verified')
+  if (user?.dateOfBirth) badges.push('age_declared')
+  if (verification?.status === 'APPROVED') badges.push('selfie_verified')
+  if (profile.type === 'COUPLE' && profile.coupleProfile?.coupleStatus === 'ACTIVE') badges.push('couple_confirmed')
+  if (profile.photos?.some((p: any) => p.moderationStatus === 'APPROVED')) badges.push('photos_reviewed')
+  if (user?.subscription?.plan !== 'FREE') badges.push('premium_active')
+  return badges
+}
+
+// C.4 — Between Score com explicação
+const calculateScore = (myProfile: any, profile: any, myIntentionIds: string[]) => {
+  let score = 50
+  const factors: string[] = []
+  const warnings: string[] = []
+
+  const theirIntentionIds = profile.intentions.map((i: any) => i.intentionId)
+  const overlap = myIntentionIds.filter((id: string) => theirIntentionIds.includes(id))
+
+  if (overlap.length >= 3) { score += 25; factors.push('Intenções muito compatíveis') }
+  else if (overlap.length >= 1) { score += 15; factors.push('Algumas intenções em comum') }
+  else { score -= 10; warnings.push('Intenções diferentes') }
+
+  if (myProfile.city && profile.city &&
+    myProfile.city.toLowerCase() === profile.city.toLowerCase()) {
+    score += 12; factors.push('Mesma cidade')
+  }
+
+  if (profile.photos?.length >= 3) { score += 8; factors.push('Perfil com fotos') }
+  else if (profile.photos?.length >= 1) { score += 4 }
+
+  if (profile.bio && profile.bio.length > 50) { score += 5; factors.push('Bio detalhada') }
+
+  if (profile.verificationBadges?.includes('selfie_verified')) {
+    score += 8; factors.push('Perfil verificado')
+  }
+  if (profile.verificationBadges?.includes('couple_confirmed')) {
+    score += 5; factors.push('Casal confirmado')
+  }
+
+  // Penalize incompatible boundaries
+  const myBoundaryNos = myProfile.boundaries
+    ?.filter((b: any) => b.preference === 'NO')
+    .map((b: any) => b.boundaryId) || []
+  const theirBoundaryYes = profile.boundaries
+    ?.filter((b: any) => b.preference === 'YES')
+    .map((b: any) => b.boundaryId) || []
+  const conflicts = myBoundaryNos.filter((id: string) => theirBoundaryYes.includes(id))
+  if (conflicts.length > 0) {
+    score -= conflicts.length * 10
+    warnings.push(`${conflicts.length} limite(s) incompatível(is)`)
+  }
+
+  score = Math.max(10, Math.min(99, score))
+
+  // C.4 — human-readable explanation
+  let explanation = ''
+  if (score >= 80) explanation = `Compatibilidade alta: ${factors.slice(0,2).join(', ')}.`
+  else if (score >= 60) explanation = `Compatibilidade média: ${factors[0] || 'alguns pontos em comum'}.`
+  else explanation = `Compatibilidade baixa: ${warnings[0] || 'poucos pontos em comum'}.`
+
+  if (warnings.length > 0 && score < 80) {
+    explanation += ` Nota: ${warnings[0]}.`
+  }
+
+  return { score, factors, warnings, explanation }
+}
+
+// GET /api/discovery
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const myProfile = await prisma.profile.findUnique({
       where: { userId: req.userId! },
-      include: { intentions: true, privacySettings: true }
+      include: {
+        intentions: true, boundaries: true, privacySettings: true
+      }
     })
     if (!myProfile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
 
     const { limit = 20, offset = 0, type, city } = req.query
 
-    // Profiles already seen
     const seen = await prisma.profileAction.findMany({
       where: { actorProfileId: myProfile.id },
       select: { targetProfileId: true }
     })
     const seenIds = seen.map(s => s.targetProfileId)
 
-    // Blocked contacts (hashed)
     const myBlockedHashes = await prisma.blockedContactHash.findMany({
-      where: { userId: req.userId! },
-      select: { contactHash: true }
+      where: { userId: req.userId! }, select: { contactHash: true }
     })
-    const myHashes = new Set(myBlockedHashes.map(b => b.contactHash))
 
     const myUser = await prisma.user.findUnique({
       where: { id: req.userId! }, select: { email: true }
     })
     const myEmailHash = hashContact(myUser?.email || '')
 
-    // Users who blocked me
     const usersWhoBlockedMe = await prisma.blockedContactHash.findMany({
-      where: { contactHash: myEmailHash },
-      select: { userId: true }
+      where: { contactHash: myEmailHash }, select: { userId: true }
     })
     const blockedByUserIds = usersWhoBlockedMe.map(u => u.userId)
 
     const whereClause: any = {
       id: { notIn: [myProfile.id, ...seenIds] },
-      // A.1: exclude admins from discovery
       user: {
         adminRole: null,
         id: { notIn: [req.userId!, ...blockedByUserIds] },
         status: 'ACTIVE'
       },
-      // A.1: only approved profiles appear
       status: 'APPROVED',
       visibilityMode: { not: 'INVISIBLE' },
     }
@@ -62,34 +129,46 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     const profiles = await prisma.profile.findMany({
       where: whereClause,
       include: {
-        // A.2: only APPROVED photos appear in discovery
         photos: {
           where: { moderationStatus: 'APPROVED' },
           orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
           take: 3
         },
         intentions: { include: { intention: true } },
+        boundaries: true,
         privacySettings: true,
+        coupleProfile: true,
+        user: {
+          select: {
+            emailVerifiedAt: true, dateOfBirth: true,
+            subscription: { select: { plan: true } },
+            verification: { select: { status: true } }
+          }
+        }
       },
-      take: Number(limit),
-      skip: Number(offset),
+      take: Number(limit), skip: Number(offset),
       orderBy: { createdAt: 'desc' }
     })
 
     const myIntentionIds = myProfile.intentions.map((i: any) => i.intentionId)
 
     const scored = profiles.map(profile => {
-      let score = 50
-      const theirIntentionIds = profile.intentions.map((i: any) => i.intentionId)
-      const overlap = myIntentionIds.filter((id: string) => theirIntentionIds.includes(id))
-      if (overlap.length > 0) score += 20
-      if (myProfile.city && profile.city &&
-        myProfile.city.toLowerCase() === profile.city.toLowerCase()) score += 15
-      if (profile.photos.length > 0) score += 10
-      if (profile.bio) score += 5
-      score = Math.min(score, 99)
-      const { userId, locationLat, locationLng, ...safe } = profile as any
-      return { ...safe, betweenScore: score }
+      // C.3 — compute verification badges
+      const verificationBadges = getVerificationBadges(profile, profile.user, profile.user?.verification)
+      const profileWithBadges = { ...profile, verificationBadges }
+
+      // C.4 — compute score with explanation
+      const { score, factors, warnings, explanation } = calculateScore(myProfile, profileWithBadges, myIntentionIds)
+
+      const { userId, locationLat, locationLng, user, ...safe } = profile as any
+      return {
+        ...safe,
+        betweenScore: score,
+        verificationBadges,
+        scoreExplanation: explanation,  // C.4
+        scoreFactors: factors,
+        scoreWarnings: warnings
+      }
     })
 
     scored.sort((a, b) => b.betweenScore - a.betweenScore)
@@ -100,6 +179,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 })
 
+// POST /api/discovery/:id/like
 router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const myProfile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
@@ -114,7 +194,6 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
     const theirLike = await prisma.profileAction.findFirst({
       where: { actorProfileId: req.params.id, targetProfileId: myProfile.id, action: 'LIKE' }
     })
-
     if (theirLike) {
       const existing = await prisma.match.findFirst({
         where: { OR: [
@@ -135,10 +214,11 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
     }
     res.json({ match: false })
   } catch (err: any) {
-    res.status(500).json({ error: 'Erro ao registar like.' })
+    res.status(500).json({ error: 'Erro interno.' })
   }
 })
 
+// POST /api/discovery/:id/pass
 router.post('/:id/pass', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const myProfile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
