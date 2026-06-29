@@ -5,54 +5,77 @@ const prisma = new PrismaClient()
 async function main() {
   console.log('🌱 Seeding Between Us database...')
 
-  // Intentions
+  // ─── Intentions (B.2) ─────────────────────────────────────────────────────
   const intentions = [
+    { name: 'Conversar primeiro', slug: 'chat_first' },
     { name: 'Encontro casual', slug: 'casual_encounter' },
     { name: 'Ligação recorrente', slug: 'recurring_connection' },
     { name: 'Envolvimento emocional', slug: 'emotional_connection' },
     { name: 'Experiência a três', slug: 'trio_experience' },
+    { name: 'Casal procura terceira pessoa', slug: 'couple_seeks_third' },
+    { name: 'Casal procura casal', slug: 'couple_seeks_couple' },
+    { name: 'Solteiro/a procura casal', slug: 'single_seeks_couple' },
     { name: 'Swing', slug: 'swing' },
-    { name: 'Explorar fetiches', slug: 'fetish_exploration' },
-    { name: 'Apenas online', slug: 'online_only' },
+    { name: 'Relação paralela contínua', slug: 'parallel_relationship' },
     { name: 'Amizade colorida', slug: 'friends_with_benefits' },
+    { name: 'Explorar fetiches', slug: 'fetish_exploration' },
     { name: 'Poliamor', slug: 'polyamory' },
-    { name: 'Procurar casal', slug: 'seek_couple' },
-    { name: 'Procurar terceira pessoa', slug: 'seek_third' },
+    { name: 'Apenas online', slug: 'online_only' },
+    { name: 'Videochamada antes de encontro', slug: 'video_first' },
+    { name: 'Ainda a descobrir', slug: 'exploring' },
   ]
 
   for (const intention of intentions) {
     await prisma.intention.upsert({
       where: { slug: intention.slug },
-      update: {},
+      update: { name: intention.name },
       create: intention
     })
   }
+  console.log('✅ Intentions seeded:', intentions.length)
 
-  // Boundaries
+  // ─── Boundaries (B.3) — 16+ categorias ───────────────────────────────────
   const boundaries = [
-    { name: 'Encontro casual', category: 'meeting_type' },
-    { name: 'Ligação emocional', category: 'emotional' },
-    { name: 'Experiência a três', category: 'dynamics' },
-    { name: 'Swing', category: 'dynamics' },
-    { name: 'Apenas online', category: 'meeting_type' },
-    { name: 'Partilha de fotos', category: 'privacy' },
+    // Fotos e visual
+    { name: 'Fotos privadas', category: 'privacy' },
+    { name: 'Fotos de rosto', category: 'privacy' },
+    { name: 'Fotos íntimas', category: 'privacy' },
+    // Comunicação
     { name: 'Videochamada', category: 'contact_type' },
+    { name: 'Troca de contactos externos', category: 'contact_type' },
+    { name: 'Sem troca de números no início', category: 'contact_type' },
+    { name: 'Sem redes sociais', category: 'contact_type' },
+    // Encontros
     { name: 'Encontro presencial', category: 'meeting_type' },
-    { name: 'Contacto recorrente', category: 'frequency' },
-    { name: 'Explorar fetiches', category: 'dynamics' },
+    { name: 'Encontro só com ambos os membros do casal', category: 'meeting_type' },
+    { name: 'Encontro individual com um dos membros', category: 'meeting_type' },
+    { name: 'Dormir fora', category: 'meeting_type' },
+    // Relação
+    { name: 'Envolvimento emocional', category: 'emotional' },
     { name: 'Sem envolvimento emocional', category: 'emotional' },
-    { name: 'Aberto a relação paralela', category: 'relationship_type' },
+    { name: 'Contacto recorrente', category: 'frequency' },
+    // Privacidade e segurança
+    { name: 'Discrição total', category: 'privacy' },
+    { name: 'Sem pessoas conhecidas', category: 'privacy' },
+    { name: 'Apenas perfis verificados', category: 'safety' },
+    // Dinâmicas
+    { name: 'Exploração de fetiches', category: 'dynamics' },
+    { name: 'BDSM', category: 'dynamics' },
+    { name: 'Swing', category: 'dynamics' },
+    { name: 'Poliamor', category: 'dynamics' },
   ]
 
+  let boundaryCount = 0
   for (const boundary of boundaries) {
-    await prisma.boundary.upsert({
-      where: { id: boundary.name },
-      update: {},
-      create: boundary
-    }).catch(() => prisma.boundary.create({ data: boundary }))
+    try {
+      await prisma.boundary.create({ data: boundary })
+      boundaryCount++
+    } catch {
+      // Already exists, skip
+    }
   }
-
-  console.log('✅ Seed complete')
+  console.log('✅ Boundaries seeded:', boundaryCount)
+  console.log('🌱 Seed complete')
 }
 
 main()
