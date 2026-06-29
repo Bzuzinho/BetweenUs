@@ -17,15 +17,17 @@ const profileSchema = z.object({
   city: z.string().optional(),
   country: z.string().optional(),
   discretionLevel: z.enum(['MAXIMUM','SELECTIVE','OPEN']).optional(),
-  intentions: z.array(z.string()).optional(),
+  intentions: z.array(z.object({
+    slug: z.string(),
+    preference: z.enum(['YES','MAYBE','NO']).optional()
+  })).optional()
 })
 
-// GET /api/profiles/me — get own profile
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const profile = await prisma.profile.findUnique({
     where: { userId: req.userId! },
     include: {
-      photos: { where: { moderationStatus: 'APPROVED' }, orderBy: { sortOrder: 'asc' } },
+      photos: { where: { moderationStatus: 'APPROVED' }, orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }] },
       intentions: { include: { intention: true } },
       boundaries: { include: { boundary: true } },
       privacySettings: true,
@@ -36,11 +38,9 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json(profile)
 })
 
-// POST /api/profiles — create profile
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const data = profileSchema.parse(req.body)
-
     const existing = await prisma.profile.findUnique({ where: { userId: req.userId! } })
     if (existing) return res.status(409).json({ error: 'Já tens um perfil criado.' })
 
@@ -52,40 +52,38 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
         gender: data.gender,
         orientation: data.orientation,
         relationshipStatus: data.relationshipStatus || 'SINGLE',
-        city: data.city,
-        country: data.country,
+        city: data.city, country: data.country,
         discretionLevel: data.discretionLevel || 'SELECTIVE',
-        privacySettings: {
-          create: {
-            visibleInDiscovery: true,
-            showDistance: true,
-            showOnlineStatus: false,
-            invisibleMode: false,
-            notificationMode: 'DISCREET'
-          }
-        }
+        // B.1: new profiles start as PENDING_REVIEW in production
+        status: process.env.NODE_ENV === 'production' ? 'PENDING_REVIEW' : 'APPROVED',
+        privacySettings: { create: {
+          visibleInDiscovery: true, showDistance: true,
+          showOnlineStatus: false, invisibleMode: false, notificationMode: 'DISCREET'
+        }}
       }
     })
 
-    // Add intentions if provided
+    // B.2: intentions with preference (YES/MAYBE/NO)
     if (data.intentions?.length) {
       const intentionRecords = await prisma.intention.findMany({
-        where: { slug: { in: data.intentions } }
+        where: { slug: { in: data.intentions.map(i => i.slug) } }
       })
       await prisma.profileIntention.createMany({
-        data: intentionRecords.map(i => ({ profileId: profile.id, intentionId: i.id }))
+        data: intentionRecords.map(ir => {
+          const match = data.intentions!.find(i => i.slug === ir.slug)
+          return { profileId: profile.id, intentionId: ir.id, preference: match?.preference || 'YES' }
+        })
       })
     }
 
     res.status(201).json(profile)
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
-    console.error('[CREATE PROFILE]', err)
+    console.error('[CREATE PROFILE]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
   }
 })
 
-// PUT /api/profiles/:id — update profile
 router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profile = await prisma.profile.findUnique({ where: { id: req.params.id } })
@@ -107,83 +105,65 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
       }
     })
 
-    // Update intentions
     if (data.intentions) {
       await prisma.profileIntention.deleteMany({ where: { profileId: updated.id } })
       const intentionRecords = await prisma.intention.findMany({
-        where: { slug: { in: data.intentions } }
+        where: { slug: { in: data.intentions.map(i => i.slug) } }
       })
       await prisma.profileIntention.createMany({
-        data: intentionRecords.map(i => ({ profileId: updated.id, intentionId: i.id }))
+        data: intentionRecords.map(ir => {
+          const match = data.intentions!.find(i => i.slug === ir.slug)
+          return { profileId: updated.id, intentionId: ir.id, preference: match?.preference || 'YES' }
+        })
       })
     }
 
     res.json(updated)
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
-    console.error('[UPDATE PROFILE]', err)
     res.status(500).json({ error: 'Erro interno.' })
   }
 })
 
-// GET /api/profiles/:id — view a profile (public)
 router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const profile = await prisma.profile.findUnique({
     where: { id: req.params.id },
     include: {
-      photos: {
-        where: { moderationStatus: 'APPROVED', visibilityLevel: 'PUBLIC' },
-        orderBy: { sortOrder: 'asc' }
-      },
+      photos: { where: { moderationStatus: 'APPROVED', visibilityLevel: 'PUBLIC' }, orderBy: [{ isPrimary: 'desc' }] },
       intentions: { include: { intention: true } },
       privacySettings: true,
     }
   })
   if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-  if (profile.visibilityMode === 'INVISIBLE') {
-    return res.status(404).json({ error: 'Perfil não encontrado.' })
-  }
+  if (profile.visibilityMode === 'INVISIBLE') return res.status(404).json({ error: 'Perfil não encontrado.' })
+  if (profile.status !== 'APPROVED') return res.status(404).json({ error: 'Perfil não disponível.' })
 
-  // Mask sensitive data for public view
   const { userId, locationLat, locationLng, ...publicProfile } = profile as any
   res.json(publicProfile)
 })
 
-// PUT /api/profiles/:id/boundaries — update limits map
 router.put('/:id/boundaries', requireAuth, async (req: AuthRequest, res: Response) => {
   const profile = await prisma.profile.findUnique({ where: { id: req.params.id } })
-  if (!profile || profile.userId !== req.userId) {
-    return res.status(403).json({ error: 'Sem permissão.' })
-  }
+  if (!profile || profile.userId !== req.userId) return res.status(403).json({ error: 'Sem permissão.' })
   const { boundaries } = req.body
   if (!Array.isArray(boundaries)) return res.status(400).json({ error: 'Formato inválido.' })
-
   await prisma.profileBoundary.deleteMany({ where: { profileId: profile.id } })
   await prisma.profileBoundary.createMany({
     data: boundaries.map((b: any) => ({
-      profileId: profile.id,
-      boundaryId: b.boundaryId,
-      preference: b.preference
+      profileId: profile.id, boundaryId: b.boundaryId, preference: b.preference
     }))
   })
   res.json({ message: 'Limites atualizados.' })
 })
 
-// PUT /api/profiles/:id/privacy — update privacy settings
 router.put('/:id/privacy', requireAuth, async (req: AuthRequest, res: Response) => {
   const profile = await prisma.profile.findUnique({ where: { id: req.params.id } })
-  if (!profile || profile.userId !== req.userId) {
-    return res.status(403).json({ error: 'Sem permissão.' })
-  }
-
-  const subscription = await prisma.subscription.findUnique({ where: { userId: req.userId! } })
-  const isPremium = subscription && subscription.plan !== 'FREE'
-
-  // Invisible mode is premium only
+  if (!profile || profile.userId !== req.userId) return res.status(403).json({ error: 'Sem permissão.' })
+  const sub = await prisma.subscription.findUnique({ where: { userId: req.userId! } })
+  const isPremium = sub && sub.plan !== 'FREE'
   if (req.body.invisibleMode && !isPremium) {
-    return res.status(403).json({ error: 'Modo invisível requer subscrição Premium.', code: 'PREMIUM_REQUIRED' })
+    return res.status(403).json({ error: 'Modo invisível requer Premium.', code: 'PREMIUM_REQUIRED' })
   }
-
   const settings = await prisma.privacySettings.upsert({
     where: { profileId: profile.id },
     update: req.body,
