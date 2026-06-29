@@ -1,4 +1,5 @@
-// Between Us — Prisma Schema v4 (Travel Mode + Beta Invites)
+// Between Us — Prisma Schema v4
+// Roles reais + AdminAction completo + ConsentCheck + novas features
 
 generator client {
   provider = "prisma-client-js"
@@ -9,6 +10,8 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
 enum UserStatus {
   ACTIVE
   PENDING_VERIFICATION
@@ -17,9 +20,27 @@ enum UserStatus {
   DELETED
 }
 
+enum AdminRole {
+  SUPER_ADMIN
+  ADMIN
+  MODERATOR
+  SUPPORT
+  FINANCE
+  CONTENT_REVIEWER
+}
+
 enum ProfileType {
   INDIVIDUAL
   COUPLE
+}
+
+enum ProfileStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  HIDDEN
+  SUSPENDED
 }
 
 enum RelationshipStatus {
@@ -56,6 +77,7 @@ enum ModerationStatus {
   PENDING
   APPROVED
   REJECTED
+  REMOVED
 }
 
 enum BoundaryPreference {
@@ -74,6 +96,7 @@ enum ActionType {
 
 enum MatchStatus {
   PENDING
+  PENDING_COUPLE_APPROVAL
   ACTIVE
   PAUSED
   ENDED
@@ -158,6 +181,26 @@ enum NotificationMode {
   SILENT
 }
 
+enum ConsentCheckStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  REVOKED
+}
+
+enum ConsentCheckPhase {
+  MATCH
+  CHAT
+  PHOTO_REQUEST
+  FACE_REVEAL
+  VIDEO_CALL
+  MEETING_PROPOSAL
+  SAFETY_CHECKIN
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
 model User {
   id                String     @id @default(uuid())
   email             String     @unique
@@ -168,30 +211,36 @@ model User {
   termsAcceptedAt   DateTime?
   privacyAcceptedAt DateTime?
   status            UserStatus @default(PENDING_VERIFICATION)
+  adminRole         AdminRole?
   lastSeenAt        DateTime?
+  riskScore         Int        @default(0)
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
-  profile            Profile?
-  consents           UserConsent[]
-  subscription       Subscription?
-  verification       Verification?
-  blockedContacts    BlockedContactHash[]
-  reportsMade        Report[]              @relation("ReporterUser")
-  reportsReceived    Report[]              @relation("ReportedUser")
-  messages           Message[]
-  coupleApprovals    CoupleMatchApproval[]
-  privateRoomMembers PrivateRoomMember[]
-  adminActions       AdminAction[]
+  profile              Profile?
+  consents             UserConsent[]
+  subscription         Subscription?
+  verification         Verification?
+  blockedContacts      BlockedContactHash[]
+  reportsMade          Report[]              @relation("ReporterUser")
+  reportsReceived      Report[]              @relation("ReportedUser")
+  messages             Message[]
+  coupleApprovals      CoupleMatchApproval[]
+  privateRoomMembers   PrivateRoomMember[]
+  adminActionsPerformed AdminAction[]        @relation("AdminPerformer")
+  adminActionsReceived  AdminAction[]        @relation("AdminTarget")
+  betaInvites          BetaInvite[]         @relation("InviteCreator")
+  betaInviteUsed       BetaInvite?          @relation("InviteUser")
 
   @@map("users")
 }
 
 model Profile {
-  id                 String            @id @default(uuid())
-  userId             String            @unique
-  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type               ProfileType       @default(INDIVIDUAL)
+  id                 String        @id @default(uuid())
+  userId             String        @unique
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type               ProfileType   @default(INDIVIDUAL)
+  status             ProfileStatus @default(PENDING_REVIEW)
   displayName        String
   bio                String?
   gender             String?
@@ -203,27 +252,28 @@ model Profile {
   country            String?
   visibilityMode     ProfileVisibility @default(PUBLIC)
   discretionLevel    DiscretionLevel   @default(SELECTIVE)
-  status             String            @default("active")
   betweenScore       Int?
-  createdAt          DateTime          @default(now())
-  updatedAt          DateTime          @updatedAt
+  rejectionReason    String?
+  moderationNotes    String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
-  coupleProfile      CoupleProfile?
-  photos             ProfilePhoto[]
-  intentions         ProfileIntention[]
-  boundaries         ProfileBoundary[]
-  privacySettings    PrivacySettings?
-  actionsGiven       ProfileAction[]   @relation("ActionActor")
-  actionsReceived    ProfileAction[]   @relation("ActionTarget")
-  matchesAsOne       Match[]           @relation("MatchProfileOne")
-  matchesAsTwo       Match[]           @relation("MatchProfileTwo")
-  travelModes        TravelMode[]
+  coupleProfile    CoupleProfile?
+  photos           ProfilePhoto[]
+  intentions       ProfileIntention[]
+  boundaries       ProfileBoundary[]
+  privacySettings  PrivacySettings?
+  actionsGiven     ProfileAction[]   @relation("ActionActor")
+  actionsReceived  ProfileAction[]   @relation("ActionTarget")
+  matchesAsOne     Match[]           @relation("MatchProfileOne")
+  matchesAsTwo     Match[]           @relation("MatchProfileTwo")
+  travelModes      TravelMode[]
+  safetyCheckins   SafetyCheckin[]
+  consentChecks    ConsentCheck[]
 
   @@map("profiles")
 }
 
-// CoupleProfile: stores partner IDs as plain strings — no Prisma relation for partnerTwo
-// This avoids the ambiguous relation error on Profile self-reference
 model CoupleProfile {
   id                    String       @id @default(uuid())
   profileId             String       @unique
@@ -249,8 +299,10 @@ model ProfilePhoto {
   blurredPath      String?
   visibilityLevel  PhotoVisibility  @default(BLURRED)
   moderationStatus ModerationStatus @default(PENDING)
+  moderationNotes  String?
   isPrimary        Boolean          @default(false)
   sortOrder        Int              @default(0)
+  exifStripped     Boolean          @default(false)
   createdAt        DateTime         @default(now())
 
   @@map("profile_photos")
@@ -273,6 +325,7 @@ model ProfileIntention {
   profile     Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
   intentionId String
   intention   Intention @relation(fields: [intentionId], references: [id])
+  preference  BoundaryPreference @default(YES)
 
   @@unique([profileId, intentionId])
   @@map("profile_intentions")
@@ -344,6 +397,7 @@ model Match {
   approvals    CoupleMatchApproval[]
   conversation Conversation?
   privateRoom  PrivateRoom?
+  consentChecks ConsentCheck[]
 
   @@unique([profileOneId, profileTwoId])
   @@map("matches")
@@ -368,6 +422,7 @@ model Conversation {
   matchId   String           @unique
   match     Match            @relation(fields: [matchId], references: [id], onDelete: Cascade)
   type      ConversationType @default(ONE_TO_ONE)
+  agreedRules String[]
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
   messages  Message[]
@@ -386,6 +441,7 @@ model Message {
   expiresAt      DateTime?
   readAt         DateTime?
   deletedAt      DateTime?
+  removedByAdmin Boolean      @default(false)
   createdAt      DateTime     @default(now())
 
   @@map("messages")
@@ -418,6 +474,37 @@ model PrivateRoomMember {
   @@map("private_room_members")
 }
 
+model ConsentCheck {
+  id          String             @id @default(uuid())
+  matchId     String
+  match       Match              @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  profileId   String
+  profile     Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  phase       ConsentCheckPhase
+  status      ConsentCheckStatus @default(PENDING)
+  initiatedBy String
+  respondedAt DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime           @default(now())
+
+  @@map("consent_checks")
+}
+
+model SafetyCheckin {
+  id              String    @id @default(uuid())
+  profileId       String
+  profile         Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  matchId         String?
+  scheduledAt     DateTime
+  confirmedAt     DateTime?
+  cancelledAt     DateTime?
+  alertSent       Boolean   @default(false)
+  locationHint    String?
+  createdAt       DateTime  @default(now())
+
+  @@map("safety_checkins")
+}
+
 model Report {
   id                String       @id @default(uuid())
   reporterUserId    String
@@ -428,6 +515,8 @@ model Report {
   reason            ReportReason
   details           String?
   status            ReportStatus @default(PENDING)
+  priority          Int          @default(0)
+  internalNotes     String?
   createdAt         DateTime     @default(now())
   reviewedAt        DateTime?
 
@@ -505,32 +594,39 @@ model TravelMode {
 }
 
 model AdminAction {
-  id         String   @id @default(uuid())
-  adminId    String
-  admin      User     @relation(fields: [adminId], references: [id])
-  targetType String
-  targetId   String
-  action     String
-  reason     String?
-  createdAt  DateTime @default(now())
+  id          String    @id @default(uuid())
+  adminId     String
+  admin       User      @relation("AdminPerformer", fields: [adminId], references: [id])
+  targetUserId String?
+  targetUser   User?    @relation("AdminTarget", fields: [targetUserId], references: [id])
+  targetType  String
+  targetId    String
+  action      String
+  reason      String?
+  internalNote String?
+  previousData Json?
+  newData      Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime  @default(now())
 
   @@map("admin_actions")
 }
 
-// Beta invite codes — controlo de acesso ao beta fechado
 model BetaInvite {
   id          String    @id @default(uuid())
   code        String    @unique
-  email       String?   // pré-atribuído a um email (opcional)
-  usedByEmail String?   // email de quem usou
-  usedAt      DateTime?
-  createdBy   String    // userId do admin que criou
+  createdById String
+  createdBy   User      @relation("InviteCreator", fields: [createdById], references: [id])
+  usedById    String?   @unique
+  usedBy      User?     @relation("InviteUser", fields: [usedById], references: [id])
+  email       String?
   maxUses     Int       @default(1)
   useCount    Int       @default(0)
-  active      Boolean   @default(true)
   expiresAt   DateTime?
-  note        String?   // nota interna do admin
+  active      Boolean   @default(true)
   createdAt   DateTime  @default(now())
+  usedAt      DateTime?
 
   @@map("beta_invites")
 }
