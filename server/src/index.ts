@@ -15,7 +15,6 @@ const httpServer = createServer(app)
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000'
 const isProd = process.env.NODE_ENV === 'production'
 
-// Strict whitelist in production
 const ALLOWED_ORIGINS = isProd
   ? [CLIENT_URL, 'https://betweenus-production.up.railway.app'].filter(Boolean)
   : ['http://localhost:3000', 'http://localhost:4173', CLIENT_URL]
@@ -24,47 +23,36 @@ export const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'], credentials: true }
 })
 
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: 'cross-origin' },
-  contentSecurityPolicy: false // handled by frontend
-}))
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false }))
 app.use(compression())
 app.use(cors({
   origin: (origin, callback) => {
-    // Block unknown origins in production
-    if (!origin) return callback(null, true) // allow same-origin requests
+    if (!origin) return callback(null, true)
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true)
     if (isProd) {
-      console.warn('[CORS] Blocked origin:', origin)
+      console.warn('[CORS] Blocked:', origin)
       return callback(new Error('Not allowed by CORS'))
     }
-    callback(null, true) // permissive in dev
+    callback(null, true)
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }))
 
-// ⚠️ Stripe webhook needs raw body — BEFORE express.json()
+// Stripe webhook needs raw body — BEFORE json middleware
 import webhooksRouter from './routes/webhooks'
 app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhooksRouter)
 
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
 
-// Global rate limit
-const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, max: 300,
-  message: { error: 'Demasiados pedidos. Tenta novamente em 15 minutos.' },
-  standardHeaders: true, legacyHeaders: false
-})
-app.use('/api', globalLimiter)
+// Rate limits
+const globalLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true })
+const strictLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10,
+  message: { error: 'Demasiadas tentativas. Tenta novamente em 15 minutos.' } })
 
-// Strict rate limit for sensitive endpoints
-const strictLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, max: 10,
-  message: { error: 'Demasiadas tentativas. Tenta novamente em 15 minutos.' }
-})
+app.use('/api', globalLimiter)
 app.use('/api/auth/login', strictLimiter)
 app.use('/api/auth/register', strictLimiter)
 app.use('/api/auth/password', strictLimiter)
@@ -77,7 +65,6 @@ app.get('/health', (_, res) => {
   })
 })
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
 import authRouter from './routes/auth'
 import profileRouter from './routes/profiles'
 import discoveryRouter from './routes/discovery'
@@ -92,6 +79,7 @@ import contactsRouter from './routes/contacts'
 import verificationsRouter from './routes/verifications'
 import travelRouter from './routes/travel'
 import consentRouter from './routes/consent'
+import safetyRouter from './routes/safety'
 
 app.use('/api/auth', authRouter)
 app.use('/api/profiles', profileRouter)
@@ -107,40 +95,32 @@ app.use('/api/contacts', contactsRouter)
 app.use('/api/verifications', verificationsRouter)
 app.use('/api/travel', travelRouter)
 app.use('/api/consent', consentRouter)
+app.use('/api/safety', safetyRouter)
 
-// Debug — only in development
+// /debug only in development
 if (!isProd) {
-  app.get('/debug', (_req, res) => {
-    res.json({ message: 'Debug mode — not available in production', env: process.env.NODE_ENV })
-  })
+  app.get('/debug-info', (_req, res) => res.json({ env: process.env.NODE_ENV }))
 }
 
-// ─── WebSockets ───────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
   console.log('[WS] Connected:', socket.id)
   socket.on('join_conversation', (id: string) => socket.join('conversation:' + id))
   socket.on('leave_conversation', (id: string) => socket.leave('conversation:' + id))
-  socket.on('typing', (data: any) =>
-    socket.to('conversation:' + data.conversationId).emit('typing', data))
+  socket.on('typing', (data: any) => socket.to('conversation:' + data.conversationId).emit('typing', data))
   socket.on('disconnect', () => console.log('[WS] Disconnected:', socket.id))
 })
 
-app.use((err: any, _req: express.Request, res: express.Response,
-         _next: express.NextFunction) => {
-  // Never leak stack traces in production
-  if (isProd) {
-    console.error('[ERROR]', err.message)
-    return res.status(err.status || 500).json({ error: 'Erro interno. Tenta novamente.' })
-  }
-  console.error('[ERROR]', err)
-  res.status(err.status || 500).json({ error: err.message })
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[ERROR]', err.message)
+  res.status(err.status || 500).json({
+    error: isProd ? 'Erro interno. Tenta novamente.' : err.message
+  })
 })
 
 const PORT = process.env.PORT || 4000
 httpServer.listen(PORT, () => {
-  console.log('[SERVER] Between Us API v2.0.0')
+  console.log('[SERVER] Between Us API v2.0.0 — ALL routes active')
   console.log('[SERVER] Environment:', process.env.NODE_ENV)
-  console.log('[SERVER] CORS whitelist:', ALLOWED_ORIGINS)
 })
 
 export default app
