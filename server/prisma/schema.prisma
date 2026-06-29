@@ -1,0 +1,536 @@
+// Between Us — Prisma Schema v4 (Travel Mode + Beta Invites)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  PENDING_VERIFICATION
+  SUSPENDED
+  BANNED
+  DELETED
+}
+
+enum ProfileType {
+  INDIVIDUAL
+  COUPLE
+}
+
+enum RelationshipStatus {
+  SINGLE
+  COMMITTED
+  MARRIED
+  OPEN
+  POLYAMOROUS
+  COUPLE_CURIOUS
+  COUPLE_LIBERAL
+  OTHER
+}
+
+enum DiscretionLevel {
+  MAXIMUM
+  SELECTIVE
+  OPEN
+}
+
+enum ProfileVisibility {
+  PUBLIC
+  MATCHES_ONLY
+  INVISIBLE
+}
+
+enum PhotoVisibility {
+  PUBLIC
+  BLURRED
+  PRIVATE_AFTER_MATCH
+  PRIVATE_AFTER_APPROVAL
+}
+
+enum ModerationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum BoundaryPreference {
+  YES
+  MAYBE
+  NO
+}
+
+enum ActionType {
+  LIKE
+  PASS
+  SUPER_LIKE
+  BLOCK
+  REPORT
+}
+
+enum MatchStatus {
+  PENDING
+  ACTIVE
+  PAUSED
+  ENDED
+  BLOCKED
+}
+
+enum CoupleStatus {
+  PENDING_PARTNER
+  ACTIVE
+  PAUSED
+  SEPARATED
+  DISABLED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  SYSTEM
+  CONSENT_REQUEST
+  PHOTO_UNLOCK_REQUEST
+}
+
+enum ConversationType {
+  ONE_TO_ONE
+  COUPLE_GROUP
+  PRIVATE_ROOM
+}
+
+enum ReportReason {
+  FAKE_PROFILE
+  HARASSMENT
+  OFFENSIVE_CONTENT
+  MINOR
+  NON_CONSENSUAL_IMAGE
+  SPAM
+  THREAT
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWING
+  RESOLVED
+  DISMISSED
+  ESCALATED
+}
+
+enum SubscriptionPlan {
+  FREE
+  PREMIUM
+  COUPLE_PREMIUM
+  ELITE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  PAST_DUE
+  UNPAID
+  TRIALING
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum ConsentType {
+  TERMS
+  PRIVACY_POLICY
+  SENSITIVE_DATA
+  MARKETING
+  LOCATION
+  CONTACT_HASHING
+}
+
+enum NotificationMode {
+  NORMAL
+  DISCREET
+  SILENT
+}
+
+model User {
+  id                String     @id @default(uuid())
+  email             String     @unique
+  passwordHash      String
+  emailVerifiedAt   DateTime?
+  dateOfBirth       DateTime
+  ageVerifiedAt     DateTime?
+  termsAcceptedAt   DateTime?
+  privacyAcceptedAt DateTime?
+  status            UserStatus @default(PENDING_VERIFICATION)
+  lastSeenAt        DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  profile            Profile?
+  consents           UserConsent[]
+  subscription       Subscription?
+  verification       Verification?
+  blockedContacts    BlockedContactHash[]
+  reportsMade        Report[]              @relation("ReporterUser")
+  reportsReceived    Report[]              @relation("ReportedUser")
+  messages           Message[]
+  coupleApprovals    CoupleMatchApproval[]
+  privateRoomMembers PrivateRoomMember[]
+  adminActions       AdminAction[]
+
+  @@map("users")
+}
+
+model Profile {
+  id                 String            @id @default(uuid())
+  userId             String            @unique
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type               ProfileType       @default(INDIVIDUAL)
+  displayName        String
+  bio                String?
+  gender             String?
+  orientation        String?
+  relationshipStatus RelationshipStatus @default(SINGLE)
+  locationLat        Float?
+  locationLng        Float?
+  city               String?
+  country            String?
+  visibilityMode     ProfileVisibility @default(PUBLIC)
+  discretionLevel    DiscretionLevel   @default(SELECTIVE)
+  status             String            @default("active")
+  betweenScore       Int?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  coupleProfile      CoupleProfile?
+  photos             ProfilePhoto[]
+  intentions         ProfileIntention[]
+  boundaries         ProfileBoundary[]
+  privacySettings    PrivacySettings?
+  actionsGiven       ProfileAction[]   @relation("ActionActor")
+  actionsReceived    ProfileAction[]   @relation("ActionTarget")
+  matchesAsOne       Match[]           @relation("MatchProfileOne")
+  matchesAsTwo       Match[]           @relation("MatchProfileTwo")
+  travelModes        TravelMode[]
+
+  @@map("profiles")
+}
+
+// CoupleProfile: stores partner IDs as plain strings — no Prisma relation for partnerTwo
+// This avoids the ambiguous relation error on Profile self-reference
+model CoupleProfile {
+  id                    String       @id @default(uuid())
+  profileId             String       @unique
+  profile               Profile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  partnerOneUserId      String
+  partnerTwoUserId      String?
+  partnerTwoInviteEmail String?
+  partnerTwoAcceptedAt  DateTime?
+  coupleStatus          CoupleStatus @default(PENDING_PARTNER)
+  coupleInviteToken     String?      @unique
+  coupleDescription     String?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  @@map("couple_profiles")
+}
+
+model ProfilePhoto {
+  id               String           @id @default(uuid())
+  profileId        String
+  profile          Profile          @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  storagePath      String
+  blurredPath      String?
+  visibilityLevel  PhotoVisibility  @default(BLURRED)
+  moderationStatus ModerationStatus @default(PENDING)
+  isPrimary        Boolean          @default(false)
+  sortOrder        Int              @default(0)
+  createdAt        DateTime         @default(now())
+
+  @@map("profile_photos")
+}
+
+model Intention {
+  id          String             @id @default(uuid())
+  name        String
+  slug        String             @unique
+  description String?
+  active      Boolean            @default(true)
+  profiles    ProfileIntention[]
+
+  @@map("intentions")
+}
+
+model ProfileIntention {
+  id          String    @id @default(uuid())
+  profileId   String
+  profile     Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  intentionId String
+  intention   Intention @relation(fields: [intentionId], references: [id])
+
+  @@unique([profileId, intentionId])
+  @@map("profile_intentions")
+}
+
+model Boundary {
+  id          String            @id @default(uuid())
+  name        String
+  category    String
+  description String?
+  profiles    ProfileBoundary[]
+
+  @@map("boundaries")
+}
+
+model ProfileBoundary {
+  id         String             @id @default(uuid())
+  profileId  String
+  profile    Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  boundaryId String
+  boundary   Boundary           @relation(fields: [boundaryId], references: [id])
+  preference BoundaryPreference
+
+  @@unique([profileId, boundaryId])
+  @@map("profile_boundaries")
+}
+
+model PrivacySettings {
+  id                 String           @id @default(uuid())
+  profileId          String           @unique
+  profile            Profile          @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  visibleInDiscovery Boolean          @default(true)
+  showDistance       Boolean          @default(true)
+  showOnlineStatus   Boolean          @default(false)
+  allowPhotoRequests Boolean          @default(true)
+  invisibleMode      Boolean          @default(false)
+  notificationMode   NotificationMode @default(DISCREET)
+  minDistanceKm      Int?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@map("privacy_settings")
+}
+
+model ProfileAction {
+  id              String     @id @default(uuid())
+  actorProfileId  String
+  actor           Profile    @relation("ActionActor", fields: [actorProfileId], references: [id], onDelete: Cascade)
+  targetProfileId String
+  target          Profile    @relation("ActionTarget", fields: [targetProfileId], references: [id], onDelete: Cascade)
+  action          ActionType
+  createdAt       DateTime   @default(now())
+
+  @@unique([actorProfileId, targetProfileId])
+  @@map("profile_actions")
+}
+
+model Match {
+  id           String      @id @default(uuid())
+  profileOneId String
+  profileOne   Profile     @relation("MatchProfileOne", fields: [profileOneId], references: [id], onDelete: Cascade)
+  profileTwoId String
+  profileTwo   Profile     @relation("MatchProfileTwo", fields: [profileTwoId], references: [id], onDelete: Cascade)
+  status       MatchStatus @default(PENDING)
+  matchedAt    DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  approvals    CoupleMatchApproval[]
+  conversation Conversation?
+  privateRoom  PrivateRoom?
+
+  @@unique([profileOneId, profileTwoId])
+  @@map("matches")
+}
+
+model CoupleMatchApproval {
+  id         String    @id @default(uuid())
+  matchId    String
+  match      Match     @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  approvedAt DateTime?
+  rejectedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@unique([matchId, userId])
+  @@map("couple_match_approvals")
+}
+
+model Conversation {
+  id        String           @id @default(uuid())
+  matchId   String           @unique
+  match     Match            @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  type      ConversationType @default(ONE_TO_ONE)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  messages  Message[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderUserId   String
+  sender         User         @relation(fields: [senderUserId], references: [id], onDelete: Cascade)
+  body           String?
+  messageType    MessageType  @default(TEXT)
+  expiresAt      DateTime?
+  readAt         DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@map("messages")
+}
+
+model PrivateRoom {
+  id        String              @id @default(uuid())
+  matchId   String              @unique
+  match     Match               @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  title     String?
+  rules     String[]
+  status    String              @default("active")
+  createdAt DateTime            @default(now())
+  members   PrivateRoomMember[]
+
+  @@map("private_rooms")
+}
+
+model PrivateRoomMember {
+  id            String      @id @default(uuid())
+  privateRoomId String
+  privateRoom   PrivateRoom @relation(fields: [privateRoomId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role          String      @default("member")
+  joinedAt      DateTime    @default(now())
+  leftAt        DateTime?
+
+  @@unique([privateRoomId, userId])
+  @@map("private_room_members")
+}
+
+model Report {
+  id                String       @id @default(uuid())
+  reporterUserId    String
+  reporter          User         @relation("ReporterUser", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  reportedUserId    String?
+  reportedUser      User?        @relation("ReportedUser", fields: [reportedUserId], references: [id])
+  reportedMessageId String?
+  reason            ReportReason
+  details           String?
+  status            ReportStatus @default(PENDING)
+  createdAt         DateTime     @default(now())
+  reviewedAt        DateTime?
+
+  @@map("reports")
+}
+
+model Subscription {
+  id                     String             @id @default(uuid())
+  userId                 String             @unique
+  user                   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider               String             @default("stripe")
+  providerCustomerId     String?
+  providerSubscriptionId String?
+  plan                   SubscriptionPlan   @default(FREE)
+  status                 SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+  cancelledAt            DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  @@map("subscriptions")
+}
+
+model Verification {
+  id         String             @id @default(uuid())
+  userId     String             @unique
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String             @default("selfie")
+  status     VerificationStatus @default(PENDING)
+  provider   String?
+  reviewedAt DateTime?
+  expiresAt  DateTime?
+  createdAt  DateTime           @default(now())
+
+  @@map("verifications")
+}
+
+model UserConsent {
+  id          String      @id @default(uuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  consentType ConsentType
+  version     String
+  acceptedAt  DateTime    @default(now())
+  revokedAt   DateTime?
+
+  @@map("user_consents")
+}
+
+model BlockedContactHash {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contactHash String
+  type        String
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, contactHash])
+  @@map("blocked_contact_hashes")
+}
+
+model TravelMode {
+  id        String   @id @default(uuid())
+  profileId String
+  profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  city      String
+  country   String?
+  startDate DateTime
+  endDate   DateTime
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("travel_modes")
+}
+
+model AdminAction {
+  id         String   @id @default(uuid())
+  adminId    String
+  admin      User     @relation(fields: [adminId], references: [id])
+  targetType String
+  targetId   String
+  action     String
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  @@map("admin_actions")
+}
+
+// Beta invite codes — controlo de acesso ao beta fechado
+model BetaInvite {
+  id          String    @id @default(uuid())
+  code        String    @unique
+  email       String?   // pré-atribuído a um email (opcional)
+  usedByEmail String?   // email de quem usou
+  usedAt      DateTime?
+  createdBy   String    // userId do admin que criou
+  maxUses     Int       @default(1)
+  useCount    Int       @default(0)
+  active      Boolean   @default(true)
+  expiresAt   DateTime?
+  note        String?   // nota interna do admin
+  createdAt   DateTime  @default(now())
+
+  @@map("beta_invites")
+}

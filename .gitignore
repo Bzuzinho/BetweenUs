@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build
+dist/
+build/
+.next/
+client/dist/
+server/dist/
+
+# Env — NUNCA commitar .env com valores reais
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+*.log
+
+# Prisma
+server/prisma/migrations/
+
+# Uploads temporários
+uploads/
+tmp/
