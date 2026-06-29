@@ -1,16 +1,17 @@
 #!/bin/bash
 set -e
 
-echo "=== Between Us API Starting ==="
+echo "=== Between Us API v1.0 Starting ==="
 echo "Node: $(node --version)"
 echo "NPM: $(npm --version)"
+echo "Sprints: 0.1 1.1 2.1 2.2 2.4 3.1 3.2 3.3 4.1 5.1 5.2 5.3 5.4 6.1 7.1 7.1b 8.1 8.2 8.4 9.1 9.2"
 
 echo ""
 echo "--- Prisma Generate ---"
 npx prisma generate
 
 echo ""
-echo "--- Database Push (create tables) ---"
+echo "--- Database Sync (create/update tables) ---"
 npx prisma db push --accept-data-loss
 
 echo ""

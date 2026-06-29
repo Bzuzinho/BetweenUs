@@ -10,6 +10,7 @@ import VerificationPage from './pages/VerificationPage'
 import PremiumPage from './pages/PremiumPage'
 import TravelPage from './pages/TravelPage'
 import CheckInPage from './pages/CheckInPage'
+import AdminPage from './pages/AdminPage'
 import DebugPage from './pages/DebugPage'
 import AppShell from './AppShell'
 
@@ -76,6 +77,7 @@ export default function App() {
         <Route path="/checkin" element={
           <PrivateRoute><CheckInPage /></PrivateRoute>
         } />
+        <Route path="/admin" element={<PrivateRoute><AdminPage /></PrivateRoute>} />
         <Route path="/debug" element={<DebugPage />} />
         <Route path="/explore" element={
           <PrivateRoute><AppShell screen="explore" /></PrivateRoute>

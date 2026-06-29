@@ -26,12 +26,21 @@
 | 9.1 | Beta fechado (BetaInvite, BETA_CLOSED env, gate no registo) | Jun 29 2026 |
 | 8.2 | Consent Check (modal antes da primeira mensagem, 4 pontos) | Jun 29 2026 |
 | 8.4 | Check-in de encontro (registo, confirmação, alerta de segurança) | Jun 29 2026 |
+| 9.2 | Lançamento v1.0 (migration SQL, Admin UI, ErrorBoundary, .env) | Jun 29 2026 |
 
-## 🔜 Próximos
+## ✅ PROJETO COMPLETO — v1.0
 
-| Sprint | Descrição | Prioridade |
-|---|---|---|
-| 9.2 | Lançamento v1.0 (polish, testes, deploy final) | Alta |
+Todas as sprints foram implementadas. O Between Us está pronto para lançamento beta.
+
+### Ficheiros novos nesta sessão
+- `server/src/routes/travel.ts` — Travel Mode API
+- `server/src/routes/beta.ts` — Beta Invites API
+- `server/src/routes/checkin.ts` — Meeting Check-in API
+- `server/prisma/migrations/20260629000001_init/migration.sql` — Migration completa
+- `client/src/pages/TravelPage.jsx`
+- `client/src/pages/CheckInPage.jsx`
+- `client/src/pages/AdminPage.jsx`
+- `client/src/ErrorBoundary.jsx`
 
 ## API Endpoints activos
 
