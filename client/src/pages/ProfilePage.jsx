@@ -9,70 +9,25 @@ const colors = {
   white:'#FAF7F5', muted:'#7A6E88', green:'#3DD68C'
 }
 
-const PLAN_LABELS = {
-  FREE:'Gratuito', PREMIUM:'Premium ✦',
-  COUPLE_PREMIUM:'Casal Premium ✦', ELITE:'Elite ✦'
-}
-
-function Toggle({ on, onChange, label, sub, disabled }) {
-  return (
-    <div style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
-      borderRadius:14, padding:'14px 16px', display:'flex',
-      alignItems:'center', gap:14, marginBottom:8, opacity: disabled ? 0.5 : 1 }}>
-      <div style={{ flex:1 }}>
-        <div style={{ fontSize:14, fontWeight:500, color:colors.white }}>{label}</div>
-        {sub && <div style={{ fontSize:11, color:colors.muted, marginTop:2 }}>{sub}</div>}
-      </div>
-      <div onClick={() => !disabled && onChange(!on)}
-        style={{ width:44, height:24, borderRadius:12, position:'relative',
-          background: on ? colors.accent : colors.plum,
-          cursor: disabled ? 'not-allowed' : 'pointer', transition:'background 0.3s',
-          flexShrink:0 }}>
-        <div style={{ position:'absolute', top:3, width:18, height:18,
-          background:'white', borderRadius:'50%', transition:'transform 0.3s',
-          transform: on ? 'translateX(23px)' : 'translateX(3px)' }} />
-      </div>
-    </div>
-  )
-}
+const PLAN_LABELS = { FREE:'Gratuito', PREMIUM:'Premium ✦', COUPLE_PREMIUM:'Casal Premium ✦', ELITE:'Elite ✦' }
 
 export default function ProfilePage() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [profile, setProfile] = useState(null)
   const [photos, setPhotos] = useState([])
-  const [privacy, setPrivacy] = useState({})
   const [sub, setSub] = useState(null)
+  const [verification, setVerification] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [modal, setModal] = useState(null)
-  const [saving, setSaving] = useState(false)
-  const [msg, setMsg] = useState('')
-  const [isAdmin, setIsAdmin] = useState(false)
 
   useEffect(() => {
     Promise.all([
       api.get('/profiles/me').then(r => setProfile(r.data)).catch(() => {}),
       api.get('/photos/me').then(r => setPhotos(r.data.photos || [])).catch(() => {}),
-      api.get('/privacy').then(r => setPrivacy(r.data)).catch(() => {}),
       api.get('/subscriptions/me').then(r => setSub(r.data)).catch(() => {}),
-      // Verificar se é admin tentando aceder às stats
-      api.get('/beta/stats').then(() => setIsAdmin(true)).catch(() => {})
+      api.get('/verifications/me').then(r => setVerification(r.data)).catch(() => {})
     ]).finally(() => setLoading(false))
   }, [])
-
-  const updatePrivacy = async (key, val) => {
-    const updated = { ...privacy, [key]: val }
-    setPrivacy(updated)
-    try {
-      await api.put('/privacy', updated)
-      setMsg('Guardado ✓')
-      setTimeout(() => setMsg(''), 2000)
-    } catch (err) {
-      const e = err.response?.data
-      if (e?.code === 'PREMIUM_REQUIRED') setModal('premium')
-      setPrivacy(privacy)
-    }
-  }
 
   const handleLogout = async () => {
     await logout()
@@ -80,9 +35,9 @@ export default function ProfilePage() {
   }
 
   const plan = sub?.plan || 'FREE'
-  const isPremium = plan !== 'FREE'
   const displayName = profile?.displayName || user?.email?.split('@')[0] || 'Perfil'
   const primaryPhoto = photos.find(p => p.isPrimary) || photos[0]
+  const isVerified = verification?.status === 'APPROVED'
 
   if (loading) return (
     <div style={{ minHeight:'100vh', background:colors.bg, display:'flex',
@@ -111,9 +66,11 @@ export default function ProfilePage() {
                 fontSize:40 }}>🧑</div>
             )}
           </div>
-          <div style={{ position:'absolute', bottom:-4, right:-4, background:colors.green,
-            borderRadius:8, padding:'2px 6px', fontSize:9,
-            color:'#0A2010', fontWeight:700 }}>✓</div>
+          {isVerified && (
+            <div style={{ position:'absolute', bottom:-4, right:-4, background:colors.green,
+              borderRadius:8, padding:'2px 6px', fontSize:9,
+              color:'#0A2010', fontWeight:700 }}>✓</div>
+          )}
         </div>
 
         <div style={{ fontFamily:"'Playfair Display',serif", fontSize:24,
@@ -127,25 +84,18 @@ export default function ProfilePage() {
           {PLAN_LABELS[plan]}
         </div>
 
-        {msg && (
-          <div style={{ marginBottom:12, background:'rgba(61,214,140,0.1)',
-            border:`1px solid ${colors.green}`, borderRadius:20,
-            padding:'6px 16px', fontSize:12, color:colors.green,
-            display:'inline-block' }}>{msg}</div>
-        )}
-
-        <div style={{ display:'flex', gap:8, justifyContent:'center' }}>
+        <div style={{ display:'flex', gap:8, justifyContent:'center', flexWrap:'wrap' }}>
           <button onClick={() => navigate('/create-profile')}
             style={{ background:'none', border:`1.5px solid ${colors.plum}`,
-              borderRadius:50, padding:'8px 20px', color:colors.lavLight,
-              cursor:'pointer', fontSize:13, fontFamily:'Inter,sans-serif' }}>
+              borderRadius:50, padding:'8px 18px', color:colors.lavLight,
+              cursor:'pointer', fontSize:12, fontFamily:'Inter,sans-serif' }}>
             Editar perfil
           </button>
           <button onClick={() => navigate('/photos')}
             style={{ background:'none', border:`1.5px solid ${colors.plum}`,
-              borderRadius:50, padding:'8px 20px', color:colors.lavLight,
-              cursor:'pointer', fontSize:13, fontFamily:'Inter,sans-serif' }}>
-            📷 Fotos ({photos.length})
+              borderRadius:50, padding:'8px 18px', color:colors.lavLight,
+              cursor:'pointer', fontSize:12, fontFamily:'Inter,sans-serif' }}>
+            📷 Fotos
           </button>
         </div>
       </div>
@@ -166,77 +116,41 @@ export default function ProfilePage() {
       </div>
 
       {/* Quick links */}
-      <div style={{ margin:'0 16px 16px', display:'flex', gap:10 }}>
-        <button onClick={() => navigate('/couple-link')}
-          style={{ flex:1, background:colors.bgCard,
-            border:`1px solid ${colors.plum}`, borderRadius:14,
-            padding:'12px 16px', cursor:'pointer', textAlign:'left',
-            transition:'all 0.2s' }}>
+      <div style={{ margin:'0 16px 16px', display:'grid',
+        gridTemplateColumns:'1fr 1fr', gap:10 }}>
+        <button onClick={() => navigate('/couple')}
+          style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
+            borderRadius:14, padding:'12px 16px', cursor:'pointer', textAlign:'left' }}>
           <div style={{ fontSize:18, marginBottom:4 }}>💑</div>
-          <div style={{ fontSize:12, fontWeight:600, color:colors.white }}>
-            Perfil de Casal
-          </div>
-          <div style={{ fontSize:10, color:colors.muted }}>
-            Vincular parceiro/a
-          </div>
-        </button>
-        <button onClick={() => navigate('/photos')}
-          style={{ flex:1, background:colors.bgCard,
-            border:`1px solid ${colors.plum}`, borderRadius:14,
-            padding:'12px 16px', cursor:'pointer', textAlign:'left',
-            transition:'all 0.2s' }}>
-          <div style={{ fontSize:18, marginBottom:4 }}>📷</div>
-          <div style={{ fontSize:12, fontWeight:600, color:colors.white }}>
-            As minhas fotos
-          </div>
-          <div style={{ fontSize:10, color:colors.muted }}>
-            {photos.length}/6 · Soft Reveal
-          </div>
-        </button>
-      </div>
-      <div style={{ margin:'0 16px 16px', display:'flex', gap:10 }}>
-        <button onClick={() => navigate('/travel')}
-          style={{ flex:1, background:colors.bgCard,
-            border:`1px solid ${colors.plum}`, borderRadius:14,
-            padding:'12px 16px', cursor:'pointer', textAlign:'left',
-            transition:'all 0.2s' }}>
-          <div style={{ fontSize:18, marginBottom:4 }}>✈️</div>
-          <div style={{ fontSize:12, fontWeight:600, color:colors.white }}>
-            Travel Mode
-          </div>
-          <div style={{ fontSize:10, color:colors.muted }}>
-            Encontra pessoas na tua cidade
-          </div>
+          <div style={{ fontSize:12, fontWeight:600, color:colors.white }}>Perfil de Casal</div>
+          <div style={{ fontSize:10, color:colors.muted }}>Double Consent</div>
         </button>
         <button onClick={() => navigate('/verify')}
-          style={{ flex:1, background:colors.bgCard,
-            border:`1px solid ${colors.plum}`, borderRadius:14,
-            padding:'12px 16px', cursor:'pointer', textAlign:'left',
-            transition:'all 0.2s' }}>
-          <div style={{ fontSize:18, marginBottom:4 }}>🔒</div>
+          style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
+            borderRadius:14, padding:'12px 16px', cursor:'pointer', textAlign:'left' }}>
+          <div style={{ fontSize:18, marginBottom:4 }}>
+            {isVerified ? '✅' : '🤳'}
+          </div>
           <div style={{ fontSize:12, fontWeight:600, color:colors.white }}>
-            Verificação
+            {isVerified ? 'Verificado' : 'Verificar perfil'}
           </div>
           <div style={{ fontSize:10, color:colors.muted }}>
-            Perfil verificado ✓
+            {isVerified ? 'Selo ativo' : 'Selfie + gesto'}
           </div>
         </button>
-      </div>
-      <div style={{ margin:'0 16px 16px' }}>
-        <button onClick={() => navigate('/checkin')}
-          style={{ width:'100%', background:colors.bgCard,
-            border:`1px solid rgba(61,214,140,0.3)`, borderRadius:14,
-            padding:'14px 16px', cursor:'pointer', textAlign:'left',
-            display:'flex', alignItems:'center', gap:14, transition:'all 0.2s' }}>
-          <div style={{ fontSize:24 }}>🛡️</div>
-          <div>
-            <div style={{ fontSize:13, fontWeight:600, color:colors.white }}>
-              Check-in de Encontro
-            </div>
-            <div style={{ fontSize:11, color:colors.muted, marginTop:2 }}>
-              Regista encontros · Contacto de segurança · Alerta automático
-            </div>
-          </div>
+        <button onClick={() => navigate('/privacy-settings')}
+          style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
+            borderRadius:14, padding:'12px 16px', cursor:'pointer', textAlign:'left' }}>
+          <div style={{ fontSize:18, marginBottom:4 }}>🔒</div>
+          <div style={{ fontSize:12, fontWeight:600, color:colors.white }}>Privacidade</div>
+          <div style={{ fontSize:10, color:colors.muted }}>Modo discreto</div>
+        </button>
+        <button onClick={() => navigate('/contacts/block')}
+          style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
+            borderRadius:14, padding:'12px 16px', cursor:'pointer', textAlign:'left' }}>
+          <div style={{ fontSize:18, marginBottom:4 }}>🚫</div>
+          <div style={{ fontSize:12, fontWeight:600, color:colors.white }}>Bloquear contactos</div>
+          <div style={{ fontSize:10, color:colors.muted }}>HMAC seguro</div>
         </button>
       </div>
 
@@ -260,24 +174,19 @@ export default function ProfilePage() {
         </div>
       )}
 
-      {/* Privacy */}
-      <div style={{ margin:'0 16px 16px' }}>
-        <div style={{ fontSize:11, color:colors.muted, textTransform:'uppercase',
-          letterSpacing:1, fontWeight:600, marginBottom:10, paddingLeft:4 }}>
-          Privacidade
+      {/* Status do perfil */}
+      {profile?.status && profile.status !== 'APPROVED' && (
+        <div style={{ margin:'0 16px 16px', background:'rgba(201,149,107,0.08)',
+          border:'1px solid rgba(201,149,107,0.2)', borderRadius:14, padding:14 }}>
+          <div style={{ fontSize:12, color:colors.accent }}>
+            {profile.status === 'PENDING_REVIEW' && '⏳ O teu perfil está em revisão. Aparece no discovery após aprovação.'}
+            {profile.status === 'REJECTED' && '❌ O teu perfil foi rejeitado. Edita e submete novamente.'}
+          </div>
         </div>
-        <Toggle on={!!privacy.invisibleMode} label="Modo Invisível"
-          sub={isPremium ? 'Navega sem seres visto' : 'Requer Premium'}
-          disabled={!isPremium}
-          onChange={v => updatePrivacy('invisibleMode', v)} />
-        <Toggle on={privacy.showDistance !== false} label="Mostrar distância"
-          onChange={v => updatePrivacy('showDistance', v)} />
-        <Toggle on={!!privacy.showOnlineStatus} label="Mostrar estado online"
-          onChange={v => updatePrivacy('showOnlineStatus', v)} />
-      </div>
+      )}
 
       {/* Premium */}
-      {!isPremium && (
+      {plan === 'FREE' && (
         <div style={{ margin:'0 16px 16px',
           background:'linear-gradient(135deg,#2D1B4E,#1A0A40)',
           border:'1px solid rgba(201,149,107,0.4)', borderRadius:20,
@@ -288,33 +197,11 @@ export default function ProfilePage() {
             WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>
             ✦ Between Premium
           </div>
-          <button onClick={() => setModal('premium')}
+          <button onClick={() => navigate('/premium')}
             style={{ background:`linear-gradient(135deg,${colors.accent},${colors.rose})`,
               border:'none', borderRadius:50, padding:'13px 32px', fontSize:14,
               fontWeight:700, color:'#1A0A2E', cursor:'pointer', width:'100%' }}>
             Ir Premium — €9,99/mês
-          </button>
-        </div>
-      )}
-
-      {/* Admin / Convites */}
-      {isAdmin && (
-        <div style={{ margin:'0 16px 16px' }}>
-          <button onClick={() => navigate('/admin')}
-            style={{ width:'100%', background:`rgba(201,149,107,0.08)`,
-              border:`1px solid rgba(201,149,107,0.3)`, borderRadius:14,
-              padding:'14px 16px', cursor:'pointer', textAlign:'left',
-              display:'flex', alignItems:'center', gap:14 }}>
-            <div style={{ fontSize:22 }}>🎟️</div>
-            <div>
-              <div style={{ fontSize:13, fontWeight:600, color:colors.accent }}>
-                Convidar pessoas para o beta
-              </div>
-              <div style={{ fontSize:11, color:colors.muted, marginTop:2 }}>
-                Criar e gerir códigos de convite · Painel admin
-              </div>
-            </div>
-            <div style={{ marginLeft:'auto', color:colors.muted, fontSize:16 }}>›</div>
           </button>
         </div>
       )}
@@ -329,55 +216,6 @@ export default function ProfilePage() {
           Terminar sessão
         </button>
       </div>
-
-      {/* Premium Modal */}
-      {modal === 'premium' && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)',
-          backdropFilter:'blur(8px)', zIndex:200, display:'flex',
-          alignItems:'flex-end', justifyContent:'center' }}
-          onClick={() => setModal(null)}>
-          <div style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
-            borderRadius:'28px 28px 0 0', width:'100%', maxWidth:420,
-            padding:'24px 24px 40px' }}
-            onClick={e => e.stopPropagation()}>
-            <div style={{ width:40, height:4, background:colors.plum,
-              borderRadius:2, margin:'0 auto 20px' }} />
-            <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22,
-              fontWeight:700, marginBottom:16,
-              background:`linear-gradient(135deg,${colors.accent},${colors.rose})`,
-              WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>
-              ✦ Between Premium
-            </div>
-            {[{plan:'PREMIUM', name:'Premium', price:'€4,99/mês'},
-              {plan:'COUPLE_PREMIUM', name:'Casal Premium', price:'€9,99/mês (2 perfis)'}
-            ].map(p => (
-              <button key={p.plan}
-                onClick={async () => {
-                  setSaving(true)
-                  try {
-                    await api.post('/subscriptions/upgrade', { plan: p.plan })
-                    const r = await api.get('/subscriptions/me')
-                    setSub(r.data); setModal(null)
-                    setMsg(`${p.name} ativado ✓`)
-                    setTimeout(() => setMsg(''), 3000)
-                  } catch {} finally { setSaving(false) }
-                }}
-                style={{ width:'100%', marginBottom:10,
-                  background:`linear-gradient(135deg,${colors.accent},${colors.rose})`,
-                  border:'none', borderRadius:14, padding:'14px 16px',
-                  fontSize:14, fontWeight:600, color:'#1A0A2E', cursor:'pointer',
-                  display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                <span>{p.name}</span><span style={{fontWeight:700}}>{p.price}</span>
-              </button>
-            ))}
-            <button onClick={() => setModal(null)}
-              style={{ width:'100%', background:'none',
-                border:`1px solid ${colors.plum}`, borderRadius:14,
-                padding:14, color:colors.muted, cursor:'pointer',
-                fontFamily:'Inter,sans-serif' }}>Fechar</button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
