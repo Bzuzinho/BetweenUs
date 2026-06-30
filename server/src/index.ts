@@ -53,8 +53,12 @@ app.use('/api/auth/register', strictLimiter)
 app.use('/api/auth/password', strictLimiter)
 
 app.get('/health', (_, res) => {
-  res.json({ status: 'ok', app: 'Between Us API', version: '2.1.0',
-    environment: process.env.NODE_ENV, timestamp: new Date().toISOString() })
+  res.json({
+    status: 'ok', app: 'Between Us API', version: '2.2.0',
+    environment: process.env.NODE_ENV,
+    sprints_complete: 38,
+    timestamp: new Date().toISOString()
+  })
 })
 
 import authRouter from './routes/auth'
@@ -110,7 +114,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 const PORT = process.env.PORT || 4000
 httpServer.listen(PORT, () => {
-  console.log('[SERVER] Between Us API v2.1.0 — beta routes active')
+  console.log('[SERVER] Between Us API v2.2.0 — 38 sprints complete')
   console.log('[SERVER] Environment:', process.env.NODE_ENV)
 })
 
