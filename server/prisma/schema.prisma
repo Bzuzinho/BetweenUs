@@ -199,6 +199,14 @@ enum ConsentCheckPhase {
   SAFETY_CHECKIN
 }
 
+enum PhotoAccessStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  REVOKED
+  EXPIRED
+}
+
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model User {
@@ -304,6 +312,8 @@ model ProfilePhoto {
   sortOrder        Int              @default(0)
   exifStripped     Boolean          @default(false)
   createdAt        DateTime         @default(now())
+
+  accessRequests   PhotoAccessRequest[]
 
   @@map("profile_photos")
 }
@@ -629,4 +639,19 @@ model BetaInvite {
   usedAt      DateTime?
 
   @@map("beta_invites")
+}
+
+model PhotoAccessRequest {
+  id           String             @id @default(uuid())
+  photoId      String
+  photo        ProfilePhoto       @relation(fields: [photoId], references: [id], onDelete: Cascade)
+  requesterId  String
+  ownerId      String
+  status       PhotoAccessStatus  @default(PENDING)
+  expiresAt    DateTime?
+  respondedAt  DateTime?
+  createdAt    DateTime           @default(now())
+
+  @@unique([photoId, requesterId])
+  @@map("photo_access_requests")
 }
