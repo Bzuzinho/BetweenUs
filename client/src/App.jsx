@@ -4,14 +4,12 @@ import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import CreateProfilePage from './pages/CreateProfilePage'
 import CouplePage, { CoupleInvitePage } from './pages/CouplePage'
-import CoupleLinkPage, { CoupleJoinPage } from './pages/CoupleLinkPage'
 import PhotosPage from './pages/PhotosPage'
 import ContactsBlockPage from './pages/ContactsBlockPage'
 import VerificationPage from './pages/VerificationPage'
 import PremiumPage from './pages/PremiumPage'
-import TravelPage from './pages/TravelPage'
-import CheckInPage from './pages/CheckInPage'
-import AdminPage from './pages/AdminPage'
+import PrivacySettingsPage from './pages/PrivacySettingsPage'
+import BetaJoinPage from './pages/BetaJoinPage'
 import DebugPage from './pages/DebugPage'
 import AppShell from './AppShell'
 
@@ -57,43 +55,23 @@ export default function App() {
         <Route path="/" element={<RootRedirect />} />
         <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
         <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
+        <Route path="/join" element={<BetaJoinPage />} />
+        <Route path="/join/:code" element={<BetaJoinPage />} />
         <Route path="/couple-invite/:token" element={<CoupleInvitePage />} />
-        <Route path="/couple-join/:token" element={<CoupleJoinPage />} />
         <Route path="/create-profile" element={
           <PrivateRoute requireProfile={false}><CreateProfilePage /></PrivateRoute>
         } />
         <Route path="/couple" element={<PrivateRoute><CouplePage /></PrivateRoute>} />
-        <Route path="/couple-link" element={<PrivateRoute><CoupleLinkPage /></PrivateRoute>} />
         <Route path="/photos" element={<PrivateRoute><PhotosPage /></PrivateRoute>} />
-        <Route path="/contacts/block" element={
-          <PrivateRoute><ContactsBlockPage /></PrivateRoute>
-        } />
-        <Route path="/verify" element={
-          <PrivateRoute><VerificationPage /></PrivateRoute>
-        } />
-        <Route path="/premium" element={
-          <PrivateRoute><PremiumPage /></PrivateRoute>
-        } />
-        <Route path="/travel" element={
-          <PrivateRoute><TravelPage /></PrivateRoute>
-        } />
-        <Route path="/checkin" element={
-          <PrivateRoute><CheckInPage /></PrivateRoute>
-        } />
-        <Route path="/admin" element={<PrivateRoute><AdminPage /></PrivateRoute>} />
+        <Route path="/contacts/block" element={<PrivateRoute><ContactsBlockPage /></PrivateRoute>} />
+        <Route path="/verify" element={<PrivateRoute><VerificationPage /></PrivateRoute>} />
+        <Route path="/premium" element={<PrivateRoute><PremiumPage /></PrivateRoute>} />
+        <Route path="/privacy-settings" element={<PrivateRoute><PrivacySettingsPage /></PrivateRoute>} />
         <Route path="/debug" element={<DebugPage />} />
-        <Route path="/explore" element={
-          <PrivateRoute><AppShell screen="explore" /></PrivateRoute>
-        } />
-        <Route path="/matches" element={
-          <PrivateRoute><AppShell screen="matches" /></PrivateRoute>
-        } />
-        <Route path="/profile" element={
-          <PrivateRoute><AppShell screen="profile" /></PrivateRoute>
-        } />
-        <Route path="/guide" element={
-          <PrivateRoute><AppShell screen="guide" /></PrivateRoute>
-        } />
+        <Route path="/explore" element={<PrivateRoute><AppShell screen="explore" /></PrivateRoute>} />
+        <Route path="/matches" element={<PrivateRoute><AppShell screen="matches" /></PrivateRoute>} />
+        <Route path="/profile" element={<PrivateRoute><AppShell screen="profile" /></PrivateRoute>} />
+        <Route path="/guide" element={<PrivateRoute><AppShell screen="guide" /></PrivateRoute>} />
         <Route path="*" element={<RootRedirect />} />
       </Routes>
     </AuthProvider>
