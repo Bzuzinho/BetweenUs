@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import compression from 'compression'
+import cookieParser from 'cookie-parser'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
 import { rateLimit } from 'express-rate-limit'
@@ -25,6 +26,7 @@ export const io = new Server(httpServer, {
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false }))
 app.use(compression())
+// Point 6: credentials:true required so the browser sends/receives httpOnly cookies cross-origin
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true)
@@ -42,6 +44,7 @@ app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhooksRout
 
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
+app.use(cookieParser())
 
 const globalLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true })
 const strictLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10,
@@ -53,12 +56,8 @@ app.use('/api/auth/register', strictLimiter)
 app.use('/api/auth/password', strictLimiter)
 
 app.get('/health', (_, res) => {
-  res.json({
-    status: 'ok', app: 'Between Us API', version: '2.2.0',
-    environment: process.env.NODE_ENV,
-    sprints_complete: 38,
-    timestamp: new Date().toISOString()
-  })
+  res.json({ status: 'ok', app: 'Between Us API', version: '2.3.0',
+    environment: process.env.NODE_ENV, timestamp: new Date().toISOString() })
 })
 
 import authRouter from './routes/auth'
@@ -95,10 +94,6 @@ app.use('/api/consent', consentRouter)
 app.use('/api/safety', safetyRouter)
 app.use('/api/beta', betaRouter)
 
-if (!isProd) {
-  app.get('/debug-info', (_req, res) => res.json({ env: process.env.NODE_ENV }))
-}
-
 io.on('connection', (socket) => {
   console.log('[WS] Connected:', socket.id)
   socket.on('join_conversation', (id: string) => socket.join('conversation:' + id))
@@ -114,7 +109,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 const PORT = process.env.PORT || 4000
 httpServer.listen(PORT, () => {
-  console.log('[SERVER] Between Us API v2.2.0 — 38 sprints complete')
+  console.log('[SERVER] Between Us API v2.3.0 — security audit fixes applied')
   console.log('[SERVER] Environment:', process.env.NODE_ENV)
 })
 
