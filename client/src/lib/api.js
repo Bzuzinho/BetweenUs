@@ -1,41 +1,42 @@
 import axios from 'axios'
 
-// Em produção usa VITE_API_URL, em dev usa o proxy do vite (/api → localhost:4000)
 const baseURL = import.meta.env.VITE_API_URL || '/api'
 
 const api = axios.create({
   baseURL,
   headers: { 'Content-Type': 'application/json' },
-  withCredentials: false
+  // Point 6: send/receive httpOnly cookies cross-origin
+  withCredentials: true
 })
 
-// Attach token to every request
+// Point 6: Authorization header is now a transitional fallback only.
+// The backend issues httpOnly cookies on login/register/refresh, which the
+// browser sends automatically (because of withCredentials above). We keep
+// reading from localStorage here ONLY until every client is confirmed to be
+// using the cookie flow, so existing sessions don't break mid-rollout.
 api.interceptors.request.use(config => {
   const token = localStorage.getItem('accessToken')
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
 
-// Auto-refresh on 401
 api.interceptors.response.use(
   res => res,
   async err => {
     const original = err.config
     if (err.response?.status === 401 && !original._retry) {
       original._retry = true
-      const refreshToken = localStorage.getItem('refreshToken')
-      if (refreshToken) {
-        try {
-          const res = await axios.post(`${baseURL}/auth/refresh`, { refreshToken })
-          localStorage.setItem('accessToken', res.data.accessToken)
-          localStorage.setItem('refreshToken', res.data.refreshToken)
-          original.headers.Authorization = `Bearer ${res.data.accessToken}`
-          return api(original)
-        } catch {
-          localStorage.removeItem('accessToken')
-          localStorage.removeItem('refreshToken')
-          window.location.href = '/login'
-        }
+      try {
+        // Cookie-based refresh — refreshToken cookie is sent automatically
+        const res = await axios.post(`${baseURL}/auth/refresh`, {}, { withCredentials: true })
+        // Keep localStorage in sync during the transitional period
+        if (res.data.accessToken) localStorage.setItem('accessToken', res.data.accessToken)
+        if (res.data.refreshToken) localStorage.setItem('refreshToken', res.data.refreshToken)
+        return api(original)
+      } catch {
+        localStorage.removeItem('accessToken')
+        localStorage.removeItem('refreshToken')
+        window.location.href = '/login'
       }
     }
     return Promise.reject(err)
