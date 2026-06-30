@@ -21,20 +21,18 @@ export function AuthProvider({ children }) {
   }, [])
 
   useEffect(() => {
-    const token = localStorage.getItem('accessToken')
-    if (token) {
-      fetchUser().finally(() => setLoading(false))
-    } else {
-      setLoading(false)
-    }
+    // Point 6: always attempt /auth/me — the httpOnly accessToken cookie
+    // may be the only thing carrying the session (no localStorage entry),
+    // so we can't gate this on localStorage existing anymore.
+    fetchUser().finally(() => setLoading(false))
   }, [fetchUser])
 
   const login = async (email, password) => {
     const res = await api.post('/auth/login', { email, password })
-    localStorage.setItem('accessToken', res.data.accessToken)
-    localStorage.setItem('refreshToken', res.data.refreshToken)
+    // localStorage kept only as a transitional fallback — cookies are primary
+    if (res.data.accessToken) localStorage.setItem('accessToken', res.data.accessToken)
+    if (res.data.refreshToken) localStorage.setItem('refreshToken', res.data.refreshToken)
     setUser(res.data.user)
-    // Fetch full user with profile data
     await fetchUser()
     return res.data
   }
@@ -49,7 +47,6 @@ export function AuthProvider({ children }) {
     return res.data
   }
 
-  // Call this after creating/updating profile so nav rerenders
   const refreshUser = async () => {
     return await fetchUser()
   }
