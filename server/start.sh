@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-echo "=== Between Us API v2.0.0 ==="
+echo "=== Between Us API v2.3.0 ==="
 echo "--- Prisma Generate ---"
 npx prisma generate
 echo "--- Database Push ---"
