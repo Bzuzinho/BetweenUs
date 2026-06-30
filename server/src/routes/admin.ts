@@ -2,10 +2,9 @@ import { Router, Request, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { requireAdmin, logAdminAction } from '../middleware/admin'
+import { recalculateRiskScore, recalculateAllRiskScores } from '../lib/riskScore'
 
 const router = Router()
-
-// All admin routes require auth + admin role
 router.use(requireAuth)
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
@@ -24,7 +23,8 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
       totalMessages, pendingReports,
       premiumSubs, coupleSubs,
       suspendedUsers, bannedUsers,
-      pendingVerifications
+      pendingVerifications,
+      highRiskUsers
     ] = await Promise.all([
       prisma.user.count(),
       prisma.user.count({ where: { createdAt: { gte: today } } }),
@@ -43,11 +43,12 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
       prisma.subscription.count({ where: { plan: 'COUPLE_PREMIUM', status: 'ACTIVE' } }),
       prisma.user.count({ where: { status: 'SUSPENDED' } }),
       prisma.user.count({ where: { status: 'BANNED' } }),
-      prisma.verification.count({ where: { status: 'PENDING' } })
+      prisma.verification.count({ where: { status: 'PENDING' } }),
+      prisma.user.count({ where: { riskScore: { gte: 50 } } })
     ])
 
     res.json({
-      users: { total: totalUsers, newToday, newWeek, newMonth, suspended: suspendedUsers, banned: bannedUsers },
+      users: { total: totalUsers, newToday, newWeek, newMonth, suspended: suspendedUsers, banned: bannedUsers, highRisk: highRiskUsers },
       profiles: { total: totalProfiles, pending: pendingProfiles, approved: approvedProfiles },
       photos: { total: totalPhotos, pending: pendingPhotos },
       matches: { total: totalMatches, active: activeMatches },
@@ -63,7 +64,7 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
-  const { limit = 20, offset = 0, status, search, role } = req.query
+  const { limit = 20, offset = 0, status, search, role, sortByRisk } = req.query
   const where: any = {}
   if (status) where.status = status
   if (role) where.adminRole = role
@@ -75,7 +76,7 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
   const [users, total] = await Promise.all([
     prisma.user.findMany({
       where, take: Number(limit), skip: Number(offset),
-      orderBy: { createdAt: 'desc' },
+      orderBy: sortByRisk === 'true' ? { riskScore: 'desc' } : { createdAt: 'desc' },
       select: {
         id: true, email: true, status: true, adminRole: true,
         createdAt: true, lastSeenAt: true, riskScore: true,
@@ -105,8 +106,7 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
   if (!user) return res.status(404).json({ error: 'Utilizador não encontrado.' })
 
   await logAdminAction(req.userId!, 'VIEW_USER', 'user', req.params.id, {
-    targetUserId: req.params.id,
-    ipAddress: req.ip
+    targetUserId: req.params.id, ipAddress: req.ip
   })
 
   res.json(user)
@@ -121,18 +121,14 @@ router.put('/users/:id/status', requireAdmin('users'), async (req: AuthRequest, 
   const user = await prisma.user.update({ where: { id: req.params.id }, data: { status } })
 
   await logAdminAction(req.userId!, `${status}_USER`, 'user', req.params.id, {
-    targetUserId: req.params.id,
-    reason,
-    previousData: { status: prev?.status },
-    newData: { status },
-    ipAddress: req.ip
+    targetUserId: req.params.id, reason,
+    previousData: { status: prev?.status }, newData: { status }, ipAddress: req.ip
   })
 
   res.json({ ok: true, user })
 })
 
 router.put('/users/:id/role', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
-  // Only SUPER_ADMIN can assign roles
   if ((req as any).adminRole !== 'SUPER_ADMIN') {
     return res.status(403).json({ error: 'Apenas SUPER_ADMIN pode atribuir roles.' })
   }
@@ -142,6 +138,27 @@ router.put('/users/:id/role', requireAdmin('users'), async (req: AuthRequest, re
     targetUserId: req.params.id, newData: { adminRole }, ipAddress: req.ip
   })
   res.json({ ok: true, user })
+})
+
+// C.5 — Recalculate risk score for a user
+router.post('/users/:id/recalculate-risk', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  const score = await recalculateRiskScore(req.params.id)
+  await logAdminAction(req.userId!, 'RECALCULATE_RISK', 'user', req.params.id, {
+    targetUserId: req.params.id, newData: { riskScore: score }, ipAddress: req.ip
+  })
+  res.json({ ok: true, riskScore: score })
+})
+
+// C.5 — Batch recalculate all (SUPER_ADMIN only)
+router.post('/risk-scores/recalculate-all', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  if ((req as any).adminRole !== 'SUPER_ADMIN') {
+    return res.status(403).json({ error: 'Apenas SUPER_ADMIN.' })
+  }
+  const result = await recalculateAllRiskScores()
+  await logAdminAction(req.userId!, 'RECALCULATE_ALL_RISK', 'system', 'all', {
+    newData: result, ipAddress: req.ip
+  })
+  res.json({ ok: true, ...result })
 })
 
 // ─── Profiles ─────────────────────────────────────────────────────────────────
@@ -155,7 +172,7 @@ router.get('/profiles', requireAdmin('profiles'), async (req: AuthRequest, res: 
       where, take: Number(limit), skip: Number(offset),
       orderBy: { createdAt: 'desc' },
       include: {
-        user: { select: { email: true, status: true } },
+        user: { select: { email: true, status: true, riskScore: true } },
         photos: { take: 1, where: { isPrimary: true } },
         _count: { select: { matchesAsOne: true, matchesAsTwo: true } }
       }
@@ -189,12 +206,7 @@ router.get('/photos', requireAdmin('photos'), async (req: AuthRequest, res: Resp
     where: { moderationStatus: status as any },
     take: Number(limit), skip: Number(offset),
     orderBy: { createdAt: 'asc' },
-    include: {
-      profile: {
-        select: { displayName: true, userId: true,
-          user: { select: { email: true } } }
-      }
-    }
+    include: { profile: { select: { displayName: true, userId: true, user: { select: { email: true } } } } }
   })
   const total = await prisma.profilePhoto.count({ where: { moderationStatus: status as any } })
   res.json({ photos, total })
@@ -209,6 +221,14 @@ router.put('/photos/:id', requireAdmin('photos'), async (req: AuthRequest, res: 
     where: { id: req.params.id },
     data: { moderationStatus, moderationNotes }
   })
+
+  // C.5 — rejected photos increase risk score
+  if (moderationStatus === 'REJECTED') {
+    const fullPhoto = await prisma.profilePhoto.findUnique({
+      where: { id: req.params.id }, include: { profile: true }
+    })
+    if (fullPhoto) await recalculateRiskScore(fullPhoto.profile.userId)
+  }
 
   await logAdminAction(req.userId!, `${moderationStatus}_PHOTO`, 'photo', req.params.id, {
     reason: moderationNotes, ipAddress: req.ip
@@ -226,8 +246,7 @@ router.get('/reports', requireAdmin('reports'), async (req: AuthRequest, res: Re
     orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
     include: {
       reporter: { select: { email: true } },
-      reportedUser: { select: { email: true, status: true, riskScore: true,
-        profile: { select: { displayName: true } } } }
+      reportedUser: { select: { email: true, status: true, riskScore: true, profile: { select: { displayName: true } } } }
     }
   })
   const total = await prisma.report.count({ where: { status: status as any } })
@@ -240,6 +259,12 @@ router.put('/reports/:id', requireAdmin('reports'), async (req: AuthRequest, res
     where: { id: req.params.id },
     data: { status, internalNotes, reviewedAt: new Date() }
   })
+
+  // C.5 — resolved (procedente) reports increase reported user's risk score
+  if (status === 'RESOLVED' && report.reportedUserId) {
+    await recalculateRiskScore(report.reportedUserId)
+  }
+
   await logAdminAction(req.userId!, `${status}_REPORT`, 'report', req.params.id, {
     internalNote: internalNotes, ipAddress: req.ip
   })
@@ -251,19 +276,21 @@ router.get('/verifications', requireAdmin('profiles'), async (req: AuthRequest, 
   const verifications = await prisma.verification.findMany({
     where: { status: 'PENDING' },
     orderBy: { createdAt: 'asc' },
-    include: { user: { select: { email: true,
-      profile: { select: { displayName: true } } } } }
+    include: { user: { select: { email: true, profile: { select: { displayName: true } } } } }
   })
   res.json({ verifications })
 })
 
-router.put('/verifications/:userId', requireAdmin('profiles'),
-  async (req: AuthRequest, res: Response) => {
+router.put('/verifications/:userId', requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
   const { status } = req.body
   await prisma.verification.update({
     where: { userId: req.params.userId },
     data: { status, reviewedAt: new Date() }
   })
+
+  // C.5 — approved verification reduces risk score
+  if (status === 'APPROVED') await recalculateRiskScore(req.params.userId)
+
   await logAdminAction(req.userId!, `${status}_VERIFICATION`, 'user', req.params.userId, {
     targetUserId: req.params.userId, ipAddress: req.ip
   })
@@ -291,10 +318,7 @@ router.get('/audit', requireAdmin('audit'), async (req: AuthRequest, res: Respon
 router.get('/beta/invites', requireAdmin('beta'), async (req: AuthRequest, res: Response) => {
   const invites = await prisma.betaInvite.findMany({
     orderBy: { createdAt: 'desc' },
-    include: {
-      createdBy: { select: { email: true } },
-      usedBy: { select: { email: true } }
-    }
+    include: { createdBy: { select: { email: true } }, usedBy: { select: { email: true } } }
   })
   res.json({ invites })
 })
@@ -303,26 +327,16 @@ router.post('/beta/invites', requireAdmin('beta'), async (req: AuthRequest, res:
   const { email, maxUses = 1, expiresAt } = req.body
   const code = Math.random().toString(36).substring(2, 10).toUpperCase()
   const invite = await prisma.betaInvite.create({
-    data: {
-      code,
-      createdById: req.userId!,
-      email,
-      maxUses,
-      expiresAt: expiresAt ? new Date(expiresAt) : null
-    }
+    data: { code, createdById: req.userId!, email, maxUses, expiresAt: expiresAt ? new Date(expiresAt) : null }
   })
   await logAdminAction(req.userId!, 'CREATE_BETA_INVITE', 'beta_invite', invite.id)
   res.json({ invite, inviteUrl: `${process.env.CLIENT_URL}/join/${code}` })
 })
 
-router.put('/beta/invites/:id/toggle', requireAdmin('beta'),
-  async (req: AuthRequest, res: Response) => {
+router.put('/beta/invites/:id/toggle', requireAdmin('beta'), async (req: AuthRequest, res: Response) => {
   const invite = await prisma.betaInvite.findUnique({ where: { id: req.params.id } })
   if (!invite) return res.status(404).json({ error: 'Convite não encontrado.' })
-  const updated = await prisma.betaInvite.update({
-    where: { id: req.params.id },
-    data: { active: !invite.active }
-  })
+  const updated = await prisma.betaInvite.update({ where: { id: req.params.id }, data: { active: !invite.active } })
   res.json({ ok: true, invite: updated })
 })
 
