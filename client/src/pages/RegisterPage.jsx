@@ -8,26 +8,17 @@ const colors = {
   accent:'#C9956B', rose:'#F2C4B8', white:'#FAF7F5', muted:'#7A6E88'
 }
 
-const RELATIONSHIP_STATUSES = [
-  { value:'SINGLE', label:'Solteiro/a' },
-  { value:'COMMITTED', label:'Comprometido/a' },
-  { value:'MARRIED', label:'Casado/a' },
-  { value:'OPEN', label:'Relação aberta' },
-  { value:'POLYAMOROUS', label:'Poliamoroso/a' },
-  { value:'COUPLE_CURIOUS', label:'Casal curioso' },
-  { value:'COUPLE_LIBERAL', label:'Casal liberal' },
-  { value:'OTHER', label:'Outro' },
-]
-
 export default function RegisterPage() {
   const { register } = useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const [step, setStep] = useState(1) // 1=email/pw, 2=beta code, 3=age/terms
+  const [step, setStep] = useState(1) // 1=email/pw, 2=beta code (only if required), 3=age/terms
   const [form, setForm] = useState({
     email:'', password:'', confirmPassword:'',
     dateOfBirth:'', termsAccepted:false,
-    betaCode: searchParams.get('invite') || ''
+    // Point 17: prefer the code stored by BetaJoinPage after a successful
+    // /api/beta/validate/:code call; fall back to a raw ?invite= param
+    betaCode: localStorage.getItem('betaCode') || searchParams.get('invite') || ''
   })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -35,40 +26,28 @@ export default function RegisterPage() {
   const [betaChecking, setBetaChecking] = useState(false)
   const [betaValid, setBetaValid] = useState(false)
 
-  // Detect if beta is closed on mount
+  // Point 17: validate any pre-filled code against the real public endpoint
   useEffect(() => {
-    api.get('/beta/check/DUMMY_CODE_CHECK')
-      .then(() => {})
-      .catch(err => {
-        // If 403/404 with betaOpen:false, beta is closed
-        const data = err.response?.data
-        if (data?.betaOpen === false || err.response?.status === 404) {
-          setBetaRequired(true)
-        }
-      })
-    // Also check via health endpoint
-    api.get('/health', { baseURL: '' }).catch(() => {})
-  }, [])
-
-  // Auto-validate beta code from URL param
-  useEffect(() => {
-    if (form.betaCode && form.betaCode.length >= 9) {
+    if (form.betaCode && form.betaCode.length >= 6) {
       checkBetaCode(form.betaCode)
     }
   }, [])
 
   const checkBetaCode = async (code) => {
-    if (!code || code.length < 4) return
+    if (!code) return
     setBetaChecking(true)
-    setBetaValid(false)
     try {
-      const res = await api.get(`/beta/check/${code}`, {
-        params: form.email ? { email: form.email } : {}
-      })
-      setBetaValid(res.data.valid)
-      if (res.data.betaOpen) setBetaRequired(false)
-    } catch {
+      const res = await api.get(`/beta/validate/${code.toUpperCase()}`)
+      setBetaValid(!!res.data.valid)
+      if (res.data.valid) setBetaRequired(true)
+    } catch (err) {
       setBetaValid(false)
+      // A 403 with code BETA_REQUIRED-style payload is not what /validate
+      // returns, but a clearly invalid/expired code still implies beta is
+      // active — surface that so the field shows as required.
+      if (err.response?.status === 404 || err.response?.status === 400) {
+        setBetaRequired(true)
+      }
     } finally {
       setBetaChecking(false)
     }
@@ -82,6 +61,9 @@ export default function RegisterPage() {
     if (!form.dateOfBirth) return setError('Data de nascimento obrigatória.')
     setLoading(true); setError('')
     try {
+      // Point 4: betaCode is sent inside register and validated/consumed
+      // server-side as the single source of truth — this page never
+      // "uses" the invite itself, it only forwards the code.
       const res = await register({
         email: form.email,
         password: form.password,
@@ -89,16 +71,21 @@ export default function RegisterPage() {
         termsAccepted: form.termsAccepted,
         ...(form.betaCode && { betaCode: form.betaCode.toUpperCase() })
       })
-      // Auto-login with tokens from register response
+      localStorage.removeItem('betaCode')
       if (res.accessToken) {
-        localStorage.setItem('accessToken', res.accessToken)
-        localStorage.setItem('refreshToken', res.refreshToken)
         navigate('/create-profile')
       } else {
         navigate('/login')
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Erro ao criar conta.')
+      const data = err.response?.data
+      if (data?.code === 'BETA_REQUIRED') {
+        setBetaRequired(true)
+        setStep(2)
+        setError(data.error)
+      } else {
+        setError(data?.error || 'Erro ao criar conta.')
+      }
     } finally { setLoading(false) }
   }
 
@@ -191,12 +178,9 @@ export default function RegisterPage() {
                 <input style={{ ...inputStyle, marginBottom:0,
                   borderColor: betaValid ? '#3DD68C' : form.betaCode ? '#E05C7A55' : colors.plum,
                   paddingRight:40, textTransform:'uppercase', letterSpacing:1 }}
-                  placeholder="BTUS-XXXX"
+                  placeholder="CÓDIGO"
                   value={form.betaCode}
-                  onChange={e => {
-                    set('betaCode', e.target.value.toUpperCase())
-                    setBetaValid(false)
-                  }}
+                  onChange={e => { set('betaCode', e.target.value.toUpperCase()); setBetaValid(false) }}
                   onBlur={() => form.betaCode && checkBetaCode(form.betaCode)}
                 />
                 <div style={{ position:'absolute', right:14, top:'50%',
@@ -223,7 +207,6 @@ export default function RegisterPage() {
                   if (!betaValid) {
                     setError('')
                     await checkBetaCode(form.betaCode)
-                    if (!betaValid) return setError('Código de convite inválido.')
                   }
                   setError(''); setStep(3)
                 }}
@@ -263,8 +246,10 @@ export default function RegisterPage() {
                   )}
                 </div>
                 <span style={{ color:colors.muted, fontSize:13, lineHeight:1.5 }}>
-                  Aceito os <span style={{ color:colors.accent }}>Termos de Utilização</span> e a{' '}
-                  <span style={{ color:colors.accent }}>Política de Privacidade</span>.
+                  Aceito os{' '}
+                  <Link to="/legal/terms" style={{ color:colors.accent }}>Termos de Utilização</Link>{' '}
+                  e a{' '}
+                  <Link to="/legal/privacy" style={{ color:colors.accent }}>Política de Privacidade</Link>.
                   Confirmo que tenho 18 anos ou mais.
                 </span>
               </div>
