@@ -29,10 +29,7 @@ app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true)
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true)
-    if (isProd) {
-      console.warn('[CORS] Blocked:', origin)
-      return callback(new Error('Not allowed by CORS'))
-    }
+    if (isProd) { console.warn('[CORS] Blocked:', origin); return callback(new Error('Not allowed by CORS')) }
     callback(null, true)
   },
   credentials: true,
@@ -40,14 +37,12 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }))
 
-// Stripe webhook needs raw body — BEFORE json middleware
 import webhooksRouter from './routes/webhooks'
 app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhooksRouter)
 
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
 
-// Rate limits
 const globalLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true })
 const strictLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10,
   message: { error: 'Demasiadas tentativas. Tenta novamente em 15 minutos.' } })
@@ -58,11 +53,8 @@ app.use('/api/auth/register', strictLimiter)
 app.use('/api/auth/password', strictLimiter)
 
 app.get('/health', (_, res) => {
-  res.json({
-    status: 'ok', app: 'Between Us API', version: '2.0.0',
-    environment: process.env.NODE_ENV,
-    timestamp: new Date().toISOString()
-  })
+  res.json({ status: 'ok', app: 'Between Us API', version: '2.1.0',
+    environment: process.env.NODE_ENV, timestamp: new Date().toISOString() })
 })
 
 import authRouter from './routes/auth'
@@ -80,6 +72,7 @@ import verificationsRouter from './routes/verifications'
 import travelRouter from './routes/travel'
 import consentRouter from './routes/consent'
 import safetyRouter from './routes/safety'
+import betaRouter from './routes/beta'
 
 app.use('/api/auth', authRouter)
 app.use('/api/profiles', profileRouter)
@@ -96,8 +89,8 @@ app.use('/api/verifications', verificationsRouter)
 app.use('/api/travel', travelRouter)
 app.use('/api/consent', consentRouter)
 app.use('/api/safety', safetyRouter)
+app.use('/api/beta', betaRouter)
 
-// /debug only in development
 if (!isProd) {
   app.get('/debug-info', (_req, res) => res.json({ env: process.env.NODE_ENV }))
 }
@@ -112,14 +105,12 @@ io.on('connection', (socket) => {
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[ERROR]', err.message)
-  res.status(err.status || 500).json({
-    error: isProd ? 'Erro interno. Tenta novamente.' : err.message
-  })
+  res.status(err.status || 500).json({ error: isProd ? 'Erro interno. Tenta novamente.' : err.message })
 })
 
 const PORT = process.env.PORT || 4000
 httpServer.listen(PORT, () => {
-  console.log('[SERVER] Between Us API v2.0.0 — ALL routes active')
+  console.log('[SERVER] Between Us API v2.1.0 — beta routes active')
   console.log('[SERVER] Environment:', process.env.NODE_ENV)
 })
 
