@@ -6,7 +6,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 const router = Router()
 
 const profileSchema = z.object({
-  displayName: z.string().min(2).max(50),
+  displayName: z.string().min(2).max(50).optional(),
   bio: z.string().max(500).optional(),
   gender: z.string().optional(),
   orientation: z.string().optional(),
@@ -20,7 +20,27 @@ const profileSchema = z.object({
   intentions: z.array(z.object({
     slug: z.string(),
     preference: z.enum(['YES','MAYBE','NO']).optional()
-  })).optional()
+  })).optional(),
+  onboardingStep: z.number().min(1).max(10).optional()
+})
+
+// 9.2 — Onboarding steps definition
+const ONBOARDING_STEPS = [
+  { step: 1, name: 'account', label: 'Criar conta' },
+  { step: 2, name: 'age_verification', label: 'Verificar idade' },
+  { step: 3, name: 'profile_type', label: 'Tipo de perfil' },
+  { step: 4, name: 'relationship_dynamic', label: 'Dinâmica relacional' },
+  { step: 5, name: 'intentions', label: 'Intenções' },
+  { step: 6, name: 'boundaries', label: 'Limites' },
+  { step: 7, name: 'privacy', label: 'Privacidade' },
+  { step: 8, name: 'photos', label: 'Fotos' },
+  { step: 9, name: 'bio', label: 'Bio' },
+  { step: 10, name: 'discovery_mode', label: 'Modo de descoberta' },
+]
+
+router.get('/onboarding/steps', requireAuth, async (req: AuthRequest, res: Response) => {
+  const profile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
+  res.json({ steps: ONBOARDING_STEPS, currentStep: (profile as any)?.onboardingStep || 1 })
 })
 
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -38,11 +58,31 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json(profile)
 })
 
+// 9.2 — Create or update DRAFT progressively
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const data = profileSchema.parse(req.body)
     const existing = await prisma.profile.findUnique({ where: { userId: req.userId! } })
-    if (existing) return res.status(409).json({ error: 'Já tens um perfil criado.' })
+
+    if (existing) {
+      // Already has a profile — update as draft progress
+      const updated = await prisma.profile.update({
+        where: { userId: req.userId! },
+        data: {
+          ...(data.displayName && { displayName: data.displayName }),
+          ...(data.bio !== undefined && { bio: data.bio }),
+          ...(data.gender && { gender: data.gender }),
+          ...(data.orientation && { orientation: data.orientation }),
+          ...(data.relationshipStatus && { relationshipStatus: data.relationshipStatus }),
+          ...(data.city && { city: data.city }),
+          ...(data.country && { country: data.country }),
+          ...(data.discretionLevel && { discretionLevel: data.discretionLevel }),
+        }
+      })
+      return res.json(updated)
+    }
+
+    if (!data.displayName) return res.status(400).json({ error: 'Nome obrigatório.' })
 
     const profile = await prisma.profile.create({
       data: {
@@ -54,16 +94,15 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
         relationshipStatus: data.relationshipStatus || 'SINGLE',
         city: data.city, country: data.country,
         discretionLevel: data.discretionLevel || 'SELECTIVE',
-        // B.1: new profiles start as PENDING_REVIEW in production
-        status: process.env.NODE_ENV === 'production' ? 'PENDING_REVIEW' : 'APPROVED',
+        // 9.2 — starts as DRAFT, becomes PENDING_REVIEW only when onboarding completes
+        status: 'DRAFT',
         privacySettings: { create: {
-          visibleInDiscovery: true, showDistance: true,
+          visibleInDiscovery: false, showDistance: true,
           showOnlineStatus: false, invisibleMode: false, notificationMode: 'DISCREET'
         }}
       }
     })
 
-    // B.2: intentions with preference (YES/MAYBE/NO)
     if (data.intentions?.length) {
       const intentionRecords = await prisma.intention.findMany({
         where: { slug: { in: data.intentions.map(i => i.slug) } }
@@ -80,6 +119,41 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
     console.error('[CREATE PROFILE]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// 9.2 — Advance onboarding step
+router.put('/onboarding/step', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { step } = req.body
+    if (!step || step < 1 || step > 10) return res.status(400).json({ error: 'Passo inválido.' })
+
+    const profile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
+    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
+    const isProd = process.env.NODE_ENV === 'production'
+    const completing = step >= 10
+
+    const updated = await prisma.profile.update({
+      where: { userId: req.userId! },
+      data: {
+        // When onboarding completes (step 10), move from DRAFT to PENDING_REVIEW
+        ...(completing && profile.status === 'DRAFT' && {
+          status: isProd ? 'PENDING_REVIEW' : 'APPROVED'
+        })
+      }
+    })
+
+    if (completing) {
+      await prisma.privacySettings.update({
+        where: { profileId: profile.id },
+        data: { visibleInDiscovery: true }
+      })
+    }
+
+    res.json({ ok: true, profile: updated, completed: completing })
+  } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
   }
 })
@@ -149,9 +223,7 @@ router.put('/:id/boundaries', requireAuth, async (req: AuthRequest, res: Respons
   if (!Array.isArray(boundaries)) return res.status(400).json({ error: 'Formato inválido.' })
   await prisma.profileBoundary.deleteMany({ where: { profileId: profile.id } })
   await prisma.profileBoundary.createMany({
-    data: boundaries.map((b: any) => ({
-      profileId: profile.id, boundaryId: b.boundaryId, preference: b.preference
-    }))
+    data: boundaries.map((b: any) => ({ profileId: profile.id, boundaryId: b.boundaryId, preference: b.preference }))
   })
   res.json({ message: 'Limites atualizados.' })
 })
@@ -165,9 +237,7 @@ router.put('/:id/privacy', requireAuth, async (req: AuthRequest, res: Response) 
     return res.status(403).json({ error: 'Modo invisível requer Premium.', code: 'PREMIUM_REQUIRED' })
   }
   const settings = await prisma.privacySettings.upsert({
-    where: { profileId: profile.id },
-    update: req.body,
-    create: { profileId: profile.id, ...req.body }
+    where: { profileId: profile.id }, update: req.body, create: { profileId: profile.id, ...req.body }
   })
   res.json(settings)
 })
