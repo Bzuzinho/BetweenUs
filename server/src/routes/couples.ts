@@ -2,6 +2,7 @@ import { Router, Response } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { createLikeOrMatch } from '../lib/matchService'
 
 const router = Router()
 
@@ -73,6 +74,10 @@ router.post('/join/:token', requireAuth, async (req: AuthRequest, res: Response)
   }
 })
 
+// Point 9: now delegates to the shared matchService instead of duplicating
+// the like/match logic. Both partners liking independently still works the
+// same way (each call registers a LIKE on the couple's shared profile),
+// but the actual match-creation decision is centralized.
 router.post('/like/:targetProfileId', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const myProfile = await prisma.profile.findUnique({
@@ -80,62 +85,32 @@ router.post('/like/:targetProfileId', requireAuth, async (req: AuthRequest, res:
     })
     if (!myProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
     if (!myProfile.coupleProfile) return res.status(400).json({ error: 'Perfil de casal necessário.' })
-
-    const couple = myProfile.coupleProfile
-    if (couple.coupleStatus !== 'ACTIVE') return res.status(400).json({ error: 'Perfil de casal não está ativo.' })
-
-    await prisma.profileAction.upsert({
-      where: { actorProfileId_targetProfileId: { actorProfileId: myProfile.id, targetProfileId: req.params.targetProfileId } },
-      update: { action: 'LIKE' },
-      create: { actorProfileId: myProfile.id, targetProfileId: req.params.targetProfileId, action: 'LIKE' }
-    })
-
-    const partnerUserId = couple.partnerOneUserId === req.userId
-      ? couple.partnerTwoUserId : couple.partnerOneUserId
-
-    if (!partnerUserId) {
-      return res.json({ ok: true, status: 'PENDING_PARTNER', message: 'Like registado. A aguardar aprovação do/a parceiro/a.' })
+    if (myProfile.coupleProfile.coupleStatus !== 'ACTIVE') {
+      return res.status(400).json({ error: 'Perfil de casal não está ativo.' })
     }
 
-    const partnerProfile = await prisma.profile.findUnique({ where: { userId: partnerUserId } })
-    const partnerLiked = partnerProfile ? await prisma.profileAction.findFirst({
-      where: { actorProfileId: partnerProfile.id, targetProfileId: req.params.targetProfileId, action: 'LIKE' }
-    }) : null
+    const result = await createLikeOrMatch(myProfile.id, req.params.targetProfileId)
 
-    if (partnerLiked) {
-      const theirLike = await prisma.profileAction.findFirst({
-        where: { actorProfileId: req.params.targetProfileId, targetProfileId: myProfile.id, action: 'LIKE' }
-      })
-      if (theirLike) {
-        const existing = await prisma.match.findFirst({
-          where: { OR: [
-            { profileOneId: myProfile.id, profileTwoId: req.params.targetProfileId },
-            { profileOneId: req.params.targetProfileId, profileTwoId: myProfile.id }
-          ]}
-        })
-        if (!existing) {
-          const match = await prisma.match.create({
-            data: {
-              profileOneId: myProfile.id, profileTwoId: req.params.targetProfileId,
-              status: 'ACTIVE', matchedAt: new Date(),
-              conversation: { create: { type: 'COUPLE_GROUP' } }
-            }
-          })
-          return res.json({ ok: true, status: 'MATCHED', matchId: match.id, message: 'É um match! Ambos aprovaram.' })
-        }
-      }
-      return res.json({ ok: true, status: 'BOTH_APPROVED', message: 'Ambos aprovaram. A aguardar interesse mútuo.' })
+    switch (result.kind) {
+      case 'ERROR':
+        return res.status(400).json({ error: result.message })
+      case 'LIKE_RECORDED':
+        return res.json({ ok: true, status: 'PENDING_PARTNER', message: 'Like registado. A aguardar interesse mútuo.' })
+      case 'MATCH_PENDING_COUPLE_APPROVAL':
+        return res.json({ ok: true, status: 'PENDING_COUPLE_APPROVAL', matchId: result.matchId,
+          message: 'Interesse mútuo! Falta a aprovação de ambos os membros do casal.' })
+      case 'MATCH_CREATED':
+      case 'ALREADY_MATCHED':
+        return res.json({ ok: true, status: 'MATCHED', matchId: result.matchId, message: 'É um match!' })
+      default:
+        return res.json({ ok: true, status: 'PENDING_PARTNER' })
     }
-
-    res.json({ ok: true, status: 'PENDING_PARTNER', message: 'Like registado. A aguardar aprovação do/a parceiro/a.' })
   } catch (err: any) {
     console.error('[COUPLE LIKE]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
   }
 })
 
-// POST /api/couples/matches/:matchId/approve
-// Point 8: validate the user actually belongs to the active couple involved in this match
 router.post('/matches/:matchId/approve', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const match = await prisma.match.findUnique({
@@ -147,8 +122,6 @@ router.post('/matches/:matchId/approve', requireAuth, async (req: AuthRequest, r
     })
     if (!match) return res.status(404).json({ error: 'Match não encontrado.' })
 
-    // Point 8: identify which side (if any) is a couple, and confirm req.userId
-    // is one of its two partners on an ACTIVE couple — not just "any authenticated user"
     const coupleSide = match.profileOne.coupleProfile?.coupleStatus === 'ACTIVE'
       ? match.profileOne.coupleProfile
       : match.profileTwo.coupleProfile?.coupleStatus === 'ACTIVE'
@@ -177,7 +150,6 @@ router.post('/matches/:matchId/approve', requireAuth, async (req: AuthRequest, r
       where: { matchId: match.id, approvedAt: { not: null } }
     })
 
-    // Both partners (partnerOneUserId and partnerTwoUserId) must have approved
     const requiredApprovers = [coupleSide.partnerOneUserId, coupleSide.partnerTwoUserId].filter(Boolean)
     const approvedUserIds = new Set(approvals.map(a => a.userId))
     const allApproved = requiredApprovers.every(uid => approvedUserIds.has(uid!))
