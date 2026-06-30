@@ -4,7 +4,20 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
 
-// POST /api/consent/check — initiate a consent check
+// Point 7: shared membership check, mirrors matches.ts logic
+const getMyProfileId = async (userId: string): Promise<string | null> => {
+  const profile = await prisma.profile.findUnique({ where: { userId }, select: { id: true } })
+  return profile?.id || null
+}
+
+const verifyMatchMembership = async (matchId: string, profileId: string): Promise<boolean> => {
+  const match = await prisma.match.findFirst({
+    where: { id: matchId, OR: [{ profileOneId: profileId }, { profileTwoId: profileId }] }
+  })
+  return !!match
+}
+
+// POST /api/consent/check — Point 7: validate membership before creating
 router.post('/check', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { matchId, phase } = req.body
@@ -12,17 +25,17 @@ router.post('/check', requireAuth, async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'matchId e phase são obrigatórios.' })
     }
 
-    const profile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
-    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    const profileId = await getMyProfileId(req.userId!)
+    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
+    const isMember = await verifyMatchMembership(matchId, profileId)
+    if (!isMember) return res.status(403).json({ error: 'Sem acesso a este match.' })
 
     const check = await prisma.consentCheck.create({
       data: {
-        matchId,
-        profileId: profile.id,
-        phase,
-        status: 'PENDING',
+        matchId, profileId, phase, status: 'PENDING',
         initiatedBy: req.userId!,
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24h
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
       }
     })
 
@@ -32,16 +45,24 @@ router.post('/check', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 })
 
-// PUT /api/consent/check/:id — respond to consent check
+// PUT /api/consent/check/:id — Point 7: validate the check belongs to a match the user is part of
 router.put('/check/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const { status } = req.body // ACCEPTED | DECLINED
+    const { status } = req.body
     if (!['ACCEPTED','DECLINED'].includes(status)) {
       return res.status(400).json({ error: 'Status inválido.' })
     }
 
+    const profileId = await getMyProfileId(req.userId!)
+    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
     const check = await prisma.consentCheck.findUnique({ where: { id: req.params.id } })
     if (!check) return res.status(404).json({ error: 'Consent check não encontrado.' })
+
+    // Point 7: validate the responding user belongs to the underlying match
+    const isMember = await verifyMatchMembership(check.matchId, profileId)
+    if (!isMember) return res.status(403).json({ error: 'Sem acesso a este match.' })
+
     if (check.expiresAt && check.expiresAt < new Date()) {
       await prisma.consentCheck.update({ where: { id: check.id }, data: { status: 'EXPIRED' } })
       return res.status(400).json({ error: 'Este consent check expirou.' })
@@ -58,13 +79,23 @@ router.put('/check/:id', requireAuth, async (req: AuthRequest, res: Response) =>
   }
 })
 
-// GET /api/consent/match/:matchId — get consent checks for a match
+// GET /api/consent/match/:matchId — Point 7: validate membership before listing
 router.get('/match/:matchId', requireAuth, async (req: AuthRequest, res: Response) => {
-  const checks = await prisma.consentCheck.findMany({
-    where: { matchId: req.params.matchId },
-    orderBy: { createdAt: 'desc' }
-  })
-  res.json({ checks })
+  try {
+    const profileId = await getMyProfileId(req.userId!)
+    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
+    const isMember = await verifyMatchMembership(req.params.matchId, profileId)
+    if (!isMember) return res.status(403).json({ error: 'Sem acesso a este match.' })
+
+    const checks = await prisma.consentCheck.findMany({
+      where: { matchId: req.params.matchId },
+      orderBy: { createdAt: 'desc' }
+    })
+    res.json({ checks })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
 })
 
 export default router
