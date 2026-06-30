@@ -12,7 +12,6 @@ export default function BetaJoinPage() {
   const { code: paramCode } = useParams()
   const navigate = useNavigate()
   const [code, setCode] = useState(paramCode?.toUpperCase() || '')
-  const [loading, setLoading] = useState(false)
   const [validating, setValidating] = useState(!!paramCode)
   const [invite, setInvite] = useState(null)
   const [error, setError] = useState('')
@@ -21,6 +20,9 @@ export default function BetaJoinPage() {
     if (paramCode) validateCode(paramCode.toUpperCase())
   }, [])
 
+  // Point 17: only validates via the public endpoint and stores the code
+  // locally for RegisterPage to pick up. Does NOT call /api/beta/use —
+  // that endpoint is deprecated; consumption happens inside /api/auth/register.
   const validateCode = async (c) => {
     setValidating(true); setError('')
     try {
