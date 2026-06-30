@@ -10,6 +10,7 @@ import VerificationPage from './pages/VerificationPage'
 import PremiumPage from './pages/PremiumPage'
 import PrivacySettingsPage from './pages/PrivacySettingsPage'
 import BetaJoinPage from './pages/BetaJoinPage'
+import LegalPage from './pages/LegalPage'
 import DebugPage from './pages/DebugPage'
 import AppShell from './AppShell'
 
@@ -58,6 +59,7 @@ export default function App() {
         <Route path="/join" element={<BetaJoinPage />} />
         <Route path="/join/:code" element={<BetaJoinPage />} />
         <Route path="/couple-invite/:token" element={<CoupleInvitePage />} />
+        <Route path="/legal/:page" element={<LegalPage />} />
         <Route path="/create-profile" element={
           <PrivateRoute requireProfile={false}><CreateProfilePage /></PrivateRoute>
         } />
