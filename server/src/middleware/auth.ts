@@ -4,7 +4,13 @@ import prisma from '../lib/prisma'
 
 export interface AuthRequest extends Request {
   userId?: string
-  user?: any
+  user?: {
+    id: string
+    email: string
+    status: string
+    adminRole: string | null
+    emailVerifiedAt: Date | null
+  }
 }
 
 export const requireAuth = async (
@@ -13,21 +19,39 @@ export const requireAuth = async (
   next: NextFunction
 ) => {
   const authHeader = req.headers.authorization
-  if (!authHeader?.startsWith('Bearer ')) {
+  // Point 6: also accept token from httpOnly cookie (transitional — supports both)
+  const cookieToken = (req as any).cookies?.accessToken
+  const token = authHeader?.startsWith('Bearer ')
+    ? authHeader.split(' ')[1]
+    : cookieToken
+
+  if (!token) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
 
-  const token = authHeader.split(' ')[1]
-
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string }
+
+    // Point 15: load adminRole + emailVerifiedAt + status in one query
     const user = await prisma.user.findUnique({
       where: { id: payload.userId },
-      select: { id: true, email: true, status: true }
+      select: {
+        id: true, email: true, status: true,
+        adminRole: true, emailVerifiedAt: true
+      }
     })
 
-    if (!user || user.status === 'BANNED' || user.status === 'DELETED') {
+    if (!user) {
       return res.status(401).json({ error: 'Unauthorized' })
+    }
+    // Point 15: also block SUSPENDED, not just BANNED/DELETED
+    if (user.status === 'BANNED' || user.status === 'DELETED' || user.status === 'SUSPENDED') {
+      return res.status(403).json({
+        error: user.status === 'SUSPENDED'
+          ? 'A tua conta está temporariamente suspensa.'
+          : 'Esta conta foi banida.',
+        code: `ACCOUNT_${user.status}`
+      })
     }
 
     req.userId = user.id
