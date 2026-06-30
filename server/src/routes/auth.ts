@@ -20,36 +20,69 @@ const registerSchema = z.object({
     const age = (Date.now() - new Date(val).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
     return age >= 18
   }, 'Tens de ter pelo menos 18 anos'),
-  termsAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar os termos')
+  termsAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar os termos'),
+  betaCode: z.string().optional()
 })
 
-// A.4: store hash of refresh token, not the token itself
-const hashToken = (token: string) =>
-  createHash('sha256').update(token).digest('hex')
+const hashToken = (token: string) => createHash('sha256').update(token).digest('hex')
 
 const getRedis = async () => {
   try {
     const redis = (await import('../lib/redis')).default
     if (!redis.isOpen) await redis.connect()
     return redis
-  } catch {
-    return null
+  } catch { return null }
+}
+
+const isProd = process.env.NODE_ENV === 'production'
+const BETA_CLOSED = process.env.BETA_CLOSED === 'true'
+
+// Point 4: validate beta invite inside register — single source of truth
+const validateBetaCode = async (code: string | undefined, email: string) => {
+  if (!BETA_CLOSED) return { ok: true, invite: null }
+
+  if (!code) {
+    return { ok: false, error: 'O Between Us está em beta fechado. Precisas de um convite.', errCode: 'BETA_REQUIRED' }
   }
+
+  const invite = await prisma.betaInvite.findUnique({ where: { code: code.toUpperCase() } })
+
+  if (!invite || !invite.active) {
+    return { ok: false, error: 'Convite inválido ou expirado.', errCode: 'BETA_INVALID' }
+  }
+  if (invite.expiresAt && invite.expiresAt < new Date()) {
+    return { ok: false, error: 'Este convite expirou.', errCode: 'BETA_EXPIRED' }
+  }
+  if (invite.useCount >= invite.maxUses) {
+    return { ok: false, error: 'Este convite já atingiu o limite de utilizações.', errCode: 'BETA_EXHAUSTED' }
+  }
+  if (invite.email && invite.email.toLowerCase() !== email.toLowerCase()) {
+    return { ok: false, error: 'Este convite está reservado para outro email.', errCode: 'BETA_EMAIL_MISMATCH' }
+  }
+
+  return { ok: true, invite }
 }
 
 // POST /api/auth/register
 router.post('/register', authLimiter, async (req: Request, res: Response) => {
   try {
     const data = registerSchema.parse(req.body)
+
     const existing = await prisma.user.findUnique({ where: { email: data.email } })
     if (existing) return res.status(409).json({ error: 'Este email já está registado.' })
+
+    // Point 4: beta validated here, single source of truth
+    const betaCheck = await validateBetaCode(data.betaCode, data.email)
+    if (!betaCheck.ok) {
+      return res.status(403).json({ error: betaCheck.error, code: betaCheck.errCode })
+    }
 
     const passwordHash = await bcrypt.hash(data.password, 12)
     const user = await prisma.user.create({
       data: {
         email: data.email, passwordHash,
         dateOfBirth: new Date(data.dateOfBirth),
-        emailVerifiedAt: new Date(), // dev: auto-verify
+        emailVerifiedAt: new Date(), // dev: auto-verify; replace once SMTP active
         status: 'ACTIVE',
         termsAcceptedAt: new Date(), privacyAcceptedAt: new Date(),
         consents: { create: [
@@ -61,13 +94,25 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
       }
     })
 
+    // Point 4: consume invite atomically after account creation succeeds
+    if (betaCheck.invite) {
+      const inv = betaCheck.invite
+      const newUseCount = inv.useCount + 1
+      await prisma.betaInvite.update({
+        where: { id: inv.id },
+        data: {
+          useCount: { increment: 1 },
+          usedById: inv.maxUses === 1 ? user.id : undefined,
+          usedAt: inv.maxUses === 1 ? new Date() : undefined,
+          active: newUseCount >= inv.maxUses ? false : inv.active
+        }
+      })
+    }
+
     const { accessToken, refreshToken } = generateTokens(user.id)
 
-    // A.4: store hash of refresh token
     const redis = await getRedis()
-    if (redis) {
-      await redis.setEx(`refresh:${user.id}`, 30 * 24 * 60 * 60, hashToken(refreshToken))
-    }
+    if (redis) await redis.setEx(`refresh:${user.id}`, 30 * 24 * 60 * 60, hashToken(refreshToken))
 
     res.status(201).json({
       message: 'Conta criada com sucesso!',
@@ -100,11 +145,8 @@ router.post('/login', authLimiter, async (req: Request, res: Response) => {
 
     const { accessToken, refreshToken } = generateTokens(user.id)
 
-    // A.4: store hash of refresh token in Redis
     const redis = await getRedis()
-    if (redis) {
-      await redis.setEx(`refresh:${user.id}`, 30 * 24 * 60 * 60, hashToken(refreshToken))
-    }
+    if (redis) await redis.setEx(`refresh:${user.id}`, 30 * 24 * 60 * 60, hashToken(refreshToken))
 
     res.json({
       accessToken, refreshToken,
@@ -130,14 +172,12 @@ router.post('/logout', async (req: Request, res: Response) => {
   res.json({ message: 'Sessão terminada.' })
 })
 
-// POST /api/auth/refresh — A.4: validate hash against Redis
+// POST /api/auth/refresh
 router.post('/refresh', async (req: Request, res: Response) => {
   const { refreshToken } = req.body
   if (!refreshToken) return res.status(401).json({ error: 'Token em falta.' })
   try {
     const { userId } = verifyRefreshToken(refreshToken)
-
-    // A.4: verify stored hash matches
     const redis = await getRedis()
     if (redis) {
       const storedHash = await redis.get(`refresh:${userId}`)
@@ -145,14 +185,8 @@ router.post('/refresh', async (req: Request, res: Response) => {
         return res.status(401).json({ error: 'Token inválido ou revogado.' })
       }
     }
-
     const tokens = generateTokens(userId)
-
-    // A.4: rotate — store new hash, invalidate old
-    if (redis) {
-      await redis.setEx(`refresh:${userId}`, 30 * 24 * 60 * 60, hashToken(tokens.refreshToken))
-    }
-
+    if (redis) await redis.setEx(`refresh:${userId}`, 30 * 24 * 60 * 60, hashToken(tokens.refreshToken))
     res.json(tokens)
   } catch {
     res.status(401).json({ error: 'Token expirado ou inválido.' })
@@ -181,13 +215,10 @@ router.get('/me', async (req: Request, res: Response) => {
   }
 })
 
-// POST /api/auth/password/forgot
 router.post('/password/forgot', authLimiter, async (_req: Request, res: Response) => {
-  // Always return 200 to avoid email enumeration
   res.json({ message: 'Se este email existe, receberás instruções em breve.' })
 })
 
-// DELETE /api/auth/sessions — revoke all sessions
 router.delete('/sessions', async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization
   if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ error: 'Não autenticado.' })
