@@ -5,7 +5,6 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
 
-// POST /api/couples — criar perfil de casal
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { coupleDescription, partnerEmail } = req.body
@@ -38,7 +37,6 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 })
 
-// GET /api/couples/me
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profile = await prisma.profile.findUnique({
@@ -51,7 +49,6 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 })
 
-// POST /api/couples/join/:token
 router.post('/join/:token', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const couple = await prisma.coupleProfile.findUnique({
@@ -76,13 +73,10 @@ router.post('/join/:token', requireAuth, async (req: AuthRequest, res: Response)
   }
 })
 
-// B.4 — POST /api/couples/like/:targetProfileId
-// Casal dá like — cria pedido de aprovação interna
 router.post('/like/:targetProfileId', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const myProfile = await prisma.profile.findUnique({
-      where: { userId: req.userId! },
-      include: { coupleProfile: true }
+      where: { userId: req.userId! }, include: { coupleProfile: true }
     })
     if (!myProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
     if (!myProfile.coupleProfile) return res.status(400).json({ error: 'Perfil de casal necessário.' })
@@ -90,17 +84,14 @@ router.post('/like/:targetProfileId', requireAuth, async (req: AuthRequest, res:
     const couple = myProfile.coupleProfile
     if (couple.coupleStatus !== 'ACTIVE') return res.status(400).json({ error: 'Perfil de casal não está ativo.' })
 
-    // Register like from this member
     await prisma.profileAction.upsert({
       where: { actorProfileId_targetProfileId: { actorProfileId: myProfile.id, targetProfileId: req.params.targetProfileId } },
       update: { action: 'LIKE' },
       create: { actorProfileId: myProfile.id, targetProfileId: req.params.targetProfileId, action: 'LIKE' }
     })
 
-    // Check if partner also liked (both must approve)
     const partnerUserId = couple.partnerOneUserId === req.userId
-      ? couple.partnerTwoUserId
-      : couple.partnerOneUserId
+      ? couple.partnerTwoUserId : couple.partnerOneUserId
 
     if (!partnerUserId) {
       return res.json({ ok: true, status: 'PENDING_PARTNER', message: 'Like registado. A aguardar aprovação do/a parceiro/a.' })
@@ -112,7 +103,6 @@ router.post('/like/:targetProfileId', requireAuth, async (req: AuthRequest, res:
     }) : null
 
     if (partnerLiked) {
-      // Both approved — check for mutual match
       const theirLike = await prisma.profileAction.findFirst({
         where: { actorProfileId: req.params.targetProfileId, targetProfileId: myProfile.id, action: 'LIKE' }
       })
@@ -144,14 +134,38 @@ router.post('/like/:targetProfileId', requireAuth, async (req: AuthRequest, res:
   }
 })
 
-// POST /api/couples/matches/:matchId/approve — Double Consent Match
+// POST /api/couples/matches/:matchId/approve
+// Point 8: validate the user actually belongs to the active couple involved in this match
 router.post('/matches/:matchId/approve', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const match = await prisma.match.findUnique({
       where: { id: req.params.matchId },
-      include: { approvals: true }
+      include: {
+        profileOne: { include: { coupleProfile: true } },
+        profileTwo: { include: { coupleProfile: true } }
+      }
     })
     if (!match) return res.status(404).json({ error: 'Match não encontrado.' })
+
+    // Point 8: identify which side (if any) is a couple, and confirm req.userId
+    // is one of its two partners on an ACTIVE couple — not just "any authenticated user"
+    const coupleSide = match.profileOne.coupleProfile?.coupleStatus === 'ACTIVE'
+      ? match.profileOne.coupleProfile
+      : match.profileTwo.coupleProfile?.coupleStatus === 'ACTIVE'
+        ? match.profileTwo.coupleProfile
+        : null
+
+    if (!coupleSide) {
+      return res.status(400).json({ error: 'Este match não envolve um casal ativo — nada para aprovar.' })
+    }
+
+    const belongsToCouple =
+      coupleSide.partnerOneUserId === req.userId ||
+      coupleSide.partnerTwoUserId === req.userId
+
+    if (!belongsToCouple) {
+      return res.status(403).json({ error: 'Não pertences ao casal envolvido neste match.' })
+    }
 
     await prisma.coupleMatchApproval.upsert({
       where: { matchId_userId: { matchId: match.id, userId: req.userId! } },
@@ -163,18 +177,23 @@ router.post('/matches/:matchId/approve', requireAuth, async (req: AuthRequest, r
       where: { matchId: match.id, approvedAt: { not: null } }
     })
 
-    if (approvals.length >= 2) {
+    // Both partners (partnerOneUserId and partnerTwoUserId) must have approved
+    const requiredApprovers = [coupleSide.partnerOneUserId, coupleSide.partnerTwoUserId].filter(Boolean)
+    const approvedUserIds = new Set(approvals.map(a => a.userId))
+    const allApproved = requiredApprovers.every(uid => approvedUserIds.has(uid!))
+
+    if (allApproved) {
       await prisma.match.update({ where: { id: match.id }, data: { status: 'ACTIVE', matchedAt: new Date() } })
       return res.json({ ok: true, active: true, message: 'Ambos aprovaram! Match ativo.' })
     }
 
     res.json({ ok: true, active: false, message: 'Aprovação registada. A aguardar o/a parceiro/a.' })
   } catch (err: any) {
+    console.error('[COUPLE APPROVE]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
   }
 })
 
-// PUT /api/couples/me
 router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profile = await prisma.profile.findUnique({
@@ -191,7 +210,6 @@ router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 })
 
-// DELETE /api/couples/me
 router.delete('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profile = await prisma.profile.findUnique({
