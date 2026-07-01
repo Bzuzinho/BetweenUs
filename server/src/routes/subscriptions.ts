@@ -3,8 +3,8 @@ import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
+const isProd = process.env.NODE_ENV === 'production'
 
-// Lazy-load Stripe to avoid crash if key not set
 const getStripe = () => {
   const key = process.env.STRIPE_SECRET_KEY
   if (!key) return null
@@ -23,14 +23,15 @@ const PLANS = {
     price: 4.99,
     currency: 'EUR',
     for: 'individual',
+    // T6: features describe privacy/discovery tools only — no sexual services
     features: [
-      'Modo Invisível',
-      'Travel Mode',
+      'Modo Invisível — navega sem aparecer no discovery',
+      'Travel Mode — procura matches numa cidade antes de chegar',
       'Ver quem gostou de ti',
-      'Bloqueio de contactos',
-      'Soft Reveal avançado',
-      'Filtros premium',
-      'Verificação de perfil'
+      'Bloqueio de contactos da tua agenda',
+      'Soft Reveal avançado — controlo total das tuas fotos',
+      'Filtros premium de compatibilidade',
+      'Verificação de perfil prioritária'
     ]
   },
   couple_premium: {
@@ -40,31 +41,26 @@ const PLANS = {
     for: 'couple',
     coversTwo: true,
     features: [
-      'Tudo do Premium para os dois',
-      'Vincular dois perfis como casal',
-      'Double Consent Match',
-      'Modo Acordo completo',
-      'Sala Privada partilhada',
-      'Um pagamento cobre ambos os parceiros'
+      'Tudo do Premium para ambos os parceiros',
+      'Perfil de casal vinculado com Double Consent',
+      'Modo Acordo — definição de limites partilhados',
+      'Sala Privada de casal',
+      'Um pagamento cobre os dois'
     ]
   }
 }
 
-// GET /api/subscriptions/plans
 router.get('/plans', (_req: Request, res: Response) => {
-  const stripeConfigured = !!process.env.STRIPE_SECRET_KEY
-  res.json({ plans: PLANS, stripeConfigured })
+  const stripeConfigured = !!(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRICE_PREMIUM)
+  res.json({ plans: PLANS, stripeConfigured, paymentsAvailable: stripeConfigured })
 })
 
-// GET /api/subscriptions/me
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
-  const sub = await prisma.subscription.findUnique({
-    where: { userId: req.userId! }
-  })
+  const sub = await prisma.subscription.findUnique({ where: { userId: req.userId! } })
   res.json(sub || { plan: 'FREE', status: 'ACTIVE' })
 })
 
-// POST /api/subscriptions/checkout — create Stripe checkout session
+// POST /api/subscriptions/checkout
 router.post('/checkout', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { plan } = req.body
@@ -74,8 +70,15 @@ router.post('/checkout', requireAuth, async (req: AuthRequest, res: Response) =>
 
     const stripe = getStripe()
 
-    // No Stripe configured — direct upgrade for testing
+    // T6: NEVER allow direct upgrade in production without Stripe
     if (!stripe) {
+      if (isProd) {
+        return res.status(503).json({
+          error: 'Pagamentos não disponíveis de momento. Tenta novamente mais tarde.',
+          code: 'PAYMENTS_NOT_CONFIGURED'
+        })
+      }
+      // Development/test only: direct upgrade without Stripe
       const sub = await prisma.subscription.upsert({
         where: { userId: req.userId! },
         update: {
@@ -93,83 +96,44 @@ router.post('/checkout', requireAuth, async (req: AuthRequest, res: Response) =>
         }
       })
       return res.json({
-        mode: 'direct',
+        mode: 'direct_dev',
         subscription: sub,
-        message: 'Stripe não configurado — upgrade direto para teste.'
+        message: '[DEV] Stripe não configurado — upgrade directo apenas em desenvolvimento.'
       })
     }
 
-    // Get or create Stripe customer
+    // Validate price IDs are configured
+    const priceId = STRIPE_PRICES[plan]
+    if (!priceId) {
+      return res.status(503).json({
+        error: 'Configuração de pagamento incompleta.',
+        code: 'PRICE_NOT_CONFIGURED'
+      })
+    }
+
     const user = await prisma.user.findUnique({ where: { id: req.userId! } })
     let sub = await prisma.subscription.findUnique({ where: { userId: req.userId! } })
 
-    let customerId = sub?.providerCustomerId
+    let customerId = sub?.stripeCustomerId
     if (!customerId) {
-      const customer = await stripe.customers.create({
-        email: user?.email,
-        metadata: { userId: req.userId! }
-      })
+      const customer = await stripe.customers.create({ email: user!.email, metadata: { userId: req.userId! } })
       customerId = customer.id
     }
 
-    const priceId = STRIPE_PRICES[plan]
-    if (!priceId) {
-      return res.status(500).json({
-        error: 'Price ID não configurado. Adiciona STRIPE_PRICE_PREMIUM no Railway.'
-      })
-    }
-
-    // Create checkout session
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
-      mode: 'subscription',
       payment_method_types: ['card'],
+      mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${process.env.CLIENT_URL}/profile?success=true`,
-      cancel_url: `${process.env.CLIENT_URL}/profile?cancelled=true`,
+      success_url: `${process.env.CLIENT_URL}/premium?success=1`,
+      cancel_url: `${process.env.CLIENT_URL}/premium?cancelled=1`,
       metadata: { userId: req.userId!, plan }
     })
 
-    // Save customer ID
-    await prisma.subscription.upsert({
-      where: { userId: req.userId! },
-      update: { providerCustomerId: customerId },
-      create: {
-        userId: req.userId!,
-        plan: 'FREE',
-        status: 'ACTIVE',
-        providerCustomerId: customerId
-      }
-    })
-
-    res.json({ mode: 'stripe', checkoutUrl: session.url, sessionId: session.id })
+    res.json({ mode: 'stripe', url: session.url, sessionId: session.id })
   } catch (err: any) {
     console.error('[CHECKOUT ERROR]', err.message)
     res.status(500).json({ error: 'Erro ao criar sessão de pagamento.' })
-  }
-})
-
-// POST /api/subscriptions/portal — customer portal to manage subscription
-router.post('/portal', requireAuth, async (req: AuthRequest, res: Response) => {
-  try {
-    const stripe = getStripe()
-    if (!stripe) {
-      return res.status(503).json({ error: 'Stripe não configurado.' })
-    }
-
-    const sub = await prisma.subscription.findUnique({ where: { userId: req.userId! } })
-    if (!sub?.providerCustomerId) {
-      return res.status(404).json({ error: 'Sem subscrição ativa.' })
-    }
-
-    const session = await stripe.billingPortal.sessions.create({
-      customer: sub.providerCustomerId,
-      return_url: `${process.env.CLIENT_URL}/profile`
-    })
-
-    res.json({ url: session.url })
-  } catch (err: any) {
-    res.status(500).json({ error: 'Erro ao abrir portal.' })
   }
 })
 
@@ -178,64 +142,23 @@ router.post('/cancel', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const stripe = getStripe()
     const sub = await prisma.subscription.findUnique({ where: { userId: req.userId! } })
+    if (!sub) return res.status(404).json({ error: 'Sem subscrição activa.' })
 
-    if (stripe && sub?.providerSubscriptionId) {
-      await stripe.subscriptions.update(sub.providerSubscriptionId, {
-        cancel_at_period_end: true
-      })
+    if (stripe && sub.stripeSubscriptionId) {
+      await stripe.subscriptions.update(sub.stripeSubscriptionId, { cancel_at_period_end: true })
     }
 
     await prisma.subscription.update({
       where: { userId: req.userId! },
-      data: { status: 'CANCELLED', cancelledAt: new Date() }
+      data: { status: 'CANCELLED' }
     })
 
-    res.json({ ok: true, message: 'Subscrição cancelada. Fica ativa até ao fim do período.' })
+    res.json({ ok: true, message: 'Subscrição cancelada. O acesso Premium mantém-se até ao fim do período actual.' })
   } catch (err: any) {
+    console.error('[CANCEL ERROR]', err.message)
     res.status(500).json({ error: 'Erro ao cancelar subscrição.' })
   }
 })
 
-// POST /api/subscriptions/upgrade — direct upgrade (fallback/dev)
-router.post('/upgrade', requireAuth, async (req: AuthRequest, res: Response) => {
-  try {
-    const { plan } = req.body
-    if (!['PREMIUM', 'COUPLE_PREMIUM'].includes(plan)) {
-      return res.status(400).json({ error: 'Plano inválido.' })
-    }
-    const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-    const sub = await prisma.subscription.upsert({
-      where: { userId: req.userId! },
-      update: { plan, status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd },
-      create: { userId: req.userId!, plan, status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd }
-    })
-
-    // COUPLE_PREMIUM: propagar ao parceiro vinculado
-    if (plan === 'COUPLE_PREMIUM') {
-      const couple = await prisma.coupleProfile.findFirst({
-        where: {
-          OR: [{ partnerOneUserId: req.userId! }, { partnerTwoUserId: req.userId! }],
-          coupleStatus: 'ACTIVE'
-        }
-      })
-      if (couple) {
-        const partnerUserId = couple.partnerOneUserId === req.userId
-          ? couple.partnerTwoUserId
-          : couple.partnerOneUserId
-        if (partnerUserId) {
-          await prisma.subscription.upsert({
-            where: { userId: partnerUserId },
-            update: { plan: 'COUPLE_PREMIUM', status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd },
-            create: { userId: partnerUserId, plan: 'COUPLE_PREMIUM', status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd }
-          })
-        }
-      }
-    }
-
-    res.json({ ok: true, subscription: sub })
-  } catch (err: any) {
-    res.status(500).json({ error: 'Erro ao ativar plano.' })
-  }
-})
-
+// POST /api/subscriptions/webhook — handled in webhooks.ts
 export default router
