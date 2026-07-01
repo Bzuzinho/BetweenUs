@@ -2,31 +2,49 @@ import { Router, Request, Response } from 'express'
 import prisma from '../lib/prisma'
 
 const router = Router()
+const isProd = process.env.NODE_ENV === 'production'
 
 // POST /api/webhooks/stripe
-// Must use raw body — registered before express.json() middleware
+// Registered before express.json() so body is raw Buffer
 router.post('/stripe', async (req: Request, res: Response) => {
-  const stripe = (() => {
-    const key = process.env.STRIPE_SECRET_KEY
-    if (!key) return null
-    const Stripe = require('stripe')
-    return new Stripe(key, { apiVersion: '2024-04-10' })
-  })()
-
-  if (!stripe) return res.json({ received: true })
-
-  const sig = req.headers['stripe-signature']
+  const key = process.env.STRIPE_SECRET_KEY
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
 
-  let event: any
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret)
-  } catch (err: any) {
-    console.error('[WEBHOOK] Signature failed:', err.message)
-    return res.status(400).json({ error: `Webhook error: ${err.message}` })
+  // T11: webhook secret is mandatory — without it we cannot verify Stripe events
+  if (!webhookSecret) {
+    if (isProd) {
+      console.error('[WEBHOOK] STRIPE_WEBHOOK_SECRET not set — refusing all events in production')
+      return res.status(500).json({ error: 'Webhook not configured.' })
+    }
+    // Dev: log warning but continue for local testing
+    console.warn('[WEBHOOK] STRIPE_WEBHOOK_SECRET not set — skipping signature verification (dev only)')
   }
 
-  console.log('[WEBHOOK]', event.type)
+  if (!key) return res.json({ received: true })
+
+  const Stripe = require('stripe')
+  const stripe = new Stripe(key, { apiVersion: '2024-04-10' })
+
+  const sig = req.headers['stripe-signature']
+  let event: any
+
+  if (webhookSecret) {
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret)
+    } catch (err: any) {
+      console.error('[WEBHOOK] Signature verification failed:', err.message)
+      return res.status(400).json({ error: `Webhook error: ${err.message}` })
+    }
+  } else {
+    // Dev only — parse without verification
+    try {
+      event = JSON.parse(req.body.toString())
+    } catch {
+      return res.status(400).json({ error: 'Invalid JSON body' })
+    }
+  }
+
+  console.log('[WEBHOOK]', event.type, new Date().toISOString())
 
   try {
     switch (event.type) {
@@ -34,15 +52,15 @@ router.post('/stripe', async (req: Request, res: Response) => {
       case 'checkout.session.completed': {
         const session = event.data.object
         const { userId, plan } = session.metadata || {}
-        if (!userId || !plan) break
+        if (!userId || !plan) { console.warn('[WEBHOOK] Missing metadata'); break }
 
         const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
 
+        // T3: use providerCustomerId/providerSubscriptionId — consistent with schema
         await prisma.subscription.upsert({
           where: { userId },
           update: {
-            plan,
-            status: 'ACTIVE',
+            plan, status: 'ACTIVE',
             providerCustomerId: session.customer,
             providerSubscriptionId: session.subscription,
             currentPeriodStart: new Date(),
@@ -56,9 +74,9 @@ router.post('/stripe', async (req: Request, res: Response) => {
             currentPeriodEnd: periodEnd
           }
         })
-        console.log('[WEBHOOK] Subscription activated for user:', userId, plan)
+        console.log('[WEBHOOK] Subscription activated:', userId, plan)
 
-        // COUPLE_PREMIUM: ativar subscrição do parceiro gratuitamente
+        // COUPLE_PREMIUM: activate partner for free
         if (plan === 'COUPLE_PREMIUM') {
           const couple = await prisma.coupleProfile.findFirst({
             where: {
@@ -74,97 +92,71 @@ router.post('/stripe', async (req: Request, res: Response) => {
             if (partnerUserId) {
               await prisma.subscription.upsert({
                 where: { userId: partnerUserId },
-                update: {
-                  plan: 'COUPLE_PREMIUM',
-                  status: 'ACTIVE',
-                  currentPeriodStart: new Date(),
-                  currentPeriodEnd: periodEnd
-                },
-                create: {
-                  userId: partnerUserId,
-                  plan: 'COUPLE_PREMIUM',
-                  status: 'ACTIVE',
-                  currentPeriodStart: new Date(),
-                  currentPeriodEnd: periodEnd
-                }
+                update: { plan: 'COUPLE_PREMIUM', status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd },
+                create: { userId: partnerUserId, plan: 'COUPLE_PREMIUM', status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd }
               })
-              console.log('[WEBHOOK] COUPLE_PREMIUM propagated to partner:', partnerUserId)
+              console.log('[WEBHOOK] Partner subscription activated:', partnerUserId)
             }
           }
         }
         break
       }
 
-      case 'invoice.payment_succeeded': {
-        const invoice = event.data.object
-        const subId = invoice.subscription
-        if (!subId) break
-
-        const sub = await prisma.subscription.findFirst({
-          where: { providerSubscriptionId: subId }
+      case 'customer.subscription.updated': {
+        const sub = event.data.object
+        const subscription = await prisma.subscription.findFirst({
+          where: { providerSubscriptionId: sub.id }
         })
-        if (sub) {
+        if (subscription) {
           await prisma.subscription.update({
-            where: { id: sub.id },
+            where: { id: subscription.id },
             data: {
-              status: 'ACTIVE',
-              currentPeriodEnd: new Date(invoice.period_end * 1000)
+              status: sub.status === 'active' ? 'ACTIVE' :
+                sub.status === 'canceled' ? 'CANCELLED' :
+                sub.status === 'past_due' ? 'PAST_DUE' : 'UNPAID',
+              currentPeriodEnd: new Date(sub.current_period_end * 1000)
             }
-          })
-        }
-        break
-      }
-
-      case 'invoice.payment_failed': {
-        const invoice = event.data.object
-        const subId = invoice.subscription
-        if (!subId) break
-
-        const sub = await prisma.subscription.findFirst({
-          where: { providerSubscriptionId: subId }
-        })
-        if (sub) {
-          await prisma.subscription.update({
-            where: { id: sub.id },
-            data: { status: 'PAST_DUE' }
           })
         }
         break
       }
 
       case 'customer.subscription.deleted': {
-        const subscription = event.data.object
-        const sub = await prisma.subscription.findFirst({
-          where: { providerSubscriptionId: subscription.id }
+        const sub = event.data.object
+        const subscription = await prisma.subscription.findFirst({
+          where: { providerSubscriptionId: sub.id }
         })
-        if (sub) {
+        if (subscription) {
           await prisma.subscription.update({
-            where: { id: sub.id },
-            data: { status: 'CANCELLED', plan: 'FREE', cancelledAt: new Date() }
+            where: { id: subscription.id },
+            data: { status: 'CANCELLED', plan: 'FREE' }
           })
+          console.log('[WEBHOOK] Subscription cancelled:', subscription.userId)
         }
         break
       }
 
-      case 'customer.subscription.updated': {
-        const subscription = event.data.object
-        const sub = await prisma.subscription.findFirst({
-          where: { providerSubscriptionId: subscription.id }
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object
+        const subscription = await prisma.subscription.findFirst({
+          where: { providerSubscriptionId: invoice.subscription }
         })
-        if (sub) {
+        if (subscription) {
           await prisma.subscription.update({
-            where: { id: sub.id },
-            data: {
-              status: subscription.status === 'active' ? 'ACTIVE' : 'CANCELLED',
-              currentPeriodEnd: new Date(subscription.current_period_end * 1000)
-            }
+            where: { id: subscription.id },
+            data: { status: 'PAST_DUE' }
           })
+          console.warn('[WEBHOOK] Payment failed for user:', subscription.userId)
         }
         break
       }
+
+      default:
+        console.log('[WEBHOOK] Unhandled event type:', event.type)
     }
   } catch (err: any) {
-    console.error('[WEBHOOK PROCESSING ERROR]', err.message)
+    console.error('[WEBHOOK HANDLER ERROR]', err.message)
+    return res.status(500).json({ error: 'Webhook processing failed.' })
   }
 
   res.json({ received: true })
