@@ -24,9 +24,11 @@ export const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'], credentials: true }
 })
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false }))
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: false // TODO: enable with proper CSP before public launch
+}))
 app.use(compression())
-// Point 6: credentials:true required so the browser sends/receives httpOnly cookies cross-origin
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true)
@@ -56,8 +58,11 @@ app.use('/api/auth/register', strictLimiter)
 app.use('/api/auth/password', strictLimiter)
 
 app.get('/health', (_, res) => {
-  res.json({ status: 'ok', app: 'Between Us API', version: '2.3.0',
-    environment: process.env.NODE_ENV, timestamp: new Date().toISOString() })
+  res.json({
+    status: 'ok', app: 'Between Us API', version: '2.4.0',
+    environment: process.env.NODE_ENV,
+    timestamp: new Date().toISOString()
+  })
 })
 
 import authRouter from './routes/auth'
@@ -88,6 +93,7 @@ app.use('/api/subscriptions', subscriptionsRouter)
 app.use('/api/couples', couplesRouter)
 app.use('/api/photos', photosRouter)
 app.use('/api/contacts', contactsRouter)
+// T5: /api/verifications now includes /email/request and /email/confirm
 app.use('/api/verifications', verificationsRouter)
 app.use('/api/travel', travelRouter)
 app.use('/api/consent', consentRouter)
@@ -104,12 +110,13 @@ io.on('connection', (socket) => {
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[ERROR]', err.message)
+  // T12: never leak internal error details in production
   res.status(err.status || 500).json({ error: isProd ? 'Erro interno. Tenta novamente.' : err.message })
 })
 
 const PORT = process.env.PORT || 4000
 httpServer.listen(PORT, () => {
-  console.log('[SERVER] Between Us API v2.3.0 — security audit fixes applied')
+  console.log('[SERVER] Between Us API v2.4.0')
   console.log('[SERVER] Environment:', process.env.NODE_ENV)
 })
 
