@@ -4,16 +4,22 @@ import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
+const isProd = process.env.NODE_ENV === 'production'
 
-// C.2: HMAC-SHA256 with server secret — more secure than plain SHA-256
-const hashContact = (value: string): string => {
-  const secret = process.env.CONTACT_HASH_SECRET || 'between-us-contact-secret-2026'
-  return createHmac('sha256', secret)
-    .update(value.toLowerCase().trim())
-    .digest('hex')
+// T10: fail hard in production if secret not defined — no insecure fallback
+const getContactHashSecret = (): string => {
+  const secret = process.env.CONTACT_HASH_SECRET
+  if (isProd && !secret) {
+    throw new Error('CONTACT_HASH_SECRET obrigatório em produção. Define a variável de ambiente.')
+  }
+  return secret || 'dev-only-insecure-fallback-do-not-use-in-prod'
 }
 
-// POST /api/contacts/block
+const hashContact = (value: string): string =>
+  createHmac('sha256', getContactHashSecret())
+    .update(value.toLowerCase().trim())
+    .digest('hex')
+
 router.post('/block', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { contacts } = req.body
@@ -41,11 +47,11 @@ router.post('/block', requireAuth, async (req: AuthRequest, res: Response) => {
     })
   } catch (err: any) {
     console.error('[CONTACTS BLOCK]', err.message)
-    res.status(500).json({ error: 'Erro interno.' })
+    const status = err.message.includes('CONTACT_HASH_SECRET') ? 503 : 500
+    res.status(status).json({ error: isProd ? 'Serviço temporariamente indisponível.' : err.message })
   }
 })
 
-// GET /api/contacts/blocked/count
 router.get('/blocked/count', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const count = await prisma.blockedContactHash.count({ where: { userId: req.userId! } })
@@ -55,7 +61,6 @@ router.get('/blocked/count', requireAuth, async (req: AuthRequest, res: Response
   }
 })
 
-// DELETE /api/contacts/blocked
 router.delete('/blocked', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     await prisma.blockedContactHash.deleteMany({ where: { userId: req.userId! } })
