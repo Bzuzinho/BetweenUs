@@ -5,32 +5,61 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
 
+// T7: full report reason enum including previously missing critical categories
 const reportSchema = z.object({
   reportedUserId: z.string().uuid().optional(),
   reportedMessageId: z.string().uuid().optional(),
   reason: z.enum([
-    'FAKE_PROFILE','HARASSMENT','OFFENSIVE_CONTENT','MINOR',
-    'NON_CONSENSUAL_IMAGE','SPAM','THREAT','OTHER'
+    'FAKE_PROFILE',
+    'HARASSMENT',
+    'OFFENSIVE_CONTENT',
+    'MINOR',
+    'NON_CONSENSUAL_IMAGE',
+    'SPAM',
+    'THREAT',
+    'COERCION',
+    'REVENGE_PORN',
+    'DOXXING',
+    'PROSTITUTION_OR_ESCORT',
+    'PAID_SEXUAL_SERVICES',
+    'SCAM',
+    'OTHER'
   ]),
   details: z.string().max(500).optional()
 })
 
-// Point 18: critical reasons get automatic high priority for faster review
-const CRITICAL_REASONS = ['MINOR', 'THREAT', 'NON_CONSENSUAL_IMAGE', 'HARASSMENT']
-const getPriority = (reason: string): number => CRITICAL_REASONS.includes(reason) ? 10 : 0
+// T7: extended priority mapping including new categories
+const PRIORITY_MAP: Record<string, number> = {
+  MINOR: 10,
+  THREAT: 10,
+  NON_CONSENSUAL_IMAGE: 10,
+  REVENGE_PORN: 10,
+  HARASSMENT: 8,
+  COERCION: 8,
+  DOXXING: 8,
+  PROSTITUTION_OR_ESCORT: 7,
+  PAID_SEXUAL_SERVICES: 7,
+  FAKE_PROFILE: 5,
+  SCAM: 5,
+  OFFENSIVE_CONTENT: 3,
+  SPAM: 1,
+  OTHER: 0,
+}
+
+const getPriority = (reason: string): number => PRIORITY_MAP[reason] ?? 0
 
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const data = reportSchema.parse(req.body)
 
-    // Point 18: check for reincidence — same reporter+reported pair recently,
-    // or this reported user already has multiple reports → bump priority further
     let priority = getPriority(data.reason)
+
+    // Reincidence bump: if reported user already has ≥2 pending/reviewing reports
     if (data.reportedUserId) {
-      const recentReportsCount = await prisma.report.count({
+      const recentCount = await prisma.report.count({
         where: { reportedUserId: data.reportedUserId, status: { in: ['PENDING', 'REVIEWING'] } }
       })
-      if (recentReportsCount >= 2) priority = Math.max(priority, 8) // reincidence bump
+      if (recentCount >= 2) priority = Math.max(priority, 8)
     }
 
     const report = await prisma.report.create({
