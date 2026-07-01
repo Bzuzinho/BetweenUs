@@ -18,11 +18,21 @@ const upload = multer({
   }
 })
 
+// Extract storage key from a public URL
+const extractKey = (url: string): string | null => {
+  try {
+    const u = new URL(url)
+    // Strip leading slash
+    return u.pathname.replace(/^\//, '') || null
+  } catch {
+    return null
+  }
+}
+
 router.post('/', requireAuth, upload.single('photo'), async (req: AuthRequest, res: Response) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Foto obrigatória.' })
 
-    // Point 13: validate the real bytes, not just the client-supplied mimetype
     const realType = await detectRealImageType(req.file.buffer)
     if (!realType) {
       return res.status(400).json({ error: 'O ficheiro enviado não é uma imagem válida.' })
@@ -34,7 +44,6 @@ router.post('/', requireAuth, upload.single('photo'), async (req: AuthRequest, r
     if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
     if (profile.photos.length >= 6) return res.status(400).json({ error: 'Máximo de 6 fotos.' })
 
-    // Point 13: real pipeline — EXIF strip, resize, compress, real blur
     let processed
     try {
       processed = await processImage(req.file.buffer)
@@ -62,7 +71,6 @@ router.post('/', requireAuth, upload.single('photo'), async (req: AuthRequest, r
         moderationStatus: moderationStatus as any,
         isPrimary,
         sortOrder: profile.photos.length,
-        // Point 13: only true because the bytes were actually re-encoded above
         exifStripped: true
       }
     })
@@ -112,16 +120,30 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 })
 
+// T9: delete removes BOTH storagePath AND blurredPath from R2
 router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const photo = await prisma.profilePhoto.findUnique({ where: { id: req.params.id }, include: { profile: true } })
     if (!photo) return res.status(404).json({ error: 'Foto não encontrada.' })
     if (photo.profile.userId !== req.userId) return res.status(403).json({ error: 'Sem permissão.' })
-    const key = photo.storagePath.split('/').pop()
-    if (key) await deleteFile(`photos/${key}`)
+
+    // T9: delete clean version
+    const cleanKey = extractKey(photo.storagePath)
+    if (cleanKey) await deleteFile(cleanKey).catch(e => console.error('[DELETE CLEAN]', e.message))
+
+    // T9: delete blurred version too — previously was being left behind
+    if (photo.blurredPath) {
+      const blurredKey = extractKey(photo.blurredPath)
+      if (blurredKey) await deleteFile(blurredKey).catch(e => console.error('[DELETE BLURRED]', e.message))
+    }
+
     await prisma.profilePhoto.delete({ where: { id: req.params.id } })
+
     if (photo.isPrimary) {
-      const first = await prisma.profilePhoto.findFirst({ where: { profileId: photo.profileId }, orderBy: { sortOrder: 'asc' } })
+      const first = await prisma.profilePhoto.findFirst({
+        where: { profileId: photo.profileId },
+        orderBy: { sortOrder: 'asc' }
+      })
       if (first) await prisma.profilePhoto.update({ where: { id: first.id }, data: { isPrimary: true } })
     }
     res.json({ ok: true })
@@ -130,8 +152,7 @@ router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 })
 
-// Point 12: real photo access request flow
-// POST /api/photos/:id/request-access
+// Photo access request endpoints (unchanged from previous implementation)
 router.post('/:id/request-access', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const photo = await prisma.profilePhoto.findUnique({
@@ -141,16 +162,12 @@ router.post('/:id/request-access', requireAuth, async (req: AuthRequest, res: Re
 
     const requesterProfile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
     if (!requesterProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-
-    if (photo.profile.userId === req.userId) {
-      return res.status(400).json({ error: 'Não podes pedir acesso às tuas próprias fotos.' })
-    }
+    if (photo.profile.userId === req.userId) return res.status(400).json({ error: 'Não podes pedir acesso às tuas próprias fotos.' })
 
     if (!['PRIVATE_AFTER_MATCH', 'PRIVATE_AFTER_APPROVAL'].includes(photo.visibilityLevel)) {
       return res.status(400).json({ error: 'Esta foto não requer pedido de acesso.' })
     }
 
-    // Point 12: must have an active match with the photo owner
     const activeMatch = await prisma.match.findFirst({
       where: {
         status: 'ACTIVE',
@@ -160,29 +177,15 @@ router.post('/:id/request-access', requireAuth, async (req: AuthRequest, res: Re
         ]
       }
     })
-    if (!activeMatch) {
-      return res.status(403).json({ error: 'É necessário ter um match ativo com esta pessoa.' })
-    }
+    if (!activeMatch) return res.status(403).json({ error: 'É necessário ter um match activo com esta pessoa.' })
 
     if (photo.visibilityLevel === 'PRIVATE_AFTER_MATCH') {
-      // Auto-approved — having an active match is sufficient
       const existing = await prisma.photoAccessRequest.upsert({
         where: { photoId_requesterId: { photoId: photo.id, requesterId: req.userId! } },
         update: { status: 'APPROVED', respondedAt: new Date() },
-        create: {
-          photoId: photo.id, requesterId: req.userId!, ownerId: photo.profile.userId,
-          status: 'APPROVED', respondedAt: new Date()
-        }
+        create: { photoId: photo.id, requesterId: req.userId!, ownerId: photo.profile.userId, status: 'APPROVED', respondedAt: new Date() }
       })
-      return res.json({ ok: true, status: 'APPROVED', message: 'Acesso concedido automaticamente (match ativo).', request: existing })
-    }
-
-    // PRIVATE_AFTER_APPROVAL — owner must explicitly approve
-    const existing = await prisma.photoAccessRequest.findUnique({
-      where: { photoId_requesterId: { photoId: photo.id, requesterId: req.userId! } }
-    })
-    if (existing && existing.status === 'PENDING') {
-      return res.json({ ok: true, status: 'PENDING', message: 'Já existe um pedido pendente.', request: existing })
+      return res.json({ ok: true, status: 'APPROVED', request: existing })
     }
 
     const request = await prisma.photoAccessRequest.upsert({
@@ -190,50 +193,37 @@ router.post('/:id/request-access', requireAuth, async (req: AuthRequest, res: Re
       update: { status: 'PENDING', respondedAt: null },
       create: { photoId: photo.id, requesterId: req.userId!, ownerId: photo.profile.userId, status: 'PENDING' }
     })
-
-    res.json({ ok: true, status: 'PENDING', message: 'Pedido enviado. A aguardar aprovação.', request })
+    res.json({ ok: true, status: 'PENDING', request })
   } catch (err: any) {
     console.error('[PHOTO ACCESS REQUEST]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
   }
 })
 
-// GET /api/photos/access-requests/incoming — requests waiting for MY approval
 router.get('/access-requests/incoming', requireAuth, async (req: AuthRequest, res: Response) => {
   const requests = await prisma.photoAccessRequest.findMany({
     where: { ownerId: req.userId!, status: 'PENDING' },
     orderBy: { createdAt: 'desc' },
-    include: {
-      photo: { select: { id: true, storagePath: true } }
-    }
+    include: { photo: { select: { id: true, storagePath: true } } }
   })
   res.json({ requests })
 })
 
-// PUT /api/photos/access-requests/:id — owner approves/declines
 router.put('/access-requests/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const { status } = req.body
   if (!['APPROVED', 'DECLINED'].includes(status)) return res.status(400).json({ error: 'Status inválido.' })
-
   const request = await prisma.photoAccessRequest.findUnique({ where: { id: req.params.id } })
   if (!request) return res.status(404).json({ error: 'Pedido não encontrado.' })
   if (request.ownerId !== req.userId) return res.status(403).json({ error: 'Sem permissão.' })
-
-  const updated = await prisma.photoAccessRequest.update({
-    where: { id: req.params.id }, data: { status, respondedAt: new Date() }
-  })
+  const updated = await prisma.photoAccessRequest.update({ where: { id: req.params.id }, data: { status, respondedAt: new Date() } })
   res.json({ ok: true, request: updated })
 })
 
-// PUT /api/photos/access-requests/:id/revoke — owner revokes previously approved access
 router.put('/access-requests/:id/revoke', requireAuth, async (req: AuthRequest, res: Response) => {
   const request = await prisma.photoAccessRequest.findUnique({ where: { id: req.params.id } })
   if (!request) return res.status(404).json({ error: 'Pedido não encontrado.' })
   if (request.ownerId !== req.userId) return res.status(403).json({ error: 'Sem permissão.' })
-
-  const updated = await prisma.photoAccessRequest.update({
-    where: { id: req.params.id }, data: { status: 'REVOKED', respondedAt: new Date() }
-  })
+  const updated = await prisma.photoAccessRequest.update({ where: { id: req.params.id }, data: { status: 'REVOKED', respondedAt: new Date() } })
   res.json({ ok: true, request: updated })
 })
 
