@@ -2,6 +2,7 @@ import { Router, Response } from 'express'
 import { z } from 'zod'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { coarsenCoordinate } from '../utils/location'
 
 const router = Router()
 
@@ -16,6 +17,9 @@ const profileSchema = z.object({
   ]).optional(),
   city: z.string().optional(),
   country: z.string().optional(),
+  // T6: coordinates accepted from client but coarsened before storage
+  locationLat: z.number().min(-90).max(90).optional(),
+  locationLng: z.number().min(-180).max(180).optional(),
   discretionLevel: z.enum(['MAXIMUM','SELECTIVE','OPEN']).optional(),
   intentions: z.array(z.object({
     slug: z.string(),
@@ -24,7 +28,6 @@ const profileSchema = z.object({
   onboardingStep: z.number().min(1).max(10).optional()
 })
 
-// 9.2 — Onboarding steps definition
 const ONBOARDING_STEPS = [
   { step: 1, name: 'account', label: 'Criar conta' },
   { step: 2, name: 'age_verification', label: 'Verificar idade' },
@@ -55,17 +58,17 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     }
   })
   if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-  res.json(profile)
+  // T6: never return exact coordinates to client
+  const { locationLat, locationLng, ...safeProfile } = profile as any
+  res.json(safeProfile)
 })
 
-// 9.2 — Create or update DRAFT progressively
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const data = profileSchema.parse(req.body)
     const existing = await prisma.profile.findUnique({ where: { userId: req.userId! } })
 
     if (existing) {
-      // Already has a profile — update as draft progress
       const updated = await prisma.profile.update({
         where: { userId: req.userId! },
         data: {
@@ -76,6 +79,9 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
           ...(data.relationshipStatus && { relationshipStatus: data.relationshipStatus }),
           ...(data.city && { city: data.city }),
           ...(data.country && { country: data.country }),
+          // T6: coarsen before saving — 1 decimal place ≈ ±11km
+          ...(data.locationLat !== undefined && { locationLat: coarsenCoordinate(data.locationLat) }),
+          ...(data.locationLng !== undefined && { locationLng: coarsenCoordinate(data.locationLng) }),
           ...(data.discretionLevel && { discretionLevel: data.discretionLevel }),
         }
       })
@@ -93,8 +99,10 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
         orientation: data.orientation,
         relationshipStatus: data.relationshipStatus || 'SINGLE',
         city: data.city, country: data.country,
+        // T6: coarsen before saving
+        locationLat: data.locationLat !== undefined ? coarsenCoordinate(data.locationLat) : undefined,
+        locationLng: data.locationLng !== undefined ? coarsenCoordinate(data.locationLng) : undefined,
         discretionLevel: data.discretionLevel || 'SELECTIVE',
-        // 9.2 — starts as DRAFT, becomes PENDING_REVIEW only when onboarding completes
         status: 'DRAFT',
         privacySettings: { create: {
           visibleInDiscovery: false, showDistance: true,
@@ -123,7 +131,6 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 })
 
-// 9.2 — Advance onboarding step
 router.put('/onboarding/step', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { step } = req.body
@@ -138,7 +145,6 @@ router.put('/onboarding/step', requireAuth, async (req: AuthRequest, res: Respon
     const updated = await prisma.profile.update({
       where: { userId: req.userId! },
       data: {
-        // When onboarding completes (step 10), move from DRAFT to PENDING_REVIEW
         ...(completing && profile.status === 'DRAFT' && {
           status: isProd ? 'PENDING_REVIEW' : 'APPROVED'
         })
@@ -175,6 +181,9 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
         ...(data.relationshipStatus && { relationshipStatus: data.relationshipStatus }),
         ...(data.city && { city: data.city }),
         ...(data.country && { country: data.country }),
+        // T6: coarsen coordinates on update too
+        ...(data.locationLat !== undefined && { locationLat: coarsenCoordinate(data.locationLat) }),
+        ...(data.locationLng !== undefined && { locationLng: coarsenCoordinate(data.locationLng) }),
         ...(data.discretionLevel && { discretionLevel: data.discretionLevel }),
       }
     })
@@ -212,6 +221,7 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   if (profile.visibilityMode === 'INVISIBLE') return res.status(404).json({ error: 'Perfil não encontrado.' })
   if (profile.status !== 'APPROVED') return res.status(404).json({ error: 'Perfil não disponível.' })
 
+  // T6: strip exact coordinates from public API response
   const { userId, locationLat, locationLng, ...publicProfile } = profile as any
   res.json(publicProfile)
 })
@@ -225,7 +235,7 @@ router.put('/:id/boundaries', requireAuth, async (req: AuthRequest, res: Respons
   await prisma.profileBoundary.createMany({
     data: boundaries.map((b: any) => ({ profileId: profile.id, boundaryId: b.boundaryId, preference: b.preference }))
   })
-  res.json({ message: 'Limites atualizados.' })
+  res.json({ message: 'Limites actualizados.' })
 })
 
 router.put('/:id/privacy', requireAuth, async (req: AuthRequest, res: Response) => {
