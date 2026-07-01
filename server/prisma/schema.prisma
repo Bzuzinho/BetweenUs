@@ -558,15 +558,16 @@ model Subscription {
 }
 
 model Verification {
-  id         String             @id @default(uuid())
-  userId     String             @unique
-  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type       String             @default("selfie")
-  status     VerificationStatus @default(PENDING)
-  provider   String?
-  reviewedAt DateTime?
-  expiresAt  DateTime?
-  createdAt  DateTime           @default(now())
+  id                 String             @id @default(uuid())
+  userId             String             @unique
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type               String             @default("selfie")
+  status             VerificationStatus @default(PENDING)
+  provider           String?
+  selfieStoragePath  String?            // URL of the selfie in R2 — deleted after review
+  reviewedAt         DateTime?
+  expiresAt          DateTime?
+  createdAt          DateTime           @default(now())
 
   @@map("verifications")
 }
@@ -579,6 +580,9 @@ model UserConsent {
   version     String
   acceptedAt  DateTime    @default(now())
   revokedAt   DateTime?
+  // T4: RGPD audit trail — required for accountability
+  ipAddress   String?
+  userAgent   String?
 
   @@map("user_consents")
 }
