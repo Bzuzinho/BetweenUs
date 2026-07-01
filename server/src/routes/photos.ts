@@ -1,5 +1,6 @@
 import { Router, Response } from 'express'
 import multer from 'multer'
+import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
 import { uploadFile, deleteFile } from '../lib/storage'
 import { processImage, detectRealImageType } from '../lib/imageProcessing'
@@ -8,28 +9,33 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
 
+// T7: rate limit photo uploads — max 10 uploads per 15 minutes per user
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req: any) => req.userId || req.ip,
+  message: { error: 'Demasiados uploads. Tenta novamente em 15 minutos.' }
+})
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = ['image/jpeg','image/png','image/webp']
+    const allowed = ['image/jpeg', 'image/png', 'image/webp']
     if (allowed.includes(file.mimetype)) cb(null, true)
     else cb(new Error('Apenas imagens JPG, PNG ou WEBP são permitidas.'))
   }
 })
 
-// Extract storage key from a public URL
 const extractKey = (url: string): string | null => {
   try {
-    const u = new URL(url)
-    // Strip leading slash
-    return u.pathname.replace(/^\//, '') || null
+    return new URL(url).pathname.replace(/^\//, '') || null
   } catch {
     return null
   }
 }
 
-router.post('/', requireAuth, upload.single('photo'), async (req: AuthRequest, res: Response) => {
+router.post('/', requireAuth, uploadLimiter, upload.single('photo'), async (req: AuthRequest, res: Response) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Foto obrigatória.' })
 
@@ -78,9 +84,7 @@ router.post('/', requireAuth, upload.single('photo'), async (req: AuthRequest, r
     res.status(201).json({
       ...photo,
       pendingReview: isProd,
-      message: isProd
-        ? 'Foto enviada para moderação. Ficará visível após aprovação.'
-        : 'Foto adicionada.'
+      message: isProd ? 'Foto enviada para moderação. Ficará visível após aprovação.' : 'Foto adicionada.'
     })
   } catch (err: any) {
     console.error('[PHOTO UPLOAD]', err.message)
@@ -107,9 +111,7 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     if (!photo) return res.status(404).json({ error: 'Foto não encontrada.' })
     if (photo.profile.userId !== req.userId) return res.status(403).json({ error: 'Sem permissão.' })
     const { visibilityLevel, isPrimary } = req.body
-    if (isPrimary) {
-      await prisma.profilePhoto.updateMany({ where: { profileId: photo.profileId }, data: { isPrimary: false } })
-    }
+    if (isPrimary) await prisma.profilePhoto.updateMany({ where: { profileId: photo.profileId }, data: { isPrimary: false } })
     const updated = await prisma.profilePhoto.update({
       where: { id: req.params.id },
       data: { ...(visibilityLevel && { visibilityLevel }), ...(isPrimary !== undefined && { isPrimary }) }
@@ -120,18 +122,16 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 })
 
-// T9: delete removes BOTH storagePath AND blurredPath from R2
+// T9: delete removes BOTH storagePath AND blurredPath
 router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const photo = await prisma.profilePhoto.findUnique({ where: { id: req.params.id }, include: { profile: true } })
     if (!photo) return res.status(404).json({ error: 'Foto não encontrada.' })
     if (photo.profile.userId !== req.userId) return res.status(403).json({ error: 'Sem permissão.' })
 
-    // T9: delete clean version
     const cleanKey = extractKey(photo.storagePath)
     if (cleanKey) await deleteFile(cleanKey).catch(e => console.error('[DELETE CLEAN]', e.message))
 
-    // T9: delete blurred version too — previously was being left behind
     if (photo.blurredPath) {
       const blurredKey = extractKey(photo.blurredPath)
       if (blurredKey) await deleteFile(blurredKey).catch(e => console.error('[DELETE BLURRED]', e.message))
@@ -140,10 +140,7 @@ router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     await prisma.profilePhoto.delete({ where: { id: req.params.id } })
 
     if (photo.isPrimary) {
-      const first = await prisma.profilePhoto.findFirst({
-        where: { profileId: photo.profileId },
-        orderBy: { sortOrder: 'asc' }
-      })
+      const first = await prisma.profilePhoto.findFirst({ where: { profileId: photo.profileId }, orderBy: { sortOrder: 'asc' } })
       if (first) await prisma.profilePhoto.update({ where: { id: first.id }, data: { isPrimary: true } })
     }
     res.json({ ok: true })
@@ -152,12 +149,9 @@ router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 })
 
-// Photo access request endpoints (unchanged from previous implementation)
 router.post('/:id/request-access', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const photo = await prisma.profilePhoto.findUnique({
-      where: { id: req.params.id }, include: { profile: true }
-    })
+    const photo = await prisma.profilePhoto.findUnique({ where: { id: req.params.id }, include: { profile: true } })
     if (!photo) return res.status(404).json({ error: 'Foto não encontrada.' })
 
     const requesterProfile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
