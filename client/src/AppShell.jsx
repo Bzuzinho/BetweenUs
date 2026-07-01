@@ -5,7 +5,8 @@ import MatchesScreen from './screens/MatchesScreen'
 import GuideScreen from './screens/GuideScreen'
 
 const colors = {
-  bg:'#0E0818', plum:'#2D1B4E', accent:'#C9956B', muted:'#7A6E88'
+  bg:'#0E0818', plum:'#2D1B4E', accent:'#C9956B',
+  accentLight:'#E8B89A', muted:'#7A6E88', white:'#FAF7F5'
 }
 
 const NAV = [
@@ -28,33 +29,81 @@ export default function AppShell({ screen }) {
   }
 
   return (
-    <div style={{ maxWidth:420, margin:'0 auto', minHeight:'100vh',
-      background:colors.bg, position:'relative' }}>
-      <div style={{ paddingBottom:70 }}>
+    <div style={{
+      width: '100%',
+      maxWidth: 480,
+      margin: '0 auto',
+      minHeight: '100vh',
+      minHeight: '-webkit-fill-available',
+      background: colors.bg,
+      position: 'relative',
+    }}>
+      {/* Scrollable content area — leaves room for nav bar */}
+      <div style={{
+        paddingBottom: 'calc(70px + env(safe-area-inset-bottom))',
+        minHeight: '100vh',
+      }}>
         {renderScreen()}
       </div>
-      <nav style={{ position:'fixed', bottom:0, left:'50%',
-        transform:'translateX(-50%)', width:'100%', maxWidth:420,
-        background:'rgba(14,8,24,0.97)', backdropFilter:'blur(20px)',
-        borderTop:`1px solid ${colors.plum}`,
-        display:'flex', justifyContent:'space-around',
-        padding:'10px 0 20px', zIndex:100 }}>
-        {NAV.map(n => (
-          <button key={n.key} onClick={() => navigate(n.path)}
-            style={{ display:'flex', flexDirection:'column', alignItems:'center',
-              gap:3, cursor:'pointer', padding:'4px 12px', borderRadius:12,
-              border:'none', background:'none', transition:'all 0.2s' }}>
-            <span style={{ fontSize:20,
-              filter: screen === n.key
-                ? `drop-shadow(0 0 6px ${colors.accent})` : 'none' }}>
-              {n.icon}
-            </span>
-            <span style={{ fontSize:10, fontFamily:'Inter,sans-serif',
-              color: screen === n.key ? colors.accent : colors.muted }}>
-              {n.label}
-            </span>
-          </button>
-        ))}
+
+      {/* Fixed bottom nav — respects iPhone home indicator */}
+      <nav style={{
+        position: 'fixed',
+        bottom: 0,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: '100%',
+        maxWidth: 480,
+        background: 'rgba(14,8,24,0.97)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        borderTop: `1px solid ${colors.plum}`,
+        display: 'flex',
+        justifyContent: 'space-around',
+        alignItems: 'flex-start',
+        paddingTop: 10,
+        paddingBottom: 'calc(10px + env(safe-area-inset-bottom))',
+        zIndex: 100,
+      }}>
+        {NAV.map(n => {
+          const active = screen === n.key
+          return (
+            <button
+              key={n.key}
+              onClick={() => navigate(n.path)}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 3,
+                padding: '4px 16px',
+                borderRadius: 12,
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                minWidth: 48,
+                minHeight: 48,
+              }}
+            >
+              <span style={{
+                fontSize: 22,
+                filter: active ? `drop-shadow(0 0 6px ${colors.accent})` : 'none',
+                transition: 'filter 0.2s',
+              }}>
+                {n.icon}
+              </span>
+              <span style={{
+                fontSize: 10,
+                fontWeight: active ? 600 : 400,
+                color: active ? colors.accentLight : colors.muted,
+                letterSpacing: 0.3,
+                transition: 'color 0.2s',
+              }}>
+                {n.label}
+              </span>
+            </button>
+          )
+        })}
       </nav>
     </div>
   )
