@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express'
+import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { requireAdmin, logAdminAction } from '../middleware/admin'
@@ -7,12 +7,11 @@ import { recalculateRiskScore, recalculateAllRiskScores } from '../lib/riskScore
 const router = Router()
 router.use(requireAuth)
 
-// ─── Dashboard ───────────────────────────────────────────────────────────────
+// ─── Dashboard ────────────────────────────────────────────────────────────────
 router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: Response) => {
   try {
-    const now = new Date()
-    const today = new Date(now.setHours(0,0,0,0))
-    const week = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    const today = new Date(); today.setHours(0,0,0,0)
+    const week  = new Date(Date.now() - 7  * 24 * 60 * 60 * 1000)
     const month = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
 
     const [
@@ -23,8 +22,7 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
       totalMessages, pendingReports,
       premiumSubs, coupleSubs,
       suspendedUsers, bannedUsers,
-      pendingVerifications,
-      highRiskUsers
+      pendingVerifications, highRiskUsers
     ] = await Promise.all([
       prisma.user.count(),
       prisma.user.count({ where: { createdAt: { gte: today } } }),
@@ -62,12 +60,11 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
   }
 })
 
-// ─── Users ────────────────────────────────────────────────────────────────────
+// ─── Users list ───────────────────────────────────────────────────────────────
 router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
-  const { limit = 20, offset = 0, status, search, role, sortByRisk } = req.query
+  const { limit = 20, offset = 0, status, search, sortByRisk } = req.query
   const where: any = {}
   if (status) where.status = status
-  if (role) where.adminRole = role
   if (search) where.OR = [
     { email: { contains: search as string, mode: 'insensitive' } },
     { profile: { displayName: { contains: search as string, mode: 'insensitive' } } }
@@ -88,34 +85,193 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
     }),
     prisma.user.count({ where })
   ])
-
   res.json({ users, total })
 })
 
+// ─── User detail (customer support view) ─────────────────────────────────────
 router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
   const user = await prisma.user.findUnique({
     where: { id: req.params.id },
     include: {
-      profile: { include: { photos: true, intentions: { include: { intention: true } } } },
+      profile: {
+        include: {
+          photos: { orderBy: [{ isPrimary: 'desc' }] },
+          intentions: { include: { intention: true } },
+          boundaries: { include: { boundary: true } },
+          privacySettings: true,
+          coupleProfile: true,
+        }
+      },
       subscription: true,
       verification: true,
-      reportsReceived: { take: 5, orderBy: { createdAt: 'desc' } },
-      reportsMade: { take: 5, orderBy: { createdAt: 'desc' } },
+      consents: { orderBy: { acceptedAt: 'desc' } },
+      reportsReceived: { take: 10, orderBy: { createdAt: 'desc' } },
+      reportsMade: { take: 10, orderBy: { createdAt: 'desc' } },
     }
   })
   if (!user) return res.status(404).json({ error: 'Utilizador não encontrado.' })
 
   await logAdminAction(req.userId!, 'VIEW_USER', 'user', req.params.id, {
+    targetUserId: req.params.id, ipAddress: req.ip, userAgent: req.headers['user-agent']
+  })
+
+  // Strip sensitive fields before sending
+  const { passwordHash, ...safeUser } = user as any
+  res.json(safeUser)
+})
+
+// ─── Edit user (customer support) — with full audit trail ────────────────────
+router.put('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  try {
+    const { email, status, adminRole, reason, internalNote } = req.body
+    if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.' })
+
+    const prev = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      select: { email: true, status: true, adminRole: true }
+    })
+    if (!prev) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+    // Only SUPER_ADMIN can change adminRole
+    if (adminRole !== undefined && (req as any).adminRole !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Apenas SUPER_ADMIN pode alterar roles.' })
+    }
+
+    const updateData: any = {}
+    if (email !== undefined)     updateData.email = email
+    if (status !== undefined)    updateData.status = status
+    if (adminRole !== undefined) updateData.adminRole = adminRole
+
+    const updated = await prisma.user.update({
+      where: { id: req.params.id },
+      data: updateData,
+      select: { id: true, email: true, status: true, adminRole: true }
+    })
+
+    await logAdminAction(req.userId!, 'EDIT_USER', 'user', req.params.id, {
+      targetUserId: req.params.id,
+      reason,
+      internalNote,
+      previousData: prev,
+      newData: updateData,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    })
+
+    res.json({ ok: true, user: updated })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// ─── Edit profile (customer support) — with full audit trail ─────────────────
+router.put('/profiles/:id', requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
+  try {
+    const { displayName, bio, city, country, status, rejectionReason, moderationNotes, reason, internalNote } = req.body
+    if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.' })
+
+    const prev = await prisma.profile.findUnique({
+      where: { id: req.params.id },
+      select: { displayName: true, bio: true, city: true, country: true, status: true, rejectionReason: true }
+    })
+    if (!prev) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
+    const updateData: any = {}
+    if (displayName !== undefined)    updateData.displayName = displayName
+    if (bio !== undefined)            updateData.bio = bio
+    if (city !== undefined)           updateData.city = city
+    if (country !== undefined)        updateData.country = country
+    if (status !== undefined)         updateData.status = status
+    if (rejectionReason !== undefined) updateData.rejectionReason = rejectionReason
+    if (moderationNotes !== undefined) updateData.moderationNotes = moderationNotes
+
+    const updated = await prisma.profile.update({
+      where: { id: req.params.id },
+      data: updateData
+    })
+
+    await logAdminAction(req.userId!, 'EDIT_PROFILE', 'profile', req.params.id, {
+      targetUserId: updated.userId,
+      reason,
+      internalNote,
+      previousData: prev,
+      newData: updateData,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    })
+
+    res.json({ ok: true, profile: updated })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// ─── Delete user (GDPR / customer request) — with full audit trail ───────────
+router.delete('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  try {
+    const { reason, internalNote } = req.body
+    if (!reason) return res.status(400).json({ error: 'Motivo obrigatório para apagar utilizador.' })
+
+    // Only SUPER_ADMIN can hard-delete
+    if ((req as any).adminRole !== 'SUPER_ADMIN' && (req as any).adminRole !== 'ADMIN') {
+      return res.status(403).json({ error: 'Sem permissão.' })
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      select: { email: true, status: true, adminRole: true }
+    })
+    if (!user) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+    // Soft-delete: anonymise PII, mark as DELETED
+    await prisma.user.update({
+      where: { id: req.params.id },
+      data: {
+        status: 'DELETED',
+        email: `deleted-${req.params.id}@deleted.betweenus`,
+        passwordHash: 'DELETED',
+        dateOfBirth: new Date('1900-01-01'),
+        emailVerifiedAt: null,
+        lastSeenAt: null,
+      }
+    })
+
+    await logAdminAction(req.userId!, 'DELETE_USER', 'user', req.params.id, {
+      targetUserId: req.params.id,
+      reason,
+      internalNote,
+      previousData: { email: user.email, status: user.status },
+      newData: { status: 'DELETED', anonymised: true },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    })
+
+    res.json({ ok: true, message: 'Utilizador anonimizado. Dados eliminados em 30 dias.' })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// ─── History: all admin actions for a specific user ───────────────────────────
+router.get('/users/:id/history', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  const history = await prisma.adminAction.findMany({
+    where: { targetUserId: req.params.id },
+    orderBy: { createdAt: 'desc' },
+    include: { admin: { select: { email: true, adminRole: true } } }
+  })
+
+  await logAdminAction(req.userId!, 'VIEW_USER_HISTORY', 'user', req.params.id, {
     targetUserId: req.params.id, ipAddress: req.ip
   })
 
-  res.json(user)
+  res.json({ history })
 })
 
+// ─── User status ──────────────────────────────────────────────────────────────
 router.put('/users/:id/status', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
   const { status, reason } = req.body
-  const valid = ['ACTIVE', 'SUSPENDED', 'BANNED']
-  if (!valid.includes(status)) return res.status(400).json({ error: 'Status inválido.' })
+  if (!['ACTIVE', 'SUSPENDED', 'BANNED'].includes(status)) return res.status(400).json({ error: 'Status inválido.' })
+  if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.' })
 
   const prev = await prisma.user.findUnique({ where: { id: req.params.id }, select: { status: true } })
   const user = await prisma.user.update({ where: { id: req.params.id }, data: { status } })
@@ -124,39 +280,7 @@ router.put('/users/:id/status', requireAdmin('users'), async (req: AuthRequest, 
     targetUserId: req.params.id, reason,
     previousData: { status: prev?.status }, newData: { status }, ipAddress: req.ip
   })
-
   res.json({ ok: true, user })
-})
-
-router.put('/users/:id/role', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
-  if ((req as any).adminRole !== 'SUPER_ADMIN') {
-    return res.status(403).json({ error: 'Apenas SUPER_ADMIN pode atribuir roles.' })
-  }
-  const { adminRole } = req.body
-  const user = await prisma.user.update({ where: { id: req.params.id }, data: { adminRole } })
-  await logAdminAction(req.userId!, 'CHANGE_ROLE', 'user', req.params.id, {
-    targetUserId: req.params.id, newData: { adminRole }, ipAddress: req.ip
-  })
-  res.json({ ok: true, user })
-})
-
-router.post('/users/:id/recalculate-risk', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
-  const score = await recalculateRiskScore(req.params.id)
-  await logAdminAction(req.userId!, 'RECALCULATE_RISK', 'user', req.params.id, {
-    targetUserId: req.params.id, newData: { riskScore: score }, ipAddress: req.ip
-  })
-  res.json({ ok: true, riskScore: score })
-})
-
-router.post('/risk-scores/recalculate-all', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
-  if ((req as any).adminRole !== 'SUPER_ADMIN') {
-    return res.status(403).json({ error: 'Apenas SUPER_ADMIN.' })
-  }
-  const result = await recalculateAllRiskScores()
-  await logAdminAction(req.userId!, 'RECALCULATE_ALL_RISK', 'system', 'all', {
-    newData: result, ipAddress: req.ip
-  })
-  res.json({ ok: true, ...result })
 })
 
 // ─── Profiles ─────────────────────────────────────────────────────────────────
@@ -189,11 +313,7 @@ router.put('/profiles/:id/status', requireAdmin('profiles'), async (req: AuthReq
     where: { id: req.params.id },
     data: { status, rejectionReason: reason, moderationNotes: reason }
   })
-
-  await logAdminAction(req.userId!, `${status}_PROFILE`, 'profile', req.params.id, {
-    reason, ipAddress: req.ip
-  })
-
+  await logAdminAction(req.userId!, `${status}_PROFILE`, 'profile', req.params.id, { reason, ipAddress: req.ip })
   res.json({ ok: true, profile })
 })
 
@@ -212,25 +332,15 @@ router.get('/photos', requireAdmin('photos'), async (req: AuthRequest, res: Resp
 
 router.put('/photos/:id', requireAdmin('photos'), async (req: AuthRequest, res: Response) => {
   const { moderationStatus, moderationNotes } = req.body
-  const valid = ['APPROVED', 'REJECTED', 'REMOVED']
-  if (!valid.includes(moderationStatus)) return res.status(400).json({ error: 'Status inválido.' })
-
   const photo = await prisma.profilePhoto.update({
     where: { id: req.params.id },
     data: { moderationStatus, moderationNotes }
   })
-
   if (moderationStatus === 'REJECTED') {
-    const fullPhoto = await prisma.profilePhoto.findUnique({
-      where: { id: req.params.id }, include: { profile: true }
-    })
-    if (fullPhoto) await recalculateRiskScore(fullPhoto.profile.userId)
+    const full = await prisma.profilePhoto.findUnique({ where: { id: req.params.id }, include: { profile: true } })
+    if (full) await recalculateRiskScore(full.profile.userId)
   }
-
-  await logAdminAction(req.userId!, `${moderationStatus}_PHOTO`, 'photo', req.params.id, {
-    reason: moderationNotes, ipAddress: req.ip
-  })
-
+  await logAdminAction(req.userId!, `${moderationStatus}_PHOTO`, 'photo', req.params.id, { reason: moderationNotes, ipAddress: req.ip })
   res.json({ ok: true, photo })
 })
 
@@ -256,22 +366,15 @@ router.put('/reports/:id', requireAdmin('reports'), async (req: AuthRequest, res
     where: { id: req.params.id },
     data: { status, internalNotes, reviewedAt: new Date() }
   })
-
-  if (status === 'RESOLVED' && report.reportedUserId) {
-    await recalculateRiskScore(report.reportedUserId)
-  }
-
-  await logAdminAction(req.userId!, `${status}_REPORT`, 'report', req.params.id, {
-    internalNote: internalNotes, ipAddress: req.ip
-  })
+  if (status === 'RESOLVED' && report.reportedUserId) await recalculateRiskScore(report.reportedUserId)
+  await logAdminAction(req.userId!, `${status}_REPORT`, 'report', req.params.id, { internalNote: internalNotes, ipAddress: req.ip })
   res.json({ ok: true, report })
 })
 
 // ─── Verifications ────────────────────────────────────────────────────────────
 router.get('/verifications', requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
   const verifications = await prisma.verification.findMany({
-    where: { status: 'PENDING' },
-    orderBy: { createdAt: 'asc' },
+    where: { status: 'PENDING' }, orderBy: { createdAt: 'asc' },
     include: { user: { select: { email: true, profile: { select: { displayName: true } } } } }
   })
   res.json({ verifications })
@@ -279,26 +382,58 @@ router.get('/verifications', requireAdmin('profiles'), async (req: AuthRequest, 
 
 router.put('/verifications/:userId', requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
   const { status } = req.body
-  await prisma.verification.update({
-    where: { userId: req.params.userId },
-    data: { status, reviewedAt: new Date() }
-  })
-
+  await prisma.verification.update({ where: { userId: req.params.userId }, data: { status, reviewedAt: new Date() } })
   if (status === 'APPROVED') await recalculateRiskScore(req.params.userId)
+  await logAdminAction(req.userId!, `${status}_VERIFICATION`, 'user', req.params.userId, { targetUserId: req.params.userId, ipAddress: req.ip })
+  res.json({ ok: true })
+})
 
-  await logAdminAction(req.userId!, `${status}_VERIFICATION`, 'user', req.params.userId, {
-    targetUserId: req.params.userId, ipAddress: req.ip
+// ─── Conversations ────────────────────────────────────────────────────────────
+router.get('/conversations', requireAdmin('conversations'), async (req: AuthRequest, res: Response) => {
+  const conversations = await prisma.conversation.findMany({
+    take: 30, orderBy: { updatedAt: 'desc' },
+    include: {
+      match: { include: {
+        profileOne: { select: { displayName: true, userId: true } },
+        profileTwo: { select: { displayName: true, userId: true } }
+      }},
+      _count: { select: { messages: true } }
+    }
   })
+  res.json({ conversations })
+})
+
+router.get('/conversations/:id', requireAdmin('conversations'), async (req: AuthRequest, res: Response) => {
+  const { reason } = req.query
+  if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.', code: 'REASON_REQUIRED' })
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: req.params.id },
+    include: {
+      match: { include: {
+        profileOne: { select: { displayName: true, userId: true } },
+        profileTwo: { select: { displayName: true, userId: true } }
+      }},
+      messages: { orderBy: { createdAt: 'asc' }, include: { sender: { select: { email: true, profile: { select: { displayName: true } } } } } }
+    }
+  })
+  if (!conversation) return res.status(404).json({ error: 'Não encontrado.' })
+  await logAdminAction(req.userId!, 'VIEW_CONVERSATION', 'conversation', req.params.id, { reason: reason as string, ipAddress: req.ip, userAgent: req.headers['user-agent'] })
+  res.json(conversation)
+})
+
+router.put('/messages/:id/remove', requireAdmin('conversations'), async (req: AuthRequest, res: Response) => {
+  const { reason } = req.body
+  const message = await prisma.message.update({ where: { id: req.params.id }, data: { deletedAt: new Date(), removedByAdmin: true } })
+  await logAdminAction(req.userId!, 'REMOVE_MESSAGE', 'message', req.params.id, { reason, targetUserId: message.senderUserId, ipAddress: req.ip })
   res.json({ ok: true })
 })
 
 // ─── Audit log ────────────────────────────────────────────────────────────────
 router.get('/audit', requireAdmin('audit'), async (req: AuthRequest, res: Response) => {
-  const { limit = 50, offset = 0, adminId, action, targetType } = req.query
+  const { limit = 50, offset = 0, targetUserId, action } = req.query
   const where: any = {}
-  if (adminId) where.adminId = adminId
+  if (targetUserId) where.targetUserId = targetUserId
   if (action) where.action = { contains: action as string }
-  if (targetType) where.targetType = targetType
 
   const logs = await prisma.adminAction.findMany({
     where, take: Number(limit), skip: Number(offset),
@@ -330,134 +465,31 @@ router.post('/beta/invites', requireAdmin('beta'), async (req: AuthRequest, res:
 
 router.put('/beta/invites/:id/toggle', requireAdmin('beta'), async (req: AuthRequest, res: Response) => {
   const invite = await prisma.betaInvite.findUnique({ where: { id: req.params.id } })
-  if (!invite) return res.status(404).json({ error: 'Convite não encontrado.' })
+  if (!invite) return res.status(404).json({ error: 'Não encontrado.' })
   const updated = await prisma.betaInvite.update({ where: { id: req.params.id }, data: { active: !invite.active } })
-  await logAdminAction(req.userId!, 'TOGGLE_BETA_INVITE', 'beta_invite', req.params.id, {
-    newData: { active: updated.active }, ipAddress: req.ip
-  })
   res.json({ ok: true, invite: updated })
 })
 
-// Point 3: DELETE endpoint was missing — frontend needs it
 router.delete('/beta/invites/:id', requireAdmin('beta'), async (req: AuthRequest, res: Response) => {
   const invite = await prisma.betaInvite.findUnique({ where: { id: req.params.id } })
-  if (!invite) return res.status(404).json({ error: 'Convite não encontrado.' })
-  if (invite.usedById) {
-    return res.status(400).json({ error: 'Não é possível apagar um convite já utilizado. Desativa-o em vez disso.' })
-  }
+  if (!invite) return res.status(404).json({ error: 'Não encontrado.' })
+  if (invite.usedById) return res.status(400).json({ error: 'Convite já utilizado. Desativa-o em vez de apagar.' })
   await prisma.betaInvite.delete({ where: { id: req.params.id } })
-  await logAdminAction(req.userId!, 'DELETE_BETA_INVITE', 'beta_invite', req.params.id, {
-    previousData: { code: invite.code }, ipAddress: req.ip
-  })
+  await logAdminAction(req.userId!, 'DELETE_BETA_INVITE', 'beta_invite', req.params.id, { ipAddress: req.ip })
   res.json({ ok: true })
 })
 
-// ─── Point 10: Conversations moderation ───────────────────────────────────────
-router.get('/conversations', requireAdmin('conversations'), async (req: AuthRequest, res: Response) => {
-  const { limit = 20, offset = 0, reported, profileId, matchStatus } = req.query
-  const where: any = {}
-
-  if (matchStatus) where.match = { status: matchStatus }
-
-  if (reported === 'true') {
-    // Conversations linked to matches whose participants have pending/resolved reports
-    const reportedUserIds = await prisma.report.findMany({
-      where: { reportedUserId: { not: null } },
-      select: { reportedUserId: true }
-    })
-    const ids = reportedUserIds.map(r => r.reportedUserId).filter(Boolean) as string[]
-    const reportedProfiles = await prisma.profile.findMany({
-      where: { userId: { in: ids } }, select: { id: true }
-    })
-    const profileIds = reportedProfiles.map(p => p.id)
-    where.match = { ...where.match, OR: [
-      { profileOneId: { in: profileIds } },
-      { profileTwoId: { in: profileIds } }
-    ]}
-  }
-
-  if (profileId) {
-    where.match = { ...where.match, OR: [
-      { profileOneId: profileId as string },
-      { profileTwoId: profileId as string }
-    ]}
-  }
-
-  const conversations = await prisma.conversation.findMany({
-    where, take: Number(limit), skip: Number(offset),
-    orderBy: { updatedAt: 'desc' },
-    include: {
-      match: {
-        include: {
-          profileOne: { select: { displayName: true, userId: true } },
-          profileTwo: { select: { displayName: true, userId: true } }
-        }
-      },
-      _count: { select: { messages: true } }
-    }
-  })
-
-  const total = await prisma.conversation.count({ where })
-  res.json({ conversations, total })
+// ─── Risk scores ──────────────────────────────────────────────────────────────
+router.post('/users/:id/recalculate-risk', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  const score = await recalculateRiskScore(req.params.id)
+  await logAdminAction(req.userId!, 'RECALCULATE_RISK', 'user', req.params.id, { newData: { riskScore: score }, ipAddress: req.ip })
+  res.json({ ok: true, riskScore: score })
 })
 
-// Requires a reason — auditable access to conversation content
-router.get('/conversations/:id', requireAdmin('conversations'), async (req: AuthRequest, res: Response) => {
-  const { reason } = req.query
-  if (!reason) {
-    return res.status(400).json({ error: 'Motivo obrigatório para aceder a uma conversa.', code: 'REASON_REQUIRED' })
-  }
-
-  const conversation = await prisma.conversation.findUnique({
-    where: { id: req.params.id },
-    include: {
-      match: {
-        include: {
-          profileOne: { select: { displayName: true, userId: true } },
-          profileTwo: { select: { displayName: true, userId: true } }
-        }
-      },
-      messages: {
-        orderBy: { createdAt: 'asc' },
-        include: { sender: { select: { email: true, profile: { select: { displayName: true } } } } }
-      }
-    }
-  })
-
-  if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' })
-
-  // Mandatory audit log for sensitive access
-  await logAdminAction(req.userId!, 'VIEW_CONVERSATION', 'conversation', req.params.id, {
-    reason: reason as string, ipAddress: req.ip, userAgent: req.headers['user-agent']
-  })
-
-  res.json(conversation)
-})
-
-router.put('/conversations/:id/block', requireAdmin('conversations'), async (req: AuthRequest, res: Response) => {
-  const { reason } = req.body
-  const conversation = await prisma.conversation.findUnique({ where: { id: req.params.id } })
-  if (!conversation) return res.status(404).json({ error: 'Conversa não encontrada.' })
-
-  await prisma.match.update({ where: { id: conversation.matchId }, data: { status: 'BLOCKED' } })
-
-  await logAdminAction(req.userId!, 'BLOCK_CONVERSATION', 'conversation', req.params.id, {
-    reason, ipAddress: req.ip
-  })
-  res.json({ ok: true })
-})
-
-router.put('/messages/:id/remove', requireAdmin('conversations'), async (req: AuthRequest, res: Response) => {
-  const { reason } = req.body
-  const message = await prisma.message.update({
-    where: { id: req.params.id },
-    data: { deletedAt: new Date(), removedByAdmin: true }
-  })
-
-  await logAdminAction(req.userId!, 'REMOVE_MESSAGE', 'message', req.params.id, {
-    reason, targetUserId: message.senderUserId, ipAddress: req.ip
-  })
-  res.json({ ok: true })
+router.post('/risk-scores/recalculate-all', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  if ((req as any).adminRole !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Apenas SUPER_ADMIN.' })
+  const result = await recalculateAllRiskScores()
+  res.json({ ok: true, ...result })
 })
 
 export default router
