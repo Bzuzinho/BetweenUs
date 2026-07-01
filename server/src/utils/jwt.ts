@@ -1,22 +1,35 @@
 import jwt from 'jsonwebtoken'
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production'
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret'
+const isProd = process.env.NODE_ENV === 'production'
+
+// T12: fail hard in production — dev fallbacks are insecure
+const getJwtSecret = (): string => {
+  const secret = process.env.JWT_SECRET
+  if (isProd && !secret) throw new Error('JWT_SECRET is required in production')
+  return secret || 'dev-secret-change-in-production'
+}
+
+const getRefreshSecret = (): string => {
+  const secret = process.env.JWT_REFRESH_SECRET
+  if (isProd && !secret) throw new Error('JWT_REFRESH_SECRET is required in production')
+  return secret || 'dev-refresh-secret-change-in-production'
+}
 
 export const generateTokens = (userId: string) => {
-  const accessToken = jwt.sign({ userId }, JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d'
+  const accessToken = jwt.sign({ userId }, getJwtSecret(), {
+    // T12: 15 minutes for access token — not 7 days
+    expiresIn: '15m'
   })
-  const refreshToken = jwt.sign({ userId }, JWT_REFRESH_SECRET, {
-    expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d'
+  const refreshToken = jwt.sign({ userId }, getRefreshSecret(), {
+    expiresIn: '30d'
   })
   return { accessToken, refreshToken }
 }
 
 export const verifyAccessToken = (token: string) => {
-  return jwt.verify(token, JWT_SECRET) as { userId: string }
+  return jwt.verify(token, getJwtSecret()) as { userId: string }
 }
 
 export const verifyRefreshToken = (token: string) => {
-  return jwt.verify(token, JWT_REFRESH_SECRET) as { userId: string }
+  return jwt.verify(token, getRefreshSecret()) as { userId: string }
 }
