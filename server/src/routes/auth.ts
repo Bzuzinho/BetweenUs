@@ -15,6 +15,7 @@ const authLimiter = rateLimit({
   message: { error: 'Demasiadas tentativas. Tenta novamente em 15 minutos.' }
 })
 
+// T4: granular consent fields — all required except optional ones
 const registerSchema = z.object({
   email: z.string().email('Email inválido'),
   password: z.string().min(8, 'Password deve ter pelo menos 8 caracteres'),
@@ -22,7 +23,16 @@ const registerSchema = z.object({
     const age = (Date.now() - new Date(val).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
     return age >= 18
   }, 'Tens de ter pelo menos 18 anos'),
-  termsAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar os termos'),
+  // T4: required consents — all must be explicitly true
+  ageConfirmed: z.boolean().refine(v => v === true, 'Tens de confirmar que tens 18 ou mais anos'),
+  termsAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar os Termos de Utilização'),
+  privacyAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar a Política de Privacidade'),
+  sensitiveDataAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar o tratamento de dados sensíveis'),
+  communityGuidelinesAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar as Directrizes da Comunidade'),
+  // T4: optional consents
+  locationConsent: z.boolean().optional().default(false),
+  marketingConsent: z.boolean().optional().default(false),
+  contactHashingConsent: z.boolean().optional().default(false),
   betaCode: z.string().optional()
 })
 
@@ -36,9 +46,8 @@ const getRedis = async () => {
   } catch { return null }
 }
 
-// Point 6: cookie helpers — httpOnly, Secure in prod, SameSite=Lax
-const ACCESS_COOKIE_MAX_AGE = 15 * 60 * 1000          // 15 min
-const REFRESH_COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000 // 30 days
+const ACCESS_COOKIE_MAX_AGE = 15 * 60 * 1000
+const REFRESH_COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000
 
 const setAuthCookies = (res: Response, accessToken: string, refreshToken: string) => {
   res.cookie('accessToken', accessToken, {
@@ -56,9 +65,7 @@ const clearAuthCookies = (res: Response) => {
 
 const validateBetaCode = async (code: string | undefined, email: string) => {
   if (!BETA_CLOSED) return { ok: true, invite: null }
-  if (!code) {
-    return { ok: false, error: 'O Between Us está em beta fechado. Precisas de um convite.', errCode: 'BETA_REQUIRED' }
-  }
+  if (!code) return { ok: false, error: 'O Between Us está em beta fechado. Precisas de um convite.', errCode: 'BETA_REQUIRED' }
   const invite = await prisma.betaInvite.findUnique({ where: { code: code.toUpperCase() } })
   if (!invite || !invite.active) return { ok: false, error: 'Convite inválido ou expirado.', errCode: 'BETA_INVALID' }
   if (invite.expiresAt && invite.expiresAt < new Date()) return { ok: false, error: 'Este convite expirou.', errCode: 'BETA_EXPIRED' }
@@ -81,18 +88,41 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
     if (!betaCheck.ok) return res.status(403).json({ error: betaCheck.error, code: betaCheck.errCode })
 
     const passwordHash = await bcrypt.hash(data.password, 12)
+
+    // T4: capture IP and userAgent for consent records
+    const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+      || req.socket.remoteAddress || 'unknown'
+    const userAgent = req.headers['user-agent'] || 'unknown'
+    const consentVersion = '1.0'
+
     const user = await prisma.user.create({
       data: {
-        email: data.email, passwordHash,
+        email: data.email,
+        passwordHash,
         dateOfBirth: new Date(data.dateOfBirth),
-        emailVerifiedAt: new Date(),
-        status: 'ACTIVE',
-        termsAcceptedAt: new Date(), privacyAcceptedAt: new Date(),
-        consents: { create: [
-          { consentType: 'TERMS', version: '1.0' },
-          { consentType: 'PRIVACY_POLICY', version: '1.0' },
-          { consentType: 'SENSITIVE_DATA', version: '1.0' }
-        ]},
+        // T5: emailVerifiedAt NOT set automatically in production
+        // In dev, auto-verify to avoid needing SMTP. In prod, must be verified via email link.
+        emailVerifiedAt: isProd ? null : new Date(),
+        status: isProd ? 'PENDING_VERIFICATION' : 'ACTIVE',
+        termsAcceptedAt: new Date(),
+        privacyAcceptedAt: new Date(),
+        // T4: granular consents with IP + userAgent
+        consents: {
+          create: [
+            { consentType: 'TERMS', version: consentVersion, ipAddress, userAgent },
+            { consentType: 'PRIVACY_POLICY', version: consentVersion, ipAddress, userAgent },
+            { consentType: 'SENSITIVE_DATA', version: consentVersion, ipAddress, userAgent },
+            ...(data.locationConsent
+              ? [{ consentType: 'LOCATION' as any, version: consentVersion, ipAddress, userAgent }]
+              : []),
+            ...(data.marketingConsent
+              ? [{ consentType: 'MARKETING' as any, version: consentVersion, ipAddress, userAgent }]
+              : []),
+            ...(data.contactHashingConsent
+              ? [{ consentType: 'CONTACT_HASHING' as any, version: consentVersion, ipAddress, userAgent }]
+              : []),
+          ]
+        },
         subscription: { create: { plan: 'FREE', status: 'ACTIVE' } }
       }
     })
@@ -111,17 +141,21 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
       })
     }
 
+    // T5: In production, send verification email (not implemented yet — see RC-1)
+    // TODO: await sendVerificationEmail(user.email, user.id)
+
     const { accessToken, refreshToken } = generateTokens(user.id)
     const redis = await getRedis()
     if (redis) await redis.setEx(`refresh:${user.id}`, 30 * 24 * 60 * 60, hashToken(refreshToken))
 
-    // Point 6: tokens go in httpOnly cookies; also returned in body for
-    // transitional backward compatibility with any remaining Bearer usage
     setAuthCookies(res, accessToken, refreshToken)
     res.status(201).json({
-      message: 'Conta criada com sucesso!',
+      message: isProd
+        ? 'Conta criada! Verifica o teu email para activar a conta.'
+        : 'Conta criada com sucesso!',
       accessToken, refreshToken,
-      user: { id: user.id, email: user.email, status: user.status }
+      user: { id: user.id, email: user.email, status: user.status },
+      emailVerificationRequired: isProd
     })
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
@@ -139,8 +173,8 @@ router.post('/login', authLimiter, async (req: Request, res: Response) => {
 
     const user = await prisma.user.findUnique({ where: { email } })
     if (!user) return res.status(401).json({ error: 'Email ou password incorretos.' })
-    if (user.status === 'BANNED') return res.status(403).json({ error: 'Esta conta foi suspensa.' })
-    if (user.status === 'SUSPENDED') return res.status(403).json({ error: 'Conta temporariamente suspensa.' })
+    if (user.status === 'BANNED') return res.status(403).json({ error: 'Esta conta foi suspensa.', code: 'ACCOUNT_BANNED' })
+    if (user.status === 'SUSPENDED') return res.status(403).json({ error: 'Conta temporariamente suspensa.', code: 'ACCOUNT_SUSPENDED' })
 
     const valid = await bcrypt.compare(password, user.passwordHash)
     if (!valid) return res.status(401).json({ error: 'Email ou password incorretos.' })
@@ -163,12 +197,11 @@ router.post('/login', authLimiter, async (req: Request, res: Response) => {
   }
 })
 
-// POST /api/auth/logout — Point 6: clears cookies too
+// POST /api/auth/logout
 router.post('/logout', async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization
   const cookieToken = (req as any).cookies?.accessToken
   const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : cookieToken
-
   if (token) {
     try {
       const { userId } = verifyAccessToken(token)
@@ -180,7 +213,7 @@ router.post('/logout', async (req: Request, res: Response) => {
   res.json({ message: 'Sessão terminada.' })
 })
 
-// POST /api/auth/refresh — accepts refresh token from cookie or body
+// POST /api/auth/refresh
 router.post('/refresh', async (req: Request, res: Response) => {
   const refreshToken = req.body?.refreshToken || (req as any).cookies?.refreshToken
   if (!refreshToken) return res.status(401).json({ error: 'Token em falta.' })
@@ -195,7 +228,6 @@ router.post('/refresh', async (req: Request, res: Response) => {
     }
     const tokens = generateTokens(userId)
     if (redis) await redis.setEx(`refresh:${userId}`, 30 * 24 * 60 * 60, hashToken(tokens.refreshToken))
-
     setAuthCookies(res, tokens.accessToken, tokens.refreshToken)
     res.json(tokens)
   } catch {
@@ -203,13 +235,12 @@ router.post('/refresh', async (req: Request, res: Response) => {
   }
 })
 
-// GET /api/auth/me — accepts Bearer or cookie
+// GET /api/auth/me
 router.get('/me', async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization
   const cookieToken = (req as any).cookies?.accessToken
   const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : cookieToken
   if (!token) return res.status(401).json({ error: 'Não autenticado.' })
-
   try {
     const { userId } = verifyAccessToken(token)
     const user = await prisma.user.findUnique({
@@ -223,6 +254,86 @@ router.get('/me', async (req: Request, res: Response) => {
     })
     if (!user) return res.status(404).json({ error: 'Utilizador não encontrado.' })
     res.json(user)
+  } catch {
+    res.status(401).json({ error: 'Token inválido.' })
+  }
+})
+
+// T13: DELETE /api/auth/account — RGPD Art. 17 right to erasure
+router.delete('/account', async (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization
+  const cookieToken = (req as any).cookies?.accessToken
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : cookieToken
+  if (!token) return res.status(401).json({ error: 'Não autenticado.' })
+  try {
+    const { userId } = verifyAccessToken(token)
+    const { password } = req.body
+    if (!password) return res.status(400).json({ error: 'Password obrigatória para confirmar a eliminação.' })
+
+    const user = await prisma.user.findUnique({ where: { id: userId } })
+    if (!user) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+    const valid = await bcrypt.compare(password, user.passwordHash)
+    if (!valid) return res.status(401).json({ error: 'Password incorrecta.' })
+
+    // Soft delete: mark as DELETED, anonymise PII
+    // Hard delete scheduled by background job within 30 days
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        status: 'DELETED',
+        email: `deleted-${userId}@deleted.betweenus`,
+        passwordHash: 'DELETED',
+        dateOfBirth: new Date('1900-01-01'),
+        emailVerifiedAt: null,
+        lastSeenAt: null,
+      }
+    })
+
+    // Revoke all sessions immediately
+    const redis = await getRedis()
+    if (redis) await redis.del(`refresh:${userId}`)
+    clearAuthCookies(res)
+
+    res.json({ ok: true, message: 'Conta eliminada. Os teus dados serão removidos nos próximos 30 dias.' })
+  } catch {
+    res.status(401).json({ error: 'Token inválido.' })
+  }
+})
+
+// T13: GET /api/auth/export — RGPD Art. 20 data portability
+router.get('/export', async (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization
+  const cookieToken = (req as any).cookies?.accessToken
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : cookieToken
+  if (!token) return res.status(401).json({ error: 'Não autenticado.' })
+  try {
+    const { userId } = verifyAccessToken(token)
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true, email: true, dateOfBirth: true, createdAt: true, status: true,
+        profile: {
+          select: {
+            displayName: true, bio: true, gender: true, orientation: true,
+            relationshipStatus: true, city: true, country: true, createdAt: true,
+            intentions: { include: { intention: true } },
+          }
+        },
+        consents: { select: { consentType: true, version: true, acceptedAt: true } },
+        subscription: { select: { plan: true, status: true } },
+        reportsReceived: { select: { reason: true, status: true, createdAt: true } }
+      }
+    })
+    if (!user) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+    res.setHeader('Content-Disposition', 'attachment; filename="betweenus-data-export.json"')
+    res.setHeader('Content-Type', 'application/json')
+    res.json({
+      exportedAt: new Date().toISOString(),
+      exportVersion: '1.0',
+      data: user
+    })
   } catch {
     res.status(401).json({ error: 'Token inválido.' })
   }
