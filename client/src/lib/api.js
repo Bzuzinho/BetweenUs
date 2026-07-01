@@ -5,38 +5,83 @@ const baseURL = import.meta.env.VITE_API_URL || '/api'
 const api = axios.create({
   baseURL,
   headers: { 'Content-Type': 'application/json' },
-  // Point 6: send/receive httpOnly cookies cross-origin
   withCredentials: true
 })
 
-// Point 6: Authorization header is now a transitional fallback only.
-// The backend issues httpOnly cookies on login/register/refresh, which the
-// browser sends automatically (because of withCredentials above). We keep
-// reading from localStorage here ONLY until every client is confirmed to be
-// using the cookie flow, so existing sessions don't break mid-rollout.
+// Primary: localStorage token (Safari-safe)
+// Secondary: httpOnly cookie (used when localStorage is empty)
+const getToken = () => localStorage.getItem('accessToken')
+
 api.interceptors.request.use(config => {
-  const token = localStorage.getItem('accessToken')
+  const token = getToken()
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
+
+let isRefreshing = false
+let failedQueue = []
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach(prom => {
+    if (error) prom.reject(error)
+    else prom.resolve(token)
+  })
+  failedQueue = []
+}
 
 api.interceptors.response.use(
   res => res,
   async err => {
     const original = err.config
     if (err.response?.status === 401 && !original._retry) {
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject })
+        }).then(token => {
+          original.headers.Authorization = `Bearer ${token}`
+          return api(original)
+        }).catch(e => Promise.reject(e))
+      }
+
       original._retry = true
+      isRefreshing = true
+
       try {
-        // Cookie-based refresh — refreshToken cookie is sent automatically
-        const res = await axios.post(`${baseURL}/auth/refresh`, {}, { withCredentials: true })
-        // Keep localStorage in sync during the transitional period
-        if (res.data.accessToken) localStorage.setItem('accessToken', res.data.accessToken)
-        if (res.data.refreshToken) localStorage.setItem('refreshToken', res.data.refreshToken)
+        const refreshToken = localStorage.getItem('refreshToken')
+        if (!refreshToken) {
+          // No refresh token at all — clear and redirect
+          localStorage.removeItem('accessToken')
+          localStorage.removeItem('refreshToken')
+          window.location.href = '/login'
+          return Promise.reject(err)
+        }
+
+        const res = await axios.post(
+          `${baseURL}/auth/refresh`,
+          { refreshToken },
+          { withCredentials: true }
+        )
+
+        const { accessToken, refreshToken: newRefresh } = res.data
+        localStorage.setItem('accessToken', accessToken)
+        if (newRefresh) localStorage.setItem('refreshToken', newRefresh)
+
+        api.defaults.headers.common.Authorization = `Bearer ${accessToken}`
+        processQueue(null, accessToken)
+        original.headers.Authorization = `Bearer ${accessToken}`
         return api(original)
-      } catch {
+      } catch (refreshErr) {
+        processQueue(refreshErr, null)
         localStorage.removeItem('accessToken')
         localStorage.removeItem('refreshToken')
-        window.location.href = '/login'
+        // Only redirect if not already on login/register/join
+        const currentPath = window.location.pathname
+        if (!['/login', '/register', '/join'].some(p => currentPath.startsWith(p))) {
+          window.location.href = '/login'
+        }
+        return Promise.reject(refreshErr)
+      } finally {
+        isRefreshing = false
       }
     }
     return Promise.reject(err)
