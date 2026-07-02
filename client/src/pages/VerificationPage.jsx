@@ -2,10 +2,13 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
-const colors = {
-  bg:'#0E0818', bgCard:'#1A1028', bgInput:'#231535', plum:'#2D1B4E',
-  accent:'#C9956B', rose:'#F2C4B8', lavLight:'#B8A9D4',
-  white:'#FAF7F5', muted:'#7A6E88', green:'#3DD68C'
+const C = {
+  bg:'#0A141A', surface:'#102129', elevated:'#172C36',
+  border:'#1E3340', input:'#0F1E26',
+  primary:'#B8A7FF', primaryDim:'rgba(184,167,255,0.12)',
+  text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3',
+  success:'#4ADE80', successDim:'rgba(74,222,128,0.1)',
+  warning:'#FBBF24', danger:'#F87171', dangerDim:'rgba(248,113,113,0.1)',
 }
 
 const GESTURES = ['✌️ Paz', '👍 Polegar', '🤙 Shaka', '☝️ Um dedo']
@@ -61,24 +64,24 @@ export default function VerificationPage() {
   }
 
   if (loading) return (
-    <div style={{ minHeight:'100vh', background:colors.bg, display:'flex',
+    <div style={{ minHeight:'100vh', background:C.bg, display:'flex',
       alignItems:'center', justifyContent:'center' }}>
-      <div style={{ color:colors.accent, fontFamily:"'Playfair Display',serif",
+      <div style={{ color:C.primary, fontFamily:"'Playfair Display',serif",
         fontSize:20, fontStyle:'italic' }}>A carregar...</div>
     </div>
   )
 
   return (
-    <div style={{ minHeight:'100vh', background:colors.bg, padding:'60px 20px 40px' }}>
+    <div style={{ minHeight:'100vh', background:C.bg, padding:'60px 20px 40px' }}>
       <div style={{ maxWidth:420, margin:'0 auto' }}>
 
         {/* Header */}
         <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:28 }}>
           <button onClick={() => navigate('/profile')}
             style={{ background:'none', border:'none',
-              color:colors.lavLight, fontSize:20, cursor:'pointer' }}>←</button>
+              color:C.text2, fontSize:20, cursor:'pointer' }}>←</button>
           <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:22,
-            fontWeight:700, color:colors.white }}>Verificar Perfil</h1>
+            fontWeight:700, color:C.text }}>Verificar Perfil</h1>
         </div>
 
         {/* Status: APPROVED */}
@@ -86,13 +89,13 @@ export default function VerificationPage() {
           <div style={{ textAlign:'center', padding:'40px 20px' }}>
             <div style={{ fontSize:70, marginBottom:20 }}>✅</div>
             <div style={{ fontFamily:"'Playfair Display',serif", fontSize:24,
-              color:colors.white, marginBottom:12 }}>Perfil Verificado!</div>
+              color:C.text, marginBottom:12 }}>Perfil Verificado!</div>
             <div style={{ background:'rgba(61,214,140,0.1)',
-              border:`1px solid ${colors.green}`, borderRadius:20,
+              border:`1px solid ${C.success}`, borderRadius:20,
               padding:'10px 20px', display:'inline-block',
-              color:colors.green, fontSize:14, fontWeight:600,
+              color:C.success, fontSize:14, fontWeight:600,
               marginBottom:20 }}>✓ Verificado</div>
-            <p style={{ color:colors.muted, fontSize:13, lineHeight:1.6 }}>
+            <p style={{ color:C.muted, fontSize:13, lineHeight:1.6 }}>
               O teu perfil tem o selo de verificado. Isto aumenta a confiança
               de outros utilizadores e melhora o teu Between Score.
             </p>
@@ -104,8 +107,8 @@ export default function VerificationPage() {
           <div style={{ textAlign:'center', padding:'40px 20px' }}>
             <div style={{ fontSize:70, marginBottom:20 }}>⏳</div>
             <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22,
-              color:colors.white, marginBottom:12 }}>Em revisão</div>
-            <p style={{ color:colors.muted, fontSize:13, lineHeight:1.6 }}>
+              color:C.text, marginBottom:12 }}>Em revisão</div>
+            <p style={{ color:C.muted, fontSize:13, lineHeight:1.6 }}>
               A tua selfie foi recebida. A equipa Between Us irá rever
               em até 24 horas. Receberás uma notificação quando estiver pronto.
             </p>
@@ -118,9 +121,9 @@ export default function VerificationPage() {
             border:'1px solid rgba(224,92,122,0.3)',
             borderRadius:20, padding:20, marginBottom:20, textAlign:'center' }}>
             <div style={{ fontSize:40, marginBottom:12 }}>❌</div>
-            <div style={{ color:'#E05C7A', fontWeight:600,
+            <div style={{ color:'#F87171', fontWeight:600,
               fontSize:15, marginBottom:8 }}>Verificação recusada</div>
-            <p style={{ color:colors.muted, fontSize:13, lineHeight:1.5 }}>
+            <p style={{ color:C.muted, fontSize:13, lineHeight:1.5 }}>
               A selfie não foi aceite. Tenta novamente com uma foto mais clara
               do teu rosto e com o gesto pedido.
             </p>
@@ -134,9 +137,9 @@ export default function VerificationPage() {
             <div style={{ background:'rgba(201,149,107,0.08)',
               border:'1px solid rgba(201,149,107,0.2)',
               borderRadius:16, padding:16, marginBottom:20 }}>
-              <div style={{ fontSize:13, color:colors.accent,
+              <div style={{ fontSize:13, color:C.primary,
                 fontWeight:600, marginBottom:10 }}>Como funciona</div>
-              <div style={{ fontSize:12, color:colors.muted, lineHeight:1.8 }}>
+              <div style={{ fontSize:12, color:C.muted, lineHeight:1.8 }}>
                 1. Tira uma selfie com o gesto pedido em baixo<br/>
                 2. Enviamos para revisão manual pela equipa<br/>
                 3. Recebes o selo ✓ Verificado em até 24h<br/>
@@ -145,16 +148,16 @@ export default function VerificationPage() {
             </div>
 
             {/* Gesture challenge */}
-            <div style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
+            <div style={{ background:C.bgCard, border:`1px solid ${C.border}`,
               borderRadius:20, padding:20, marginBottom:20, textAlign:'center' }}>
-              <div style={{ fontSize:13, color:colors.lavLight,
+              <div style={{ fontSize:13, color:C.text2,
                 marginBottom:8 }}>Tira uma selfie a fazer este gesto:</div>
               <div style={{ fontSize:60, marginBottom:8 }}>
                 {gesture.split(' ')[0]}
               </div>
-              <div style={{ fontSize:18, color:colors.white,
+              <div style={{ fontSize:18, color:C.text,
                 fontWeight:600 }}>{gesture.split(' ').slice(1).join(' ')}</div>
-              <div style={{ fontSize:11, color:colors.muted, marginTop:8 }}>
+              <div style={{ fontSize:11, color:C.muted, marginTop:8 }}>
                 Garante que o teu rosto e o gesto são claramente visíveis
               </div>
             </div>
@@ -162,19 +165,19 @@ export default function VerificationPage() {
             {/* Feedback */}
             {msg && (
               <div style={{ background:'rgba(61,214,140,0.1)',
-                border:`1px solid ${colors.green}`, borderRadius:12,
+                border:`1px solid ${C.success}`, borderRadius:12,
                 padding:'12px 16px', marginBottom:16,
-                color:colors.green, fontSize:13 }}>{msg}</div>
+                color:C.success, fontSize:13 }}>{msg}</div>
             )}
             {error && (
               <div style={{ background:'rgba(224,92,122,0.1)',
                 border:'1px solid rgba(224,92,122,0.3)', borderRadius:12,
                 padding:'12px 16px', marginBottom:16,
-                color:'#E05C7A', fontSize:13 }}>{error}</div>
+                color:'#F87171', fontSize:13 }}>{error}</div>
             )}
 
             {/* Upload */}
-            <div style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
+            <div style={{ background:C.bgCard, border:`1px solid ${C.border}`,
               borderRadius:20, padding:20 }}>
               {preview ? (
                 <>
@@ -190,7 +193,7 @@ export default function VerificationPage() {
                   </div>
                   <button onClick={handleSubmit} disabled={uploading}
                     style={{ width:'100%',
-                      background:`linear-gradient(135deg,${colors.accent},${colors.rose})`,
+                      background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
                       border:'none', borderRadius:50, padding:14, fontSize:15,
                       fontWeight:600, color:'#1A0A2E', cursor:'pointer',
                       opacity: uploading ? 0.7 : 1,
@@ -201,12 +204,12 @@ export default function VerificationPage() {
               ) : (
                 <>
                   <div onClick={() => fileRef.current?.click()}
-                    style={{ height:140, border:`2px dashed ${colors.plum}`,
+                    style={{ height:140, border:`2px dashed ${C.border}`,
                       borderRadius:14, display:'flex', flexDirection:'column',
                       alignItems:'center', justifyContent:'center',
                       cursor:'pointer', gap:8, marginBottom:14 }}>
                     <span style={{ fontSize:40 }}>🤳</span>
-                    <span style={{ color:colors.muted, fontSize:13 }}>
+                    <span style={{ color:C.muted, fontSize:13 }}>
                       Toca para escolher a selfie
                     </span>
                   </div>
@@ -215,7 +218,7 @@ export default function VerificationPage() {
                     style={{ display:'none' }} onChange={handleFile} />
                   <button onClick={() => fileRef.current?.click()}
                     style={{ width:'100%',
-                      background:`linear-gradient(135deg,${colors.accent},${colors.rose})`,
+                      background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
                       border:'none', borderRadius:50, padding:14, fontSize:15,
                       fontWeight:600, color:'#1A0A2E', cursor:'pointer',
                       fontFamily:'Inter,sans-serif' }}>
@@ -227,7 +230,7 @@ export default function VerificationPage() {
 
             {/* Privacy note */}
             <div style={{ marginTop:16, padding:'0 4px' }}>
-              <p style={{ color:colors.muted, fontSize:11, lineHeight:1.6,
+              <p style={{ color:C.muted, fontSize:11, lineHeight:1.6,
                 textAlign:'center' }}>
                 🔒 A selfie é usada apenas para verificação manual e apagada
                 após revisão. O teu nome real nunca é mostrado publicamente.
