@@ -4,9 +4,9 @@ import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 
 const C = {
-  bg:'#0E0818', card:'#1A1028', input:'#231535', plum:'#2D1B4E',
-  accent:'#C9956B', rose:'#F2C4B8', lavLight:'#B8A9D4',
-  white:'#FAF7F5', muted:'#7A6E88', green:'#3DD68C'
+  bg:'#0A141A', card:'#102129', input:'#0F1E26', plum:'#1E3340',
+  accent:'#B8A7FF', rose:'#9B8EE0', lavLight:'#AAB6C2',
+  white:'#F5F7FA', muted:'#7E8FA3', green:'#4ADE80'
 }
 
 const RELATIONSHIP_STATUSES = [
@@ -149,7 +149,7 @@ export default function CreateProfilePage() {
           <div style={{
             background: 'rgba(224,92,122,0.1)', border: '1px solid rgba(224,92,122,0.3)',
             borderRadius: 12, padding: '12px 16px', marginBottom: 16,
-            color: '#E05C7A', fontSize: 14, lineHeight: 1.5,
+            color: '#F87171', fontSize: 14, lineHeight: 1.5,
           }}>
             {error}
           </div>
