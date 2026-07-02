@@ -1,287 +1,177 @@
-import { useState, useEffect } from 'react'
-import { useNavigate, Link, useSearchParams } from 'react-router-dom'
+import { useState } from 'react'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 
-const colors = {
-  bg:'#0E0818', bgCard:'#1A1028', bgInput:'#231535', plum:'#2D1B4E',
-  accent:'#C9956B', rose:'#F2C4B8', white:'#FAF7F5', muted:'#7A6E88'
+const C = {
+  bg:'#0A141A', card:'#102129', input:'#0F1E26', border:'#1E3340',
+  primary:'#B8A7FF', primaryDim:'rgba(184,167,255,0.12)',
+  text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3',
+  success:'#4ADE80', danger:'#F87171',
 }
+
+const BETA_CLOSED = false // toggled by BETA_CLOSED env on backend
 
 export default function RegisterPage() {
   const { register } = useAuth()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const [step, setStep] = useState(1) // 1=email/pw, 2=beta code (only if required), 3=age/terms
+  const [step, setStep] = useState(1) // 1=account, 2=age+consent
   const [form, setForm] = useState({
-    email:'', password:'', confirmPassword:'',
-    dateOfBirth:'', termsAccepted:false,
-    // Point 17: prefer the code stored by BetaJoinPage after a successful
-    // /api/beta/validate/:code call; fall back to a raw ?invite= param
-    betaCode: localStorage.getItem('betaCode') || searchParams.get('invite') || ''
+    email:'', password:'', dateOfBirth:'', betaCode:'',
+    termsAccepted: false,
   })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [betaRequired, setBetaRequired] = useState(false)
-  const [betaChecking, setBetaChecking] = useState(false)
-  const [betaValid, setBetaValid] = useState(false)
 
-  // Point 17: validate any pre-filled code against the real public endpoint
-  useEffect(() => {
-    if (form.betaCode && form.betaCode.length >= 6) {
-      checkBetaCode(form.betaCode)
-    }
-  }, [])
-
-  const checkBetaCode = async (code) => {
-    if (!code) return
-    setBetaChecking(true)
-    try {
-      const res = await api.get(`/beta/validate/${code.toUpperCase()}`)
-      setBetaValid(!!res.data.valid)
-      if (res.data.valid) setBetaRequired(true)
-    } catch (err) {
-      setBetaValid(false)
-      // A 403 with code BETA_REQUIRED-style payload is not what /validate
-      // returns, but a clearly invalid/expired code still implies beta is
-      // active — surface that so the field shows as required.
-      if (err.response?.status === 404 || err.response?.status === 400) {
-        setBetaRequired(true)
-      }
-    } finally {
-      setBetaChecking(false)
-    }
-  }
-
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const set = (k, v) => setForm(p => ({...p, [k]: v}))
 
   const handleSubmit = async () => {
-    if (form.password !== form.confirmPassword) return setError('As passwords não coincidem.')
-    if (!form.termsAccepted) return setError('Tens de aceitar os termos.')
     if (!form.dateOfBirth) return setError('Data de nascimento obrigatória.')
+    if (!form.termsAccepted) return setError('Tens de aceitar os Termos de Utilização.')
+
     setLoading(true); setError('')
     try {
-      // Point 4: betaCode is sent inside register and validated/consumed
-      // server-side as the single source of truth — this page never
-      // "uses" the invite itself, it only forwards the code.
-      const res = await register({
+      await register({
         email: form.email,
         password: form.password,
         dateOfBirth: form.dateOfBirth,
-        termsAccepted: form.termsAccepted,
-        ...(form.betaCode && { betaCode: form.betaCode.toUpperCase() })
+        termsAccepted: true,
+        betaCode: form.betaCode || undefined,
       })
-      localStorage.removeItem('betaCode')
-      if (res.accessToken) {
-        navigate('/create-profile')
-      } else {
-        navigate('/login')
-      }
+      navigate('/create-profile', { replace: true })
     } catch (err) {
-      const data = err.response?.data
-      if (data?.code === 'BETA_REQUIRED') {
-        setBetaRequired(true)
-        setStep(2)
-        setError(data.error)
-      } else {
-        setError(data?.error || 'Erro ao criar conta.')
-      }
-    } finally { setLoading(false) }
+      const code = err.response?.data?.code
+      if (code === 'BETA_REQUIRED') return setError('O Between Us está em beta fechado. Precisas de um código de convite.')
+      if (code === 'BETA_INVALID')  return setError('Código de convite inválido ou expirado.')
+      setError(err.response?.data?.error || 'Erro ao criar conta.')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const inputStyle = {
-    width:'100%', background:colors.bgInput, border:`1.5px solid ${colors.plum}`,
-    borderRadius:14, padding:'13px 16px', color:colors.white, fontSize:14,
-    outline:'none', fontFamily:'Inter,sans-serif', boxSizing:'border-box', marginBottom:12
+  const inp = {
+    width:'100%', background:C.input, border:`1.5px solid ${C.border}`,
+    borderRadius:12, padding:'13px 16px', color:C.text, fontSize:15,
+    marginBottom:12, display:'block', WebkitAppearance:'none',
   }
 
   return (
-    <div style={{ minHeight:'100vh', background:colors.bg, display:'flex',
-      alignItems:'center', justifyContent:'center', padding:24 }}>
-      <div style={{ width:'100%', maxWidth:380 }}>
-        <div style={{ textAlign:'center', marginBottom:32 }}>
-          <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:32, fontStyle:'italic',
-            background:`linear-gradient(135deg,${colors.accent},${colors.rose})`,
-            WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>
-            Between Us
-          </h1>
+    <div style={{
+      minHeight:'100vh', minHeight:'-webkit-fill-available',
+      background:C.bg,
+      display:'flex', flexDirection:'column', justifyContent:'center',
+      padding:'24px 24px calc(24px + env(safe-area-inset-bottom))',
+    }}>
+      <div style={{ width:'100%', maxWidth:380, margin:'0 auto' }}>
+
+        {/* Logo */}
+        <div style={{ textAlign:'center', marginBottom:36 }}>
+          <svg width="56" height="28" viewBox="0 0 56 28" style={{ display:'block', margin:'0 auto 12px' }}>
+            <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" strokeWidth="3.5"/>
+            <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.75"/>
+          </svg>
+          <div style={{ fontSize:24, fontWeight:500, color:C.text }}>Criar conta</div>
+          <div style={{ fontSize:13, color:C.muted, marginTop:4 }}>Privacidade por defeito. Consentimento primeiro.</div>
         </div>
 
-        <div style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
-          borderRadius:24, padding:28 }}>
-          <div style={{ display:'flex', gap:6, marginBottom:24 }}>
-            {(betaRequired ? [1,2,3] : [1,2]).map(i => (
-              <div key={i} style={{ flex:1, height:3, borderRadius:2,
-                background: step >= i
-                  ? `linear-gradient(90deg,${colors.accent},${colors.rose})`
-                  : colors.plum }} />
-            ))}
-          </div>
+        {/* Progress */}
+        <div style={{ display:'flex', gap:6, marginBottom:24 }}>
+          {[1,2].map(i => (
+            <div key={i} style={{
+              flex:1, height:2, borderRadius:1,
+              background: step >= i ? C.primary : C.border,
+              transition:'background 0.3s',
+            }} />
+          ))}
+        </div>
 
-          <h2 style={{ color:colors.white, fontSize:20,
-            fontFamily:"'Playfair Display',serif", marginBottom:20 }}>
-            {step === 1 ? 'Criar conta'
-              : betaRequired && step === 2 ? 'Código de convite'
-              : 'Verificação de idade'}
-          </h2>
+        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:20, padding:24 }}>
 
           {error && (
-            <div style={{ background:'rgba(224,92,122,0.1)',
-              border:'1px solid rgba(224,92,122,0.3)', borderRadius:12,
-              padding:'12px 16px', marginBottom:16, color:'#E05C7A', fontSize:13 }}>
+            <div style={{ background:'rgba(248,113,113,0.08)', border:`1px solid rgba(248,113,113,0.25)`, borderRadius:10, padding:'11px 14px', marginBottom:14, color:C.danger, fontSize:14 }}>
               {error}
             </div>
           )}
 
-          {step === 1 ? (
+          {step === 1 && (
             <>
-              <input style={inputStyle} type="email" placeholder="Email"
+              <h2 style={{ color:C.text, fontSize:18, fontWeight:500, marginBottom:18, marginTop:0 }}>A tua conta</h2>
+              <input style={inp} type="email" placeholder="Email" autoComplete="email"
                 value={form.email} onChange={e => set('email', e.target.value)} />
-              <input style={inputStyle} type="password"
-                placeholder="Password (mín. 8 caracteres)"
+              <input style={inp} type="password" placeholder="Password (mín. 8 caracteres)" autoComplete="new-password"
                 value={form.password} onChange={e => set('password', e.target.value)} />
-              <input style={inputStyle} type="password" placeholder="Confirmar password"
-                value={form.confirmPassword}
-                onChange={e => set('confirmPassword', e.target.value)} />
-              <button onClick={() => {
-                if (!form.email || !form.password || !form.confirmPassword)
-                  return setError('Preenche todos os campos.')
-                if (form.password !== form.confirmPassword)
-                  return setError('As passwords não coincidem.')
-                if (form.password.length < 8)
-                  return setError('Password deve ter pelo menos 8 caracteres.')
-                setError(''); setStep(betaRequired ? 2 : 3)
-              }} style={{ width:'100%',
-                background:`linear-gradient(135deg,${colors.accent},${colors.rose})`,
-                border:'none', borderRadius:50, padding:14, fontSize:15, fontWeight:600,
-                color:'#1A0A2E', cursor:'pointer', fontFamily:'Inter,sans-serif' }}>
+              <input style={{...inp, marginBottom:0}} placeholder="Código de convite (se necessário)"
+                value={form.betaCode} onChange={e => set('betaCode', e.target.value)} />
+              <button
+                style={{ width:'100%', background:C.primary, border:'none', borderRadius:50, padding:14, fontSize:15, fontWeight:500, color:'#0A141A', cursor:'pointer', marginTop:16, minHeight:50 }}
+                onClick={() => {
+                  if (!form.email || !form.password) return setError('Email e password obrigatórios.')
+                  if (form.password.length < 8) return setError('A password deve ter pelo menos 8 caracteres.')
+                  setError(''); setStep(2)
+                }}>
                 Continuar →
               </button>
             </>
-          ) : betaRequired && step === 2 ? (
+          )}
+
+          {step === 2 && (
             <>
-              <div style={{ background:'rgba(201,149,107,0.08)', border:'1px solid rgba(201,149,107,0.2)',
-                borderRadius:14, padding:'14px 16px', marginBottom:16 }}>
-                <div style={{ color:colors.accent, fontSize:13, fontWeight:600, marginBottom:4 }}>
-                  🔒 Beta fechado
-                </div>
-                <div style={{ color:colors.muted, fontSize:13, lineHeight:1.5 }}>
-                  O Between Us está em acesso antecipado.
-                  Precisas de um código de convite para criar conta.
-                </div>
-              </div>
-
-              <label style={{ display:'block', color:colors.white, fontSize:13, marginBottom:6 }}>
-                Código de convite
-              </label>
-              <div style={{ position:'relative', marginBottom:12 }}>
-                <input style={{ ...inputStyle, marginBottom:0,
-                  borderColor: betaValid ? '#3DD68C' : form.betaCode ? '#E05C7A55' : colors.plum,
-                  paddingRight:40, textTransform:'uppercase', letterSpacing:1 }}
-                  placeholder="CÓDIGO"
-                  value={form.betaCode}
-                  onChange={e => { set('betaCode', e.target.value.toUpperCase()); setBetaValid(false) }}
-                  onBlur={() => form.betaCode && checkBetaCode(form.betaCode)}
-                />
-                <div style={{ position:'absolute', right:14, top:'50%',
-                  transform:'translateY(-50%)', fontSize:14 }}>
-                  {betaChecking ? '⏳' : betaValid ? '✅' : ''}
-                </div>
-              </div>
-
-              {betaValid && (
-                <div style={{ color:'#3DD68C', fontSize:13, marginBottom:12 }}>
-                  ✓ Código válido! Bem-vindo ao Between Us.
-                </div>
-              )}
-
-              <div style={{ display:'flex', gap:10 }}>
-                <button onClick={() => { setStep(1); setError('') }}
-                  style={{ flex:1, background:'none', border:`1px solid ${colors.plum}`,
-                    borderRadius:50, padding:14, color:colors.muted, cursor:'pointer',
-                    fontFamily:'Inter,sans-serif' }}>
-                  ← Voltar
-                </button>
-                <button onClick={async () => {
-                  if (!form.betaCode) return setError('Código de convite obrigatório.')
-                  if (!betaValid) {
-                    setError('')
-                    await checkBetaCode(form.betaCode)
-                  }
-                  setError(''); setStep(3)
-                }}
-                  style={{ flex:2,
-                    background: betaValid
-                      ? `linear-gradient(135deg,${colors.accent},${colors.rose})`
-                      : colors.plum,
-                    border:'none', borderRadius:50, padding:14, fontSize:15, fontWeight:600,
-                    color: betaValid ? '#1A0A2E' : colors.muted,
-                    cursor:'pointer', fontFamily:'Inter,sans-serif' }}>
-                  Continuar →
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <p style={{ color:colors.muted, fontSize:13, marginBottom:16, lineHeight:1.5 }}>
+              <h2 style={{ color:C.text, fontSize:18, fontWeight:500, marginBottom:18, marginTop:0 }}>Verificação de idade</h2>
+              <p style={{ color:C.muted, fontSize:13, marginBottom:16, lineHeight:1.5 }}>
                 Esta plataforma é exclusiva para maiores de 18 anos.
               </p>
-              <label style={{ display:'block', color:colors.white, fontSize:13, marginBottom:6 }}>
-                Data de nascimento
-              </label>
-              <input type="date" value={form.dateOfBirth}
-                onChange={e => set('dateOfBirth', e.target.value)}
-                style={{ ...inputStyle, colorScheme:'dark' }} />
 
-              <div onClick={() => set('termsAccepted', !form.termsAccepted)}
-                style={{ display:'flex', alignItems:'flex-start', gap:12,
-                  marginBottom:24, cursor:'pointer' }}>
-                <div style={{ width:20, height:20, borderRadius:6, flexShrink:0, marginTop:2,
-                  border:`2px solid ${form.termsAccepted ? colors.accent : colors.plum}`,
-                  background: form.termsAccepted ? colors.accent : 'transparent',
+              <label style={{ color:C.text2, fontSize:13, display:'block', marginBottom:6 }}>Data de nascimento</label>
+              <input
+                style={inp}
+                type="date"
+                value={form.dateOfBirth}
+                onChange={e => set('dateOfBirth', e.target.value)}
+                max={new Date(Date.now() - 18 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
+              />
+
+              {/* Terms */}
+              <div
+                onClick={() => set('termsAccepted', !form.termsAccepted)}
+                style={{ display:'flex', gap:10, alignItems:'flex-start', marginBottom:20, cursor:'pointer' }}
+              >
+                <div style={{
+                  width:18, height:18, borderRadius:5, flexShrink:0, marginTop:1,
+                  background: form.termsAccepted ? C.primary : 'none',
+                  border:`1.5px solid ${form.termsAccepted ? C.primary : C.border}`,
                   display:'flex', alignItems:'center', justifyContent:'center',
-                  transition:'all 0.2s' }}>
-                  {form.termsAccepted && (
-                    <span style={{ color:'#1A0A2E', fontSize:12, fontWeight:700 }}>✓</span>
-                  )}
+                }}>
+                  {form.termsAccepted && <span style={{ fontSize:11, color:'#0A141A', fontWeight:700 }}>✓</span>}
                 </div>
-                <span style={{ color:colors.muted, fontSize:13, lineHeight:1.5 }}>
+                <span style={{ fontSize:13, color:C.text2, lineHeight:1.5 }}>
                   Aceito os{' '}
-                  <Link to="/legal/terms" style={{ color:colors.accent }}>Termos de Utilização</Link>{' '}
-                  e a{' '}
-                  <Link to="/legal/privacy" style={{ color:colors.accent }}>Política de Privacidade</Link>.
+                  <Link to="/legal/terms" target="_blank" style={{ color:C.primary }}>Termos de Utilização</Link>
+                  {' '}e a{' '}
+                  <Link to="/legal/privacy" target="_blank" style={{ color:C.primary }}>Política de Privacidade</Link>.
                   Confirmo que tenho 18 anos ou mais.
                 </span>
               </div>
 
               <div style={{ display:'flex', gap:10 }}>
-                <button onClick={() => setStep(betaRequired ? 2 : 1)}
-                  style={{ flex:1, background:'none',
-                    border:`1px solid ${colors.plum}`, borderRadius:50,
-                    padding:14, color:colors.muted, cursor:'pointer',
-                    fontFamily:'Inter,sans-serif' }}>
+                <button
+                  onClick={() => { setError(''); setStep(1) }}
+                  style={{ flex:1, background:'none', border:`1px solid ${C.border}`, borderRadius:50, padding:13, color:C.muted, fontSize:14, minHeight:48 }}>
                   ← Voltar
                 </button>
-                <button onClick={handleSubmit} disabled={loading}
-                  style={{ flex:2,
-                    background:`linear-gradient(135deg,${colors.accent},${colors.rose})`,
-                    border:'none', borderRadius:50, padding:14, fontSize:15, fontWeight:600,
-                    color:'#1A0A2E', cursor:loading ? 'not-allowed' : 'pointer',
-                    opacity:loading ? 0.7 : 1, fontFamily:'Inter,sans-serif' }}>
-                  {loading ? 'A criar...' : 'Criar conta'}
+                <button
+                  onClick={handleSubmit} disabled={loading}
+                  style={{ flex:2, background:C.primary, border:'none', borderRadius:50, padding:13, fontSize:14, fontWeight:500, color:'#0A141A', cursor:loading?'not-allowed':'pointer', opacity:loading?0.7:1, minHeight:48 }}>
+                  {loading ? 'A criar…' : 'Criar conta'}
                 </button>
               </div>
             </>
           )}
         </div>
 
-        <div style={{ textAlign:'center', marginTop:24, color:colors.muted, fontSize:14 }}>
+        <p style={{ textAlign:'center', color:C.muted, fontSize:14, marginTop:20 }}>
           Já tens conta?{' '}
-          <Link to="/login"
-            style={{ color:colors.accent, textDecoration:'none', fontWeight:600 }}>
-            Entrar
-          </Link>
-        </div>
+          <Link to="/login" style={{ color:C.primary, textDecoration:'none', fontWeight:500 }}>Entrar</Link>
+        </p>
       </div>
     </div>
   )
