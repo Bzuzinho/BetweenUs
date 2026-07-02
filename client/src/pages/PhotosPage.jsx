@@ -2,10 +2,13 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
-const colors = {
-  bg:'#0E0818', bgCard:'#1A1028', bgInput:'#231535', plum:'#2D1B4E',
-  accent:'#C9956B', rose:'#F2C4B8', lavLight:'#B8A9D4',
-  white:'#FAF7F5', muted:'#7A6E88', green:'#3DD68C'
+const C = {
+  bg:'#0A141A', surface:'#102129', elevated:'#172C36',
+  border:'#1E3340', input:'#0F1E26',
+  primary:'#B8A7FF', primaryDim:'rgba(184,167,255,0.12)',
+  text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3',
+  success:'#4ADE80', successDim:'rgba(74,222,128,0.1)',
+  warning:'#FBBF24', danger:'#F87171', dangerDim:'rgba(248,113,113,0.1)',
 }
 
 const VISIBILITY_OPTS = [
@@ -42,7 +45,7 @@ function PhotoCard({ photo, onDelete, onUpdate }) {
   const currentOpt = VISIBILITY_OPTS.find(o => o.value === vis) || VISIBILITY_OPTS[1]
 
   return (
-    <div style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
+    <div style={{ background:C.bgCard, border:`1px solid ${C.border}`,
       borderRadius:16, overflow:'hidden', position:'relative' }}>
 
       {/* Photo preview */}
@@ -56,7 +59,7 @@ function PhotoCard({ photo, onDelete, onUpdate }) {
         {/* Primary badge */}
         {photo.isPrimary && (
           <div style={{ position:'absolute', top:8, left:8,
-            background:colors.accent, borderRadius:20, padding:'3px 8px',
+            background:C.primary, borderRadius:20, padding:'3px 8px',
             fontSize:10, color:'#1A0A2E', fontWeight:700 }}>Principal</div>
         )}
 
@@ -80,7 +83,7 @@ function PhotoCard({ photo, onDelete, onUpdate }) {
 
       {/* Visibility selector */}
       <div style={{ padding:'10px 12px' }}>
-        <div style={{ fontSize:11, color:colors.muted, marginBottom:6 }}>
+        <div style={{ fontSize:11, color:C.muted, marginBottom:6 }}>
           {currentOpt.label} — {currentOpt.desc}
         </div>
         <div style={{ display:'flex', gap:4 }}>
@@ -88,8 +91,8 @@ function PhotoCard({ photo, onDelete, onUpdate }) {
             <button key={o.value} onClick={() => changeVisibility(o.value)}
               title={o.label}
               style={{ flex:1, background: vis === o.value
-                ? 'rgba(201,149,107,0.2)' : colors.bgInput,
-                border:`1px solid ${vis === o.value ? colors.accent : colors.plum}`,
+                ? 'rgba(201,149,107,0.2)' : C.bgInput,
+                border:`1px solid ${vis === o.value ? C.primary : C.border}`,
                 borderRadius:8, padding:'5px 2px', cursor:'pointer',
                 fontSize:14, transition:'all 0.2s', opacity: saving ? 0.6 : 1 }}>
               {o.icon}
@@ -154,18 +157,18 @@ export default function PhotosPage() {
     prev.map(p => p.id === id ? { ...p, ...changes } : p))
 
   return (
-    <div style={{ minHeight:'100vh', background:colors.bg, padding:'60px 20px 40px' }}>
+    <div style={{ minHeight:'100vh', background:C.bg, padding:'60px 20px 40px' }}>
       <div style={{ maxWidth:420, margin:'0 auto' }}>
 
         {/* Header */}
         <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:28 }}>
           <button onClick={() => navigate('/profile')}
             style={{ background:'none', border:'none',
-              color:colors.lavLight, fontSize:20, cursor:'pointer' }}>←</button>
+              color:C.text2, fontSize:20, cursor:'pointer' }}>←</button>
           <div>
             <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:22,
-              fontWeight:700, color:colors.white }}>As minhas fotos</h1>
-            <p style={{ color:colors.muted, fontSize:12 }}>
+              fontWeight:700, color:C.text }}>As minhas fotos</h1>
+            <p style={{ color:C.muted, fontSize:12 }}>
               {photos.length}/6 fotos · Soft Reveal ativado
             </p>
           </div>
@@ -175,28 +178,28 @@ export default function PhotosPage() {
         <div style={{ background:'rgba(201,149,107,0.08)',
           border:'1px solid rgba(201,149,107,0.2)',
           borderRadius:16, padding:16, marginBottom:20 }}>
-          <div style={{ fontSize:13, color:colors.accent,
+          <div style={{ fontSize:13, color:C.primary,
             fontWeight:600, marginBottom:6 }}>📷 Soft Reveal</div>
-          <div style={{ fontSize:12, color:colors.muted, lineHeight:1.6 }}>
-            🌍 <strong style={{color:colors.lavLight}}>Pública</strong> — visível para todos<br/>
-            🌫️ <strong style={{color:colors.lavLight}}>Desfocada</strong> — desfocada até match<br/>
-            🔒 <strong style={{color:colors.lavLight}}>Privada</strong> — só após match<br/>
-            🤝 <strong style={{color:colors.lavLight}}>Aprovação</strong> — só com tua autorização
+          <div style={{ fontSize:12, color:C.muted, lineHeight:1.6 }}>
+            🌍 <strong style={{color:C.text2}}>Pública</strong> — visível para todos<br/>
+            🌫️ <strong style={{color:C.text2}}>Desfocada</strong> — desfocada até match<br/>
+            🔒 <strong style={{color:C.text2}}>Privada</strong> — só após match<br/>
+            🤝 <strong style={{color:C.text2}}>Aprovação</strong> — só com tua autorização
           </div>
         </div>
 
         {/* Upload area */}
         {photos.length < 6 && (
-          <div style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
+          <div style={{ background:C.bgCard, border:`1px solid ${C.border}`,
             borderRadius:20, padding:20, marginBottom:20 }}>
-            <div style={{ fontSize:13, color:colors.lavLight,
+            <div style={{ fontSize:13, color:C.text2,
               fontWeight:600, marginBottom:12 }}>➕ Adicionar foto</div>
 
             {error && (
               <div style={{ background:'rgba(224,92,122,0.1)',
                 border:'1px solid rgba(224,92,122,0.3)', borderRadius:12,
                 padding:'10px 14px', marginBottom:12,
-                color:'#E05C7A', fontSize:12 }}>{error}</div>
+                color:'#F87171', fontSize:12 }}>{error}</div>
             )}
 
             {/* Preview */}
@@ -215,16 +218,16 @@ export default function PhotosPage() {
               </div>
             ) : (
               <div onClick={() => fileRef.current?.click()}
-                style={{ height:120, border:`2px dashed ${colors.plum}`,
+                style={{ height:120, border:`2px dashed ${C.border}`,
                   borderRadius:12, display:'flex', flexDirection:'column',
                   alignItems:'center', justifyContent:'center',
                   cursor:'pointer', marginBottom:12, gap:8,
                   transition:'border-color 0.2s' }}>
                 <span style={{ fontSize:32 }}>📷</span>
-                <span style={{ color:colors.muted, fontSize:13 }}>
+                <span style={{ color:C.muted, fontSize:13 }}>
                   Toca para escolher foto
                 </span>
-                <span style={{ color:colors.muted, fontSize:11 }}>
+                <span style={{ color:C.muted, fontSize:11 }}>
                   JPG, PNG, WEBP · Max 10MB
                 </span>
               </div>
@@ -236,24 +239,24 @@ export default function PhotosPage() {
             {/* Visibility for new photo */}
             {preview && (
               <>
-                <div style={{ fontSize:12, color:colors.lavLight,
+                <div style={{ fontSize:12, color:C.text2,
                   marginBottom:8 }}>Visibilidade desta foto:</div>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr',
                   gap:6, marginBottom:14 }}>
                   {VISIBILITY_OPTS.map(o => (
                     <div key={o.value} onClick={() => setNewVisibility(o.value)}
                       style={{ background: newVisibility === o.value
-                        ? 'rgba(201,149,107,0.15)' : colors.bgInput,
+                        ? 'rgba(201,149,107,0.15)' : C.bgInput,
                         border:`1.5px solid ${newVisibility === o.value
-                          ? colors.accent : colors.plum}`,
+                          ? C.primary : C.border}`,
                         borderRadius:10, padding:'8px 10px', cursor:'pointer',
                         transition:'all 0.2s' }}>
                       <div style={{ fontSize:16, marginBottom:2 }}>{o.icon}</div>
                       <div style={{ fontSize:11, color: newVisibility === o.value
-                        ? colors.accent : colors.lavLight, fontWeight:600 }}>
+                        ? C.primary : C.text2, fontWeight:600 }}>
                         {o.label}
                       </div>
-                      <div style={{ fontSize:10, color:colors.muted }}>
+                      <div style={{ fontSize:10, color:C.muted }}>
                         {o.desc}
                       </div>
                     </div>
@@ -261,7 +264,7 @@ export default function PhotosPage() {
                 </div>
                 <button onClick={handleUpload} disabled={uploading}
                   style={{ width:'100%',
-                    background:`linear-gradient(135deg,${colors.accent},${colors.rose})`,
+                    background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
                     border:'none', borderRadius:50, padding:13, fontSize:14,
                     fontWeight:600, color:'#1A0A2E', cursor:'pointer',
                     opacity: uploading ? 0.7 : 1, fontFamily:'Inter,sans-serif' }}>
@@ -272,7 +275,7 @@ export default function PhotosPage() {
 
             {!preview && (
               <button onClick={() => fileRef.current?.click()}
-                style={{ width:'100%', background:`linear-gradient(135deg,${colors.accent},${colors.rose})`,
+                style={{ width:'100%', background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
                   border:'none', borderRadius:50, padding:13, fontSize:14,
                   fontWeight:600, color:'#1A0A2E', cursor:'pointer',
                   fontFamily:'Inter,sans-serif' }}>
@@ -284,12 +287,12 @@ export default function PhotosPage() {
 
         {/* Photo grid */}
         {loading ? (
-          <div style={{ textAlign:'center', color:colors.muted,
+          <div style={{ textAlign:'center', color:C.muted,
             fontSize:13, padding:40 }}>A carregar fotos...</div>
         ) : photos.length === 0 ? (
           <div style={{ textAlign:'center', padding:'40px 20px' }}>
             <div style={{ fontSize:48, marginBottom:12 }}>🖼️</div>
-            <div style={{ color:colors.muted, fontSize:14 }}>
+            <div style={{ color:C.muted, fontSize:14 }}>
               Ainda sem fotos. Adiciona a primeira.
             </div>
           </div>
