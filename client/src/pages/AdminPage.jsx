@@ -95,6 +95,166 @@ function ReasonModal({ title, onConfirm, onCancel, hasNote=false }) {
   )
 }
 
+
+// ─── Role Manager — SUPER_ADMIN only ─────────────────────────────────────────
+const ROLES = [
+  { value: null,               label: 'Utilizador normal',    desc: 'Sem acesso ao admin' },
+  { value: 'CONTENT_REVIEWER', label: 'Revisor de conteúdo',  desc: 'Aprova/rejeita fotos e perfis' },
+  { value: 'SUPPORT',          label: 'Suporte',              desc: 'Vê utilizadores e reports' },
+  { value: 'MODERATOR',        label: 'Moderador',            desc: 'Perfis, fotos, reports, conversas' },
+  { value: 'FINANCE',          label: 'Financeiro',           desc: 'Subscrições e métricas' },
+  { value: 'ADMIN',            label: 'Admin',                desc: 'Tudo excepto gerir roles' },
+  { value: 'SUPER_ADMIN',      label: 'Super Admin',          desc: 'Acesso total incluindo roles' },
+]
+
+function RoleManager({ userId, currentRole, onChanged }) {
+  const { user: me } = useAuth()
+  const [selectedRole, setSelectedRole] = useState(currentRole || null)
+  const [reason, setReason] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [error, setError] = useState('')
+  const [open, setOpen] = useState(false)
+
+  if (me?.adminRole !== 'SUPER_ADMIN') return null
+
+  const save = async () => {
+    if (!reason.trim()) return setError('Motivo obrigatório.')
+    setSaving(true); setMsg(''); setError('')
+    try {
+      await api.put(`/admin/users/${userId}/role`, { adminRole: selectedRole, reason })
+      setMsg('Role actualizado.')
+      setReason('')
+      setOpen(false)
+      onChanged()
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const current = ROLES.find(r => r.value === currentRole) || ROLES[0]
+
+  return (
+    <div style={{borderTop:`1px solid ${C.plum}`,paddingTop:14}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:open?12:0}}>
+        <div>
+          <div style={{fontSize:12,color:C.lavLight,fontWeight:600}}>Role de admin</div>
+          <div style={{fontSize:11,color:C.muted,marginTop:2}}>{current.label} — {current.desc}</div>
+        </div>
+        <button onClick={()=>setOpen(!open)} style={{background:C.input,border:`1px solid ${C.plum}`,borderRadius:8,padding:'6px 12px',color:C.lavLight,fontSize:12,minHeight:34}}>
+          {open ? 'Cancelar' : '✏️ Alterar role'}
+        </button>
+      </div>
+
+      {open && (
+        <div>
+          {msg   && <div style={{background:'rgba(61,214,140,0.1)',border:`1px solid ${C.green}`,borderRadius:8,padding:'8px 12px',marginBottom:10,color:C.green,fontSize:12}}>{msg}</div>}
+          {error && <div style={{background:'rgba(224,92,122,0.1)',border:`1px solid ${C.red}`,borderRadius:8,padding:'8px 12px',marginBottom:10,color:C.red,fontSize:12}}>{error}</div>}
+
+          <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:12}}>
+            {ROLES.map(r => (
+              <div key={String(r.value)} onClick={()=>setSelectedRole(r.value)} style={{
+                background: selectedRole===r.value ? 'rgba(201,149,107,0.15)' : C.input,
+                border:`1.5px solid ${selectedRole===r.value ? C.accent : C.plum}`,
+                borderRadius:10, padding:'10px 12px', cursor:'pointer',
+              }}>
+                <div style={{fontSize:13,fontWeight:600,color:selectedRole===r.value?C.accent:C.white}}>{r.label}</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:2}}>{r.desc}</div>
+              </div>
+            ))}
+          </div>
+
+          <input value={reason} onChange={e=>setReason(e.target.value)}
+            placeholder="Motivo da alteração (obrigatório)"
+            style={{width:'100%',background:C.input,border:`1.5px solid ${C.plum}`,borderRadius:10,padding:'10px 12px',color:C.white,fontSize:13,marginBottom:10}} />
+
+          <button onClick={save} disabled={saving||!reason.trim()} style={{
+            width:'100%',background:`linear-gradient(135deg,${C.accent},${C.rose})`,border:'none',
+            borderRadius:50,padding:'11px',fontSize:13,fontWeight:700,color:'#1A0A2E',
+            cursor:saving||!reason.trim()?'not-allowed':'pointer',
+            opacity:saving||!reason.trim()?0.5:1, minHeight:44,
+          }}>
+            {saving ? 'A guardar...' : 'Guardar role'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Create User Modal ────────────────────────────────────────────────────────
+function CreateUserModal({ onClose, onCreated }) {
+  const [form, setForm] = useState({ email:'', password:'', adminRole:'', reason:'' })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const save = async () => {
+    if (!form.email || !form.password || !form.reason) {
+      return setError('Email, password e motivo são obrigatórios.')
+    }
+    setSaving(true); setError('')
+    try {
+      const res = await api.post('/admin/users', {
+        email: form.email,
+        password: form.password,
+        adminRole: form.adminRole || undefined,
+        reason: form.reason
+      })
+      onCreated(res.data.user)
+      onClose()
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao criar utilizador.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',zIndex:200,display:'flex',alignItems:'flex-end',justifyContent:'center'}}
+      onClick={onClose}>
+      <div style={{background:C.card,border:`1px solid ${C.plum}`,borderRadius:'20px 20px 0 0',width:'100%',maxWidth:480,padding:'24px 20px calc(32px + env(safe-area-inset-bottom))'}}
+        onClick={e=>e.stopPropagation()}>
+        <div style={{width:36,height:4,background:C.plum,borderRadius:2,margin:'0 auto 18px'}}/>
+        <h3 style={{color:C.white,fontFamily:"'Playfair Display',serif",fontSize:18,marginBottom:16,marginTop:0}}>Criar utilizador</h3>
+
+        {error && <div style={{background:'rgba(224,92,122,0.1)',border:`1px solid ${C.red}`,borderRadius:10,padding:'10px 12px',marginBottom:12,color:C.red,fontSize:13}}>{error}</div>}
+
+        <input value={form.email} onChange={e=>setForm(p=>({...p,email:e.target.value}))}
+          type="email" placeholder="Email *"
+          style={{width:'100%',background:C.input,border:`1.5px solid ${C.plum}`,borderRadius:12,padding:'11px 14px',color:C.white,fontSize:14,marginBottom:10}} />
+
+        <input value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))}
+          type="password" placeholder="Password inicial *"
+          style={{width:'100%',background:C.input,border:`1.5px solid ${C.plum}`,borderRadius:12,padding:'11px 14px',color:C.white,fontSize:14,marginBottom:10}} />
+
+        <select value={form.adminRole} onChange={e=>setForm(p=>({...p,adminRole:e.target.value}))}
+          style={{width:'100%',background:C.input,border:`1.5px solid ${C.plum}`,borderRadius:12,padding:'11px 14px',color:C.white,fontSize:14,marginBottom:10}}>
+          <option value="">Utilizador normal</option>
+          <option value="CONTENT_REVIEWER">Revisor de conteúdo</option>
+          <option value="SUPPORT">Suporte</option>
+          <option value="MODERATOR">Moderador</option>
+          <option value="FINANCE">Financeiro</option>
+          <option value="ADMIN">Admin</option>
+          <option value="SUPER_ADMIN">Super Admin</option>
+        </select>
+
+        <input value={form.reason} onChange={e=>setForm(p=>({...p,reason:e.target.value}))}
+          placeholder="Motivo da criação *"
+          style={{width:'100%',background:C.input,border:`1.5px solid ${C.plum}`,borderRadius:12,padding:'11px 14px',color:C.white,fontSize:14,marginBottom:16}} />
+
+        <div style={{display:'flex',gap:10}}>
+          <button onClick={onClose} style={{flex:1,background:'none',border:`1px solid ${C.plum}`,borderRadius:50,padding:12,color:C.muted,fontSize:14,minHeight:48}}>Cancelar</button>
+          <button onClick={save} disabled={saving} style={{flex:2,background:`linear-gradient(135deg,${C.accent},${C.rose})`,border:'none',borderRadius:50,padding:12,color:'#1A0A2E',fontWeight:700,fontSize:14,minHeight:48,opacity:saving?0.6:1}}>
+            {saving ? 'A criar...' : 'Criar utilizador'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── User Detail ──────────────────────────────────────────────────────────────
 function UserDetail({ userId, onBack }) {
   const [data, setData] = useState(null)
