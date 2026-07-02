@@ -11,8 +11,8 @@ const C = {
 
 const INP = {
   width:'100%', background:C.input, border:`1.5px solid ${C.plum}`,
-  borderRadius:12, padding:'11px 14px', color:C.white, fontSize:15,
-  marginBottom:10, display:'block', WebkitAppearance:'none',
+  borderRadius:12, padding:'12px 14px', color:C.white, fontSize:15,
+  marginBottom:10, display:'block', WebkitAppearance:'none', outline:'none',
 }
 
 // ─── 3×3 Tab grid — no horizontal scroll ─────────────────────────────────────
