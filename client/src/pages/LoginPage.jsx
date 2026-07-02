@@ -3,9 +3,10 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 const C = {
-  bg:'#0E0818', card:'#1A1028', input:'#231535', plum:'#2D1B4E',
-  accent:'#C9956B', rose:'#F2C4B8', lav:'#B8A9D4',
-  white:'#FAF7F5', muted:'#7A6E88', green:'#3DD68C'
+  bg:'#0A141A', card:'#102129', input:'#0F1E26', border:'#1E3340',
+  primary:'#B8A7FF', primaryDim:'#8B7ACC',
+  text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3',
+  success:'#4ADE80', danger:'#F87171'
 }
 
 export default function LoginPage() {
@@ -14,18 +15,20 @@ export default function LoginPage() {
   const [form, setForm] = useState({ email:'', password:'' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [needsVerification, setNeedsVerification] = useState(false)
 
   const handleSubmit = async () => {
     if (!form.email || !form.password) return setError('Preenche todos os campos.')
     setLoading(true); setError('')
     try {
-      const data = await login(form.email, form.password)
-      // If email not verified, show banner but still allow login
-      if (data?.emailVerified === false) {
-        setNeedsVerification(true)
+      const me = await login(form.email, form.password)
+      // Redirect based on role — admin goes to /admin, never to /explore
+      if (me?.adminRole) {
+        navigate('/admin', { replace: true })
+      } else if (!me?.profile) {
+        navigate('/create-profile', { replace: true })
+      } else {
+        navigate('/explore', { replace: true })
       }
-      navigate('/explore')
     } catch (err) {
       const code = err.response?.data?.code
       if (code === 'ACCOUNT_SUSPENDED') return setError('Conta temporariamente suspensa.')
@@ -36,56 +39,70 @@ export default function LoginPage() {
     }
   }
 
-  const inp = {
-    width:'100%', background:C.input, border:`1.5px solid ${C.plum}`,
-    borderRadius:14, padding:'14px 16px', color:C.white, fontSize:16,
-    marginBottom:12, display:'block', WebkitAppearance:'none',
-  }
-
   return (
-    <div style={{ minHeight:'100vh', minHeight:'-webkit-fill-available', background:C.bg, display:'flex', flexDirection:'column', justifyContent:'center', padding:'24px 24px calc(24px + env(safe-area-inset-bottom))' }}>
-      <div style={{ width:'100%', maxWidth:400, margin:'0 auto' }}>
+    <div style={{
+      minHeight:'100vh', minHeight:'-webkit-fill-available',
+      background:C.bg,
+      display:'flex', flexDirection:'column',
+      justifyContent:'center',
+      padding:'24px 24px calc(24px + env(safe-area-inset-bottom))',
+    }}>
+      <div style={{ width:'100%', maxWidth:380, margin:'0 auto' }}>
+
+        {/* Logo */}
         <div style={{ textAlign:'center', marginBottom:40 }}>
-          <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:38, fontStyle:'italic', fontWeight:700, background:`linear-gradient(135deg,${C.accent},${C.rose})`, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', margin:0 }}>Between Us</h1>
-          <p style={{ color:C.muted, fontSize:14, marginTop:6 }}>Ligações adultas. Só entre nós.</p>
+          <svg width="56" height="28" viewBox="0 0 56 28" style={{ display:'block', margin:'0 auto 12px' }}>
+            <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" strokeWidth="3.5"/>
+            <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.75"/>
+          </svg>
+          <div style={{ fontSize:26, fontWeight:500, color:C.text, letterSpacing:'-0.01em' }}>Between Us</div>
+          <div style={{ fontSize:13, color:C.muted, marginTop:5 }}>Adult connections. Private by design.</div>
         </div>
 
-        <div style={{ background:C.card, border:`1px solid ${C.plum}`, borderRadius:24, padding:28 }}>
-          <h2 style={{ color:C.white, fontFamily:"'Playfair Display',serif", fontSize:22, fontWeight:700, marginBottom:20, marginTop:0 }}>Entrar</h2>
+        {/* Card */}
+        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:20, padding:28 }}>
+          <h2 style={{ color:C.text, fontSize:20, fontWeight:500, marginBottom:20, marginTop:0 }}>Entrar</h2>
 
-          {needsVerification && (
-            <div style={{ background:'rgba(201,149,107,0.1)', border:'1px solid rgba(201,149,107,0.3)', borderRadius:12, padding:'12px 14px', marginBottom:14, fontSize:13, color:C.accent }}>
-              📧 Confirma o teu email para activar todas as funcionalidades.{' '}
-              <Link to="/verify-email" style={{ color:C.accent, fontWeight:700 }}>Reenviar link</Link>
+          {error && (
+            <div style={{ background:'rgba(248,113,113,0.1)', border:`1px solid rgba(248,113,113,0.3)`, borderRadius:12, padding:'11px 14px', marginBottom:16, color:C.danger, fontSize:14 }}>
+              {error}
             </div>
           )}
 
-          {error && (
-            <div style={{ background:'rgba(224,92,122,0.1)', border:'1px solid rgba(224,92,122,0.4)', borderRadius:12, padding:'12px 16px', marginBottom:16, color:'#E05C7A', fontSize:14 }}>{error}</div>
-          )}
+          <input
+            type="email" placeholder="Email" autoComplete="email"
+            value={form.email} onChange={e => setForm(p => ({...p, email:e.target.value}))}
+            onKeyDown={e => e.key==='Enter' && handleSubmit()}
+            style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:12, padding:'13px 16px', color:C.text, fontSize:15, marginBottom:12, display:'block', WebkitAppearance:'none' }}
+          />
+          <input
+            type="password" placeholder="Password" autoComplete="current-password"
+            value={form.password} onChange={e => setForm(p => ({...p, password:e.target.value}))}
+            onKeyDown={e => e.key==='Enter' && handleSubmit()}
+            style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:12, padding:'13px 16px', color:C.text, fontSize:15, marginBottom:8, display:'block', WebkitAppearance:'none' }}
+          />
 
-          <input style={inp} type="email" placeholder="Email" autoComplete="email"
-            value={form.email} onChange={e => setForm(p => ({...p,email:e.target.value}))}
-            onKeyDown={e => e.key==='Enter' && handleSubmit()}/>
-          <input style={inp} type="password" placeholder="Password" autoComplete="current-password"
-            value={form.password} onChange={e => setForm(p => ({...p,password:e.target.value}))}
-            onKeyDown={e => e.key==='Enter' && handleSubmit()}/>
-
-          <div style={{ textAlign:'right', marginBottom:16, marginTop:-4 }}>
+          <div style={{ textAlign:'right', marginBottom:20 }}>
             <Link to="/forgot-password" style={{ color:C.muted, fontSize:13, textDecoration:'none' }}>
               Esqueceste a password?
             </Link>
           </div>
 
-          <button onClick={handleSubmit} disabled={loading}
-            style={{ width:'100%', background:`linear-gradient(135deg,${C.accent},${C.rose})`, border:'none', borderRadius:50, padding:15, fontSize:16, fontWeight:700, color:'#1A0A2E', cursor:loading?'not-allowed':'pointer', opacity:loading?0.7:1, minHeight:50 }}>
-            {loading ? 'A entrar...' : 'Entrar'}
+          <button
+            onClick={handleSubmit} disabled={loading}
+            style={{ width:'100%', background:C.primary, border:'none', borderRadius:50, padding:'14px', fontSize:15, fontWeight:500, color:'#0A141A', cursor:loading?'not-allowed':'pointer', opacity:loading?0.7:1, minHeight:50 }}
+          >
+            {loading ? 'A entrar…' : 'Entrar'}
           </button>
         </div>
 
         <p style={{ textAlign:'center', color:C.muted, fontSize:14, marginTop:24 }}>
           Não tens conta?{' '}
-          <Link to="/register" style={{ color:C.accent, textDecoration:'none', fontWeight:600 }}>Registar</Link>
+          <Link to="/register" style={{ color:C.primary, textDecoration:'none', fontWeight:500 }}>Criar conta</Link>
+        </p>
+
+        <p style={{ textAlign:'center', color:C.muted, fontSize:11, marginTop:20, lineHeight:1.6 }}>
+          Ao entrar, confirmas que tens 18 ou mais anos.
         </p>
       </div>
     </div>
