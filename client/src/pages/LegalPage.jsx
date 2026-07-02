@@ -1,9 +1,12 @@
 import { useParams, useNavigate } from 'react-router-dom'
 
-const colors = {
-  bg:'#0E0818', bgCard:'#1A1028', plum:'#2D1B4E',
-  accent:'#C9956B', rose:'#F2C4B8', lavLight:'#B8A9D4',
-  white:'#FAF7F5', muted:'#7A6E88'
+const C = {
+  bg:'#0A141A', surface:'#102129', elevated:'#172C36',
+  border:'#1E3340', input:'#0F1E26',
+  primary:'#B8A7FF', primaryDim:'rgba(184,167,255,0.12)',
+  text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3',
+  success:'#4ADE80', successDim:'rgba(74,222,128,0.1)',
+  warning:'#FBBF24', danger:'#F87171', dangerDim:'rgba(248,113,113,0.1)',
 }
 
 const PAGES = {
@@ -111,20 +114,20 @@ export default function LegalPage() {
   const doc = PAGES[page] || PAGES.terms
 
   return (
-    <div style={{ minHeight:'100vh', background:colors.bg, padding:'60px 20px 60px' }}>
+    <div style={{ minHeight:'100vh', background:C.bg, padding:'60px 20px 60px' }}>
       <div style={{ maxWidth:560, margin:'0 auto' }}>
         <button onClick={() => navigate(-1)}
-          style={{ background:'none', border:'none', color:colors.lavLight,
+          style={{ background:'none', border:'none', color:C.text2,
             fontSize:14, cursor:'pointer', marginBottom:24, padding:0 }}>
           ← Voltar
         </button>
         <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:26,
-          fontWeight:700, color:colors.white, marginBottom:24 }}>
+          fontWeight:700, color:C.text, marginBottom:24 }}>
           {doc.title}
         </h1>
-        <div style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
+        <div style={{ background:C.bgCard, border:`1px solid ${C.border}`,
           borderRadius:20, padding:28 }}>
-          <div style={{ color:colors.lavLight, fontSize:14, lineHeight:1.8,
+          <div style={{ color:C.text2, fontSize:14, lineHeight:1.8,
             whiteSpace:'pre-line' }}>
             {doc.content}
           </div>
