@@ -3,81 +3,71 @@ import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 
 async function main() {
-  console.log('🌱 Seeding Between Us database...')
+  console.log('Seeding intentions...')
 
-  // ─── Intentions (B.2) ─────────────────────────────────────────────────────
   const intentions = [
-    { name: 'Conversar primeiro', slug: 'chat_first' },
-    { name: 'Encontro casual', slug: 'casual_encounter' },
-    { name: 'Ligação recorrente', slug: 'recurring_connection' },
-    { name: 'Envolvimento emocional', slug: 'emotional_connection' },
-    { name: 'Experiência a três', slug: 'trio_experience' },
-    { name: 'Casal procura terceira pessoa', slug: 'couple_seeks_third' },
-    { name: 'Casal procura casal', slug: 'couple_seeks_couple' },
-    { name: 'Solteiro/a procura casal', slug: 'single_seeks_couple' },
-    { name: 'Swing', slug: 'swing' },
-    { name: 'Relação paralela contínua', slug: 'parallel_relationship' },
-    { name: 'Amizade colorida', slug: 'friends_with_benefits' },
-    { name: 'Explorar fetiches', slug: 'fetish_exploration' },
-    { name: 'Poliamor', slug: 'polyamory' },
-    { name: 'Apenas online', slug: 'online_only' },
-    { name: 'Videochamada antes de encontro', slug: 'video_first' },
-    { name: 'Ainda a descobrir', slug: 'exploring' },
+    { slug: 'casual_encounter',     name: 'Encontro casual',            description: 'Encontro pontual sem compromisso' },
+    { slug: 'recurring_connection', name: 'Ligação recorrente',         description: 'Encontros regulares ao longo do tempo' },
+    { slug: 'trio_experience',      name: 'Experiência a três',         description: 'Experiência entre três pessoas' },
+    { slug: 'swing',                name: 'Swing',                      description: 'Troca de parceiros entre casais' },
+    { slug: 'polyamory',            name: 'Poliamor',                   description: 'Relações múltiplas consensuais' },
+    { slug: 'online_only',          name: 'Apenas online',              description: 'Ligação exclusivamente digital' },
+    { slug: 'friends_with_benefits',name: 'Amizade colorida',           description: 'Amizade com componente íntima' },
+    { slug: 'fetish_exploration',   name: 'Explorar fetiches',          description: 'Exploração de interesses específicos' },
+    { slug: 'seek_couple',          name: 'Procurar casal',             description: 'Solteiro/a interessado/a em casal' },
+    { slug: 'seek_third',           name: 'Procurar terceira pessoa',   description: 'Casal à procura de terceira pessoa' },
+    { slug: 'conversation_only',    name: 'Apenas conversa',            description: 'Conversa discreta sem encontro' },
+    { slug: 'open_relationship',    name: 'Relação aberta',             description: 'Pessoa em relação aberta' },
+    { slug: 'still_exploring',      name: 'Ainda a descobrir',          description: 'Sem certeza do que procuro' },
   ]
 
   for (const intention of intentions) {
     await prisma.intention.upsert({
       where: { slug: intention.slug },
-      update: { name: intention.name },
-      create: intention
+      update: { name: intention.name, description: intention.description },
+      create: { slug: intention.slug, name: intention.name, description: intention.description, active: true },
     })
   }
-  console.log('✅ Intentions seeded:', intentions.length)
+  console.log(`Seeded ${intentions.length} intentions`)
 
-  // ─── Boundaries (B.3) — 16+ categorias ───────────────────────────────────
+  console.log('Seeding boundaries...')
+
   const boundaries = [
-    // Fotos e visual
-    { name: 'Fotos privadas', category: 'privacy' },
-    { name: 'Fotos de rosto', category: 'privacy' },
-    { name: 'Fotos íntimas', category: 'privacy' },
-    // Comunicação
-    { name: 'Videochamada', category: 'contact_type' },
-    { name: 'Troca de contactos externos', category: 'contact_type' },
-    { name: 'Sem troca de números no início', category: 'contact_type' },
-    { name: 'Sem redes sociais', category: 'contact_type' },
-    // Encontros
-    { name: 'Encontro presencial', category: 'meeting_type' },
-    { name: 'Encontro só com ambos os membros do casal', category: 'meeting_type' },
-    { name: 'Encontro individual com um dos membros', category: 'meeting_type' },
-    { name: 'Dormir fora', category: 'meeting_type' },
-    // Relação
-    { name: 'Envolvimento emocional', category: 'emotional' },
-    { name: 'Sem envolvimento emocional', category: 'emotional' },
-    { name: 'Contacto recorrente', category: 'frequency' },
-    // Privacidade e segurança
-    { name: 'Discrição total', category: 'privacy' },
-    { name: 'Sem pessoas conhecidas', category: 'privacy' },
-    { name: 'Apenas perfis verificados', category: 'safety' },
-    // Dinâmicas
-    { name: 'Exploração de fetiches', category: 'dynamics' },
-    { name: 'BDSM', category: 'dynamics' },
-    { name: 'Swing', category: 'dynamics' },
-    { name: 'Poliamor', category: 'dynamics' },
+    // relationship_type
+    { slug: 'no_emotional_involvement', name: 'Sem envolvimento emocional', category: 'relationship_type' },
+    { slug: 'open_to_emotional',        name: 'Aberto a envolvimento emocional', category: 'relationship_type' },
+    { slug: 'no_couples',               name: 'Não quero casais',          category: 'relationship_type' },
+    { slug: 'couples_only',             name: 'Apenas casais',             category: 'relationship_type' },
+    { slug: 'singles_only',             name: 'Apenas solteiros',          category: 'relationship_type' },
+    // meeting_type
+    { slug: 'online_only',              name: 'Apenas online',             category: 'meeting_type' },
+    { slug: 'open_to_meeting',          name: 'Aberto a encontro presencial', category: 'meeting_type' },
+    { slug: 'one_time_only',            name: 'Apenas uma vez',            category: 'meeting_type' },
+    { slug: 'recurring_ok',             name: 'Aberto a encontros recorrentes', category: 'meeting_type' },
+    // privacy
+    { slug: 'no_face_photos',           name: 'Sem fotos de rosto',        category: 'privacy' },
+    { slug: 'no_known_contacts',        name: 'Sem pessoas conhecidas',    category: 'privacy' },
+    { slug: 'verified_only',            name: 'Apenas perfis verificados', category: 'privacy' },
+    { slug: 'discretion_required',      name: 'Discrição obrigatória',     category: 'privacy' },
+    // conversation_style
+    { slug: 'talk_first',               name: 'Conversar primeiro',        category: 'conversation_style' },
+    { slug: 'direct_approach',          name: 'Abordagem directa',         category: 'conversation_style' },
+    { slug: 'slow_pace',                name: 'Ritmo lento',               category: 'conversation_style' },
+    { slug: 'fast_pace',                name: 'Ritmo rápido',              category: 'conversation_style' },
   ]
 
-  let boundaryCount = 0
   for (const boundary of boundaries) {
-    try {
-      await prisma.boundary.create({ data: boundary })
-      boundaryCount++
-    } catch {
-      // Already exists, skip
-    }
+    await prisma.boundary.upsert({
+      where: { slug: boundary.slug },
+      update: { name: boundary.name, category: boundary.category },
+      create: { slug: boundary.slug, name: boundary.name, category: boundary.category, active: true },
+    })
   }
-  console.log('✅ Boundaries seeded:', boundaryCount)
-  console.log('🌱 Seed complete')
+  console.log(`Seeded ${boundaries.length} boundaries`)
+
+  console.log('✅ Seed complete')
 }
 
 main()
-  .catch(console.error)
+  .catch(e => { console.error(e); process.exit(1) })
   .finally(() => prisma.$disconnect())
