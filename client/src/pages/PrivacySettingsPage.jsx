@@ -3,23 +3,26 @@ import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 
 const C = {
-  bg:'#0E0818', card:'#1A1028', input:'#231535', plum:'#2D1B4E',
-  accent:'#C9956B', rose:'#F2C4B8', lav:'#B8A9D4',
-  white:'#FAF7F5', muted:'#7A6E88', green:'#3DD68C', red:'#E05C7A'
+  bg:'#0A141A', surface:'#102129', elevated:'#172C36',
+  border:'#1E3340', input:'#0F1E26',
+  primary:'#B8A7FF', primaryDim:'rgba(184,167,255,0.12)',
+  text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3',
+  success:'#4ADE80', successDim:'rgba(74,222,128,0.1)',
+  warning:'#FBBF24', danger:'#F87171', dangerDim:'rgba(248,113,113,0.1)',
 }
 
 function Toggle({ on, onChange }) {
   return (
     <div onClick={() => onChange(!on)} style={{
       width: 44, height: 24, borderRadius: 12,
-      background: on ? C.accent : C.input,
-      border: `1px solid ${on ? C.accent : C.plum}`,
+      background: on ? C.primary : C.input,
+      border: `1px solid ${on ? C.primary : C.border}`,
       position: 'relative', cursor: 'pointer', flexShrink: 0,
       transition: 'all 0.2s',
     }}>
       <div style={{
         position: 'absolute', top: 3, width: 16, height: 16,
-        borderRadius: '50%', background: C.white,
+        borderRadius: '50%', background: C.text,
         left: on ? 23 : 3, transition: 'left 0.2s',
       }} />
     </div>
@@ -28,9 +31,9 @@ function Toggle({ on, onChange }) {
 
 function Row({ label, desc, value, onChange, arrow = false, onClick }) {
   return (
-    <div onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 0', borderBottom: `1px solid ${C.plum}`, cursor: onClick ? 'pointer' : 'default' }}>
+    <div onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 0', borderBottom: `1px solid ${C.border}`, cursor: onClick ? 'pointer' : 'default' }}>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 14, color: C.white }}>{label}</div>
+        <div style={{ fontSize: 14, color: C.text }}>{label}</div>
         {desc && <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{desc}</div>}
       </div>
       {arrow ? <span style={{ color: C.muted, fontSize: 18 }}>›</span>
@@ -92,7 +95,7 @@ export default function PrivacySettingsPage() {
       <div style={{ maxWidth: 480, margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
           <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', color: C.muted, fontSize: 22, cursor: 'pointer', padding: 4 }}>←</button>
-          <h1 style={{ fontFamily: "'Playfair Display',serif", fontSize: 20, color: C.white, fontStyle: 'italic', margin: 0 }}>
+          <h1 style={{ fontFamily: "'Playfair Display',serif", fontSize: 20, color: C.text, fontStyle: 'italic', margin: 0 }}>
             Privacidade
           </h1>
         </div>
@@ -101,7 +104,7 @@ export default function PrivacySettingsPage() {
         {error && <div style={{ background: 'rgba(224,92,122,0.1)', border: `1px solid ${C.red}`, borderRadius: 10, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: C.red }}>{error}</div>}
 
         {/* Visibility */}
-        <div style={{ background: C.card, border: `1px solid ${C.plum}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>
           <div style={{ fontSize: 11, color: C.muted, padding: '10px 0 4px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Visibilidade</div>
           <Row label="Aparecer no discovery" desc="O teu perfil é mostrado a outros utilizadores"
             value={settings.visibleInDiscovery}
@@ -113,7 +116,7 @@ export default function PrivacySettingsPage() {
             value={settings.showOnlineStatus}
             onChange={v => save({ showOnlineStatus: v })} />
           <Row
-            label={<span>Modo invisível {!isPremium && <span style={{ fontSize: 10, color: C.accent, marginLeft: 4 }}>✦ Premium</span>}</span>}
+            label={<span>Modo invisível {!isPremium && <span style={{ fontSize: 10, color: C.primary, marginLeft: 4 }}>✦ Premium</span>}</span>}
             desc="Navega sem aparecer no discovery"
             value={settings.invisibleMode}
             onChange={v => {
@@ -123,7 +126,7 @@ export default function PrivacySettingsPage() {
         </div>
 
         {/* Photos */}
-        <div style={{ background: C.card, border: `1px solid ${C.plum}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>
           <div style={{ fontSize: 11, color: C.muted, padding: '10px 0 4px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Fotos</div>
           <Row label="Aceitar pedidos de fotos privadas" desc="Outros utilizadores podem pedir acesso às tuas fotos"
             value={settings.allowPhotoRequests}
@@ -131,7 +134,7 @@ export default function PrivacySettingsPage() {
         </div>
 
         {/* Notifications */}
-        <div style={{ background: C.card, border: `1px solid ${C.plum}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>
           <div style={{ fontSize: 11, color: C.muted, padding: '10px 0 4px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Notificações</div>
           <Row
             label={`Modo: ${settings.notificationMode === 'DISCREET' ? 'Discreto' : 'Normal'}`}
@@ -141,14 +144,14 @@ export default function PrivacySettingsPage() {
         </div>
 
         {/* Contacts */}
-        <div style={{ background: C.card, border: `1px solid ${C.plum}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>
           <div style={{ fontSize: 11, color: C.muted, padding: '10px 0 4px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Contactos</div>
           <Row label="Bloquear contactos do telemóvel" desc="Oculta-te de pessoas que tens na agenda"
             arrow onClick={() => navigate('/contacts/block')} />
         </div>
 
         {/* RGPD */}
-        <div style={{ background: C.card, border: `1px solid ${C.plum}`, borderRadius: 16, padding: '4px 16px' }}>
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: '4px 16px' }}>
           <div style={{ fontSize: 11, color: C.muted, padding: '10px 0 4px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Dados e conta</div>
           <Row label="Exportar os meus dados" desc="Download RGPD dos teus dados"
             arrow onClick={() => window.open('/api/auth/export', '_blank')} />
@@ -158,7 +161,7 @@ export default function PrivacySettingsPage() {
 
         {!isPremium && (
           <div onClick={() => navigate('/premium')} style={{ marginTop: 16, background: 'rgba(201,149,107,0.08)', border: `1px solid rgba(201,149,107,0.2)`, borderRadius: 14, padding: 16, cursor: 'pointer', textAlign: 'center' }}>
-            <div style={{ fontSize: 14, color: C.accent, fontWeight: 600, marginBottom: 4 }}>✦ Between Plus</div>
+            <div style={{ fontSize: 14, color: C.primary, fontWeight: 600, marginBottom: 4 }}>✦ Between Plus</div>
             <div style={{ fontSize: 12, color: C.muted }}>Desbloqueia modo invisível, Travel Mode e controlo avançado de privacidade.</div>
           </div>
         )}
