@@ -2,16 +2,16 @@ import { Response, NextFunction } from 'express'
 import prisma from '../lib/prisma'
 import { AuthRequest } from './auth'
 
-export type AdminRole = 
+export type AdminRole =
   'SUPER_ADMIN' | 'ADMIN' | 'MODERATOR' | 'SUPPORT' | 'FINANCE' | 'CONTENT_REVIEWER'
 
 const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
-  SUPER_ADMIN: ['*'],
-  ADMIN: ['users', 'profiles', 'photos', 'reports', 'subscriptions', 'metrics', 'audit', 'beta'],
-  MODERATOR: ['profiles', 'photos', 'reports', 'conversations'],
-  SUPPORT: ['users', 'reports'],
-  FINANCE: ['subscriptions', 'metrics.revenue'],
-  CONTENT_REVIEWER: ['photos', 'profiles.bio']
+  SUPER_ADMIN:      ['*'],
+  ADMIN:            ['users','profiles','photos','reports','subscriptions','metrics','audit','beta','conversations'],
+  MODERATOR:        ['profiles','photos','reports','conversations'],
+  SUPPORT:          ['users','reports'],
+  FINANCE:          ['subscriptions','metrics'],
+  CONTENT_REVIEWER: ['photos','profiles'],
 }
 
 export const requireAdmin = (permission?: string) => {
@@ -26,26 +26,18 @@ export const requireAdmin = (permission?: string) => {
         return res.status(401).json({ error: 'Não autenticado.' })
       }
 
-      // Check admin role in DB or fallback to ADMIN_EMAILS env
-      const adminEmails = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim())
-      const isAdminByEmail = adminEmails.includes(user.email)
-      const role = user.adminRole || (isAdminByEmail ? 'ADMIN' : null)
+      const adminEmails = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean)
+      const role = user.adminRole || (adminEmails.includes(user.email) ? 'ADMIN' : null)
 
-      if (!role) {
-        return res.status(403).json({ error: 'Acesso negado.' })
-      }
+      if (!role) return res.status(403).json({ error: 'Acesso negado.' })
 
-      // Check specific permission
       if (permission) {
         const perms = ROLE_PERMISSIONS[role as AdminRole] || []
-        const hasPermission = perms.includes('*') || perms.some(p => 
+        const hasPermission = perms.includes('*') || perms.some(p =>
           permission.startsWith(p) || p.startsWith(permission)
         )
         if (!hasPermission) {
-          return res.status(403).json({ 
-            error: `Sem permissão para: ${permission}`,
-            role 
-          })
+          return res.status(403).json({ error: `Sem permissão para: ${permission}`, role })
         }
       }
 
@@ -57,13 +49,12 @@ export const requireAdmin = (permission?: string) => {
   }
 }
 
-// Log admin action
 export const logAdminAction = async (
-  adminId: string,
+  adminUserId: string,
   action: string,
   targetType: string,
   targetId: string,
-  options: {
+  meta: {
     targetUserId?: string
     reason?: string
     internalNote?: string
@@ -76,16 +67,20 @@ export const logAdminAction = async (
   try {
     await prisma.adminAction.create({
       data: {
-        adminId,
+        adminUserId,
         action,
         targetType,
         targetId,
-        ...options,
-        previousData: options.previousData ? options.previousData : undefined,
-        newData: options.newData ? options.newData : undefined
+        targetUserId: meta.targetUserId,
+        reason:       meta.reason,
+        internalNote: meta.internalNote,
+        previousData: meta.previousData ? JSON.stringify(meta.previousData) : undefined,
+        newData:      meta.newData      ? JSON.stringify(meta.newData)      : undefined,
+        ipAddress:    meta.ipAddress,
+        userAgent:    meta.userAgent,
       }
     })
-  } catch (err: any) {
-    console.error('[ADMIN LOG ERROR]', err.message)
+  } catch (e: any) {
+    console.error('[AUDIT LOG]', e.message)
   }
 }
