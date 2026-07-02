@@ -7,38 +7,47 @@ import { coarsenCoordinate } from '../utils/location'
 const router = Router()
 
 const profileSchema = z.object({
-  displayName: z.string().min(2).max(50).optional(),
-  bio: z.string().max(500).optional(),
-  gender: z.string().optional(),
-  orientation: z.string().optional(),
+  displayName:        z.string().min(2).max(50).optional(),
+  bio:                z.string().max(500).optional(),
+  gender:             z.string().optional(),
+  orientation:        z.string().optional(),
   relationshipStatus: z.enum([
     'SINGLE','COMMITTED','MARRIED','OPEN',
     'POLYAMOROUS','COUPLE_CURIOUS','COUPLE_LIBERAL','OTHER'
   ]).optional(),
-  city: z.string().optional(),
-  country: z.string().optional(),
-  // T6: coordinates accepted from client but coarsened before storage
-  locationLat: z.number().min(-90).max(90).optional(),
-  locationLng: z.number().min(-180).max(180).optional(),
-  discretionLevel: z.enum(['MAXIMUM','SELECTIVE','OPEN']).optional(),
-  intentions: z.array(z.object({
-    slug: z.string(),
-    preference: z.enum(['YES','MAYBE','NO']).optional()
-  })).optional(),
+  city:               z.string().optional(),
+  country:            z.string().optional(),
+  locationLat:        z.number().min(-90).max(90).optional(),
+  locationLng:        z.number().min(-180).max(180).optional(),
+  discretionLevel:    z.enum(['MAXIMUM','SELECTIVE','OPEN']).optional(),
+  // Accept both { slug } objects and plain strings — normalise below
+  intentions: z.array(
+    z.union([
+      z.object({ slug: z.string(), preference: z.enum(['YES','MAYBE','NO']).optional() }),
+      z.string()
+    ])
+  ).optional(),
   onboardingStep: z.number().min(1).max(10).optional()
 })
 
+// Normalise intentions — accept strings or objects
+const normaliseIntentions = (raw: any[]): { slug: string; preference: 'YES' | 'MAYBE' | 'NO' }[] =>
+  raw.map(i => typeof i === 'string'
+    ? { slug: i, preference: 'YES' as const }
+    : { slug: i.slug, preference: i.preference || 'YES' as const }
+  )
+
 const ONBOARDING_STEPS = [
-  { step: 1, name: 'account', label: 'Criar conta' },
-  { step: 2, name: 'age_verification', label: 'Verificar idade' },
-  { step: 3, name: 'profile_type', label: 'Tipo de perfil' },
+  { step: 1, name: 'account',            label: 'Criar conta' },
+  { step: 2, name: 'age_verification',   label: 'Verificar idade' },
+  { step: 3, name: 'profile_type',       label: 'Tipo de perfil' },
   { step: 4, name: 'relationship_dynamic', label: 'Dinâmica relacional' },
-  { step: 5, name: 'intentions', label: 'Intenções' },
-  { step: 6, name: 'boundaries', label: 'Limites' },
-  { step: 7, name: 'privacy', label: 'Privacidade' },
-  { step: 8, name: 'photos', label: 'Fotos' },
-  { step: 9, name: 'bio', label: 'Bio' },
-  { step: 10, name: 'discovery_mode', label: 'Modo de descoberta' },
+  { step: 5, name: 'intentions',         label: 'Intenções' },
+  { step: 6, name: 'boundaries',         label: 'Limites' },
+  { step: 7, name: 'privacy',            label: 'Privacidade' },
+  { step: 8, name: 'photos',             label: 'Fotos' },
+  { step: 9, name: 'bio',               label: 'Bio' },
+  { step: 10, name: 'discovery_mode',   label: 'Modo de descoberta' },
 ]
 
 router.get('/onboarding/steps', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -50,15 +59,14 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const profile = await prisma.profile.findUnique({
     where: { userId: req.userId! },
     include: {
-      photos: { where: { moderationStatus: 'APPROVED' }, orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }] },
-      intentions: { include: { intention: true } },
-      boundaries: { include: { boundary: true } },
+      photos:        { where: { moderationStatus: 'APPROVED' }, orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }] },
+      intentions:    { include: { intention: true } },
+      boundaries:    { include: { boundary: true } },
       privacySettings: true,
       coupleProfile: true,
     }
   })
   if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-  // T6: never return exact coordinates to client
   const { locationLat, locationLng, ...safeProfile } = profile as any
   res.json(safeProfile)
 })
@@ -68,80 +76,107 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     const data = profileSchema.parse(req.body)
     const existing = await prisma.profile.findUnique({ where: { userId: req.userId! } })
 
+    const isProd = process.env.NODE_ENV === 'production'
+
     if (existing) {
       const updated = await prisma.profile.update({
         where: { userId: req.userId! },
         data: {
-          ...(data.displayName && { displayName: data.displayName }),
+          ...(data.displayName      && { displayName: data.displayName }),
           ...(data.bio !== undefined && { bio: data.bio }),
-          ...(data.gender && { gender: data.gender }),
-          ...(data.orientation && { orientation: data.orientation }),
+          ...(data.gender           && { gender: data.gender }),
+          ...(data.orientation      && { orientation: data.orientation }),
           ...(data.relationshipStatus && { relationshipStatus: data.relationshipStatus }),
-          ...(data.city && { city: data.city }),
-          ...(data.country && { country: data.country }),
-          // T6: coarsen before saving — 1 decimal place ≈ ±11km
+          ...(data.city             && { city: data.city }),
+          ...(data.country          && { country: data.country }),
           ...(data.locationLat !== undefined && { locationLat: coarsenCoordinate(data.locationLat) }),
           ...(data.locationLng !== undefined && { locationLng: coarsenCoordinate(data.locationLng) }),
-          ...(data.discretionLevel && { discretionLevel: data.discretionLevel }),
+          ...(data.discretionLevel  && { discretionLevel: data.discretionLevel }),
         }
       })
+      // Update intentions if provided
+      if (data.intentions?.length) {
+        const normalised = normaliseIntentions(data.intentions)
+        await upsertIntentions(updated.id, normalised)
+      }
       return res.json(updated)
     }
 
-    if (!data.displayName) return res.status(400).json({ error: 'Nome obrigatório.' })
+    if (!data.displayName) return res.status(400).json({ error: 'Nome visível obrigatório.' })
 
     const profile = await prisma.profile.create({
       data: {
-        userId: req.userId!,
-        displayName: data.displayName,
-        bio: data.bio,
-        gender: data.gender,
-        orientation: data.orientation,
+        userId:             req.userId!,
+        displayName:        data.displayName,
+        bio:                data.bio,
+        gender:             data.gender,
+        orientation:        data.orientation,
         relationshipStatus: data.relationshipStatus || 'SINGLE',
-        city: data.city, country: data.country,
-        // T6: coarsen before saving
-        locationLat: data.locationLat !== undefined ? coarsenCoordinate(data.locationLat) : undefined,
-        locationLng: data.locationLng !== undefined ? coarsenCoordinate(data.locationLng) : undefined,
-        discretionLevel: data.discretionLevel || 'SELECTIVE',
-        status: 'DRAFT',
+        city:               data.city,
+        country:            data.country,
+        locationLat:        data.locationLat !== undefined ? coarsenCoordinate(data.locationLat) : undefined,
+        locationLng:        data.locationLng !== undefined ? coarsenCoordinate(data.locationLng) : undefined,
+        discretionLevel:    data.discretionLevel || 'SELECTIVE',
+        status:             isProd ? 'PENDING_REVIEW' : 'APPROVED',
         privacySettings: { create: {
-          visibleInDiscovery: false, showDistance: true,
-          showOnlineStatus: false, invisibleMode: false, notificationMode: 'DISCREET'
+          visibleInDiscovery: false,
+          showDistance:       true,
+          showOnlineStatus:   false,
+          invisibleMode:      false,
+          notificationMode:   'DISCREET',
         }}
       }
     })
 
     if (data.intentions?.length) {
-      const intentionRecords = await prisma.intention.findMany({
-        where: { slug: { in: data.intentions.map(i => i.slug) } }
-      })
-      await prisma.profileIntention.createMany({
-        data: intentionRecords.map(ir => {
-          const match = data.intentions!.find(i => i.slug === ir.slug)
-          return { profileId: profile.id, intentionId: ir.id, preference: match?.preference || 'YES' }
-        })
-      })
+      const normalised = normaliseIntentions(data.intentions)
+      await upsertIntentions(profile.id, normalised)
     }
 
     res.status(201).json(profile)
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
     console.error('[CREATE PROFILE]', err.message)
-    res.status(500).json({ error: 'Erro interno.' })
+    res.status(500).json({ error: 'Erro ao criar perfil. Tenta novamente.' })
   }
 })
+
+// Upsert intentions — auto-creates missing ones so seed is not required
+async function upsertIntentions(
+  profileId: string,
+  intentions: { slug: string; preference: 'YES' | 'MAYBE' | 'NO' }[]
+) {
+  // Ensure all slugs exist in the intentions table
+  for (const { slug } of intentions) {
+    await prisma.intention.upsert({
+      where: { slug },
+      update: {},
+      create: { slug, name: slug.replace(/_/g, ' '), active: true }
+    })
+  }
+
+  const records = await prisma.intention.findMany({
+    where: { slug: { in: intentions.map(i => i.slug) } }
+  })
+
+  // Replace all intentions for this profile
+  await prisma.profileIntention.deleteMany({ where: { profileId } })
+  await prisma.profileIntention.createMany({
+    data: records.map(ir => {
+      const match = intentions.find(i => i.slug === ir.id || i.slug === ir.slug)
+      return { profileId, intentionId: ir.id, preference: match?.preference || 'YES' }
+    })
+  })
+}
 
 router.put('/onboarding/step', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { step } = req.body
     if (!step || step < 1 || step > 10) return res.status(400).json({ error: 'Passo inválido.' })
-
     const profile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
     if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-
     const isProd = process.env.NODE_ENV === 'production'
     const completing = step >= 10
-
     const updated = await prisma.profile.update({
       where: { userId: req.userId! },
       data: {
@@ -150,14 +185,12 @@ router.put('/onboarding/step', requireAuth, async (req: AuthRequest, res: Respon
         })
       }
     })
-
     if (completing) {
       await prisma.privacySettings.update({
         where: { profileId: profile.id },
         data: { visibleInDiscovery: true }
       })
     }
-
     res.json({ ok: true, profile: updated, completed: completing })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
@@ -174,31 +207,22 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     const updated = await prisma.profile.update({
       where: { id: req.params.id },
       data: {
-        ...(data.displayName && { displayName: data.displayName }),
+        ...(data.displayName      && { displayName: data.displayName }),
         ...(data.bio !== undefined && { bio: data.bio }),
-        ...(data.gender && { gender: data.gender }),
-        ...(data.orientation && { orientation: data.orientation }),
+        ...(data.gender           && { gender: data.gender }),
+        ...(data.orientation      && { orientation: data.orientation }),
         ...(data.relationshipStatus && { relationshipStatus: data.relationshipStatus }),
-        ...(data.city && { city: data.city }),
-        ...(data.country && { country: data.country }),
-        // T6: coarsen coordinates on update too
+        ...(data.city             && { city: data.city }),
+        ...(data.country          && { country: data.country }),
         ...(data.locationLat !== undefined && { locationLat: coarsenCoordinate(data.locationLat) }),
         ...(data.locationLng !== undefined && { locationLng: coarsenCoordinate(data.locationLng) }),
-        ...(data.discretionLevel && { discretionLevel: data.discretionLevel }),
+        ...(data.discretionLevel  && { discretionLevel: data.discretionLevel }),
       }
     })
 
-    if (data.intentions) {
-      await prisma.profileIntention.deleteMany({ where: { profileId: updated.id } })
-      const intentionRecords = await prisma.intention.findMany({
-        where: { slug: { in: data.intentions.map(i => i.slug) } }
-      })
-      await prisma.profileIntention.createMany({
-        data: intentionRecords.map(ir => {
-          const match = data.intentions!.find(i => i.slug === ir.slug)
-          return { profileId: updated.id, intentionId: ir.id, preference: match?.preference || 'YES' }
-        })
-      })
+    if (data.intentions?.length) {
+      const normalised = normaliseIntentions(data.intentions)
+      await upsertIntentions(updated.id, normalised)
     }
 
     res.json(updated)
@@ -212,18 +236,16 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const profile = await prisma.profile.findUnique({
     where: { id: req.params.id },
     include: {
-      photos: { where: { moderationStatus: 'APPROVED', visibilityLevel: 'PUBLIC' }, orderBy: [{ isPrimary: 'desc' }] },
+      photos:     { where: { moderationStatus: 'APPROVED', visibilityLevel: 'PUBLIC' }, orderBy: [{ isPrimary: 'desc' }] },
       intentions: { include: { intention: true } },
       privacySettings: true,
     }
   })
   if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-  if (profile.visibilityMode === 'INVISIBLE') return res.status(404).json({ error: 'Perfil não encontrado.' })
+  if ((profile as any).visibilityMode === 'INVISIBLE') return res.status(404).json({ error: 'Perfil não encontrado.' })
   if (profile.status !== 'APPROVED') return res.status(404).json({ error: 'Perfil não disponível.' })
-
-  // T6: strip exact coordinates from public API response
-  const { userId, locationLat, locationLng, ...publicProfile } = profile as any
-  res.json(publicProfile)
+  const { userId, locationLat, locationLng, ...pub } = profile as any
+  res.json(pub)
 })
 
 router.put('/:id/boundaries', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -247,7 +269,9 @@ router.put('/:id/privacy', requireAuth, async (req: AuthRequest, res: Response) 
     return res.status(403).json({ error: 'Modo invisível requer Premium.', code: 'PREMIUM_REQUIRED' })
   }
   const settings = await prisma.privacySettings.upsert({
-    where: { profileId: profile.id }, update: req.body, create: { profileId: profile.id, ...req.body }
+    where: { profileId: profile.id },
+    update: req.body,
+    create: { profileId: profile.id, ...req.body }
   })
   res.json(settings)
 })
