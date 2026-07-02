@@ -4,9 +4,9 @@ import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 
 const C = {
-  bg:'#0E0818', card:'#1A1028', input:'#231535', plum:'#2D1B4E',
-  accent:'#C9956B', accentLight:'#E8B89A', rose:'#F2C4B8', lavLight:'#B8A9D4',
-  white:'#FAF7F5', muted:'#7A6E88', green:'#3DD68C', red:'#E05C7A'
+  bg:'#0A141A', card:'#102129', input:'#0F1E26', plum:'#1E3340',
+  accent:'#B8A7FF', accentLight:'#D4C8FF', rose:'#9B8EE0', lavLight:'#AAB6C2',
+  white:'#F5F7FA', muted:'#7E8FA3', green:'#4ADE80', red:'#F87171'
 }
 
 const INP = {
