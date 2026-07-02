@@ -1,187 +1,165 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
-import { useAuth } from '../context/AuthContext'
 
-const colors = {
-  bg:'#0E0818', bgCard:'#1A1028', bgInput:'#231535', plum:'#2D1B4E',
-  accent:'#C9956B', rose:'#F2C4B8', lavLight:'#B8A9D4',
-  white:'#FAF7F5', muted:'#7A6E88', green:'#3DD68C'
+const C = {
+  bg:'#0E0818', card:'#1A1028', input:'#231535', plum:'#2D1B4E',
+  accent:'#C9956B', rose:'#F2C4B8', lav:'#B8A9D4',
+  white:'#FAF7F5', muted:'#7A6E88', green:'#3DD68C', red:'#E05C7A'
 }
 
-function Toggle({ on, onChange, label, sub, disabled, locked }) {
+function Toggle({ on, onChange }) {
   return (
-    <div style={{ background:colors.bgCard, border:`1px solid ${locked ? 'rgba(201,149,107,0.3)' : colors.plum}`,
-      borderRadius:14, padding:'14px 16px', display:'flex', alignItems:'center',
-      gap:14, marginBottom:8, opacity: disabled ? 0.5 : 1 }}>
-      <div style={{ flex:1 }}>
-        <div style={{ fontSize:14, fontWeight:500, color:colors.white }}>
-          {locked && <span style={{ color:colors.accent }}>✦ </span>}{label}
-        </div>
-        {sub && <div style={{ fontSize:11, color:colors.muted, marginTop:2 }}>{sub}</div>}
+    <div onClick={() => onChange(!on)} style={{
+      width: 44, height: 24, borderRadius: 12,
+      background: on ? C.accent : C.input,
+      border: `1px solid ${on ? C.accent : C.plum}`,
+      position: 'relative', cursor: 'pointer', flexShrink: 0,
+      transition: 'all 0.2s',
+    }}>
+      <div style={{
+        position: 'absolute', top: 3, width: 16, height: 16,
+        borderRadius: '50%', background: C.white,
+        left: on ? 23 : 3, transition: 'left 0.2s',
+      }} />
+    </div>
+  )
+}
+
+function Row({ label, desc, value, onChange, arrow = false, onClick }) {
+  return (
+    <div onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 0', borderBottom: `1px solid ${C.plum}`, cursor: onClick ? 'pointer' : 'default' }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 14, color: C.white }}>{label}</div>
+        {desc && <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{desc}</div>}
       </div>
-      <div onClick={() => !disabled && !locked && onChange(!on)}
-        style={{ width:44, height:24, borderRadius:12, position:'relative',
-          background: on ? colors.accent : colors.plum,
-          cursor: disabled || locked ? 'not-allowed' : 'pointer',
-          transition:'background 0.3s', flexShrink:0 }}>
-        <div style={{ position:'absolute', top:3, width:18, height:18, background:'white',
-          borderRadius:'50%', transition:'transform 0.3s',
-          transform: on ? 'translateX(23px)' : 'translateX(3px)' }} />
-      </div>
+      {arrow ? <span style={{ color: C.muted, fontSize: 18 }}>›</span>
+             : <Toggle on={value} onChange={onChange} />}
     </div>
   )
 }
 
 export default function PrivacySettingsPage() {
-  const { user } = useAuth()
   const navigate = useNavigate()
-  const [settings, setSettings] = useState({})
+  const [settings, setSettings] = useState({
+    visibleInDiscovery: true,
+    showDistance: true,
+    showOnlineStatus: false,
+    invisibleMode: false,
+    allowPhotoRequests: true,
+    notificationMode: 'DISCREET',
+  })
+  const [sub, setSub] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
-
-  const isPremium = user?.subscription?.plan !== 'FREE'
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    api.get('/privacy')
-      .then(r => setSettings(r.data || {}))
-      .catch(() => {})
-      .finally(() => setLoading(false))
+    Promise.all([
+      api.get('/privacy').then(r => setSettings(s => ({ ...s, ...r.data }))).catch(() => {}),
+      api.get('/subscriptions/me').then(r => setSub(r.data)).catch(() => {}),
+    ]).finally(() => setLoading(false))
   }, [])
 
-  const update = async (key, val) => {
-    const updated = { ...settings, [key]: val }
-    setSettings(updated)
-    setSaving(true)
+  const isPremium = sub?.plan !== 'FREE' && sub?.status === 'ACTIVE'
+
+  const save = async (patch) => {
+    const next = { ...settings, ...patch }
+    setSettings(next)
+    setSaving(true); setMsg(''); setError('')
     try {
-      await api.put('/privacy', updated)
-      setMsg('Guardado ✓')
+      await api.put('/privacy', next)
+      setMsg('Guardado.')
       setTimeout(() => setMsg(''), 2000)
     } catch (err) {
-      const e = err.response?.data
-      if (e?.code === 'PREMIUM_REQUIRED') {
-        navigate('/premium')
+      const e = err.response?.data?.error || 'Erro ao guardar.'
+      if (e.includes('Premium')) {
+        setError('Modo invisível requer Between Plus.')
+        setSettings(s => ({ ...s, invisibleMode: false }))
       } else {
-        setSettings(settings)
+        setError(e)
       }
-    } finally { setSaving(false) }
+    } finally {
+      setSaving(false)
+    }
   }
 
-  if (loading) return (
-    <div style={{ minHeight:'100vh', background:colors.bg, display:'flex',
-      alignItems:'center', justifyContent:'center' }}>
-      <div style={{ color:colors.accent, fontFamily:"'Playfair Display',serif",
-        fontSize:20, fontStyle:'italic' }}>A carregar...</div>
-    </div>
-  )
+  if (loading) return <div style={{ padding: 32, color: C.muted, textAlign: 'center' }}>A carregar...</div>
 
   return (
-    <div style={{ minHeight:'100vh', background:colors.bg, padding:'60px 20px 40px' }}>
-      <div style={{ maxWidth:420, margin:'0 auto' }}>
-
-        <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:28 }}>
-          <button onClick={() => navigate('/profile')}
-            style={{ background:'none', border:'none', color:colors.lavLight,
-              fontSize:20, cursor:'pointer' }}>←</button>
-          <div>
-            <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:22,
-              fontWeight:700, color:colors.white }}>Privacidade</h1>
-            {msg && <span style={{ color:colors.green, fontSize:12 }}>{msg}</span>}
-          </div>
+    <div style={{ minHeight: '100vh', background: C.bg, padding: 'calc(20px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom))' }}>
+      <div style={{ maxWidth: 480, margin: '0 auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+          <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', color: C.muted, fontSize: 22, cursor: 'pointer', padding: 4 }}>←</button>
+          <h1 style={{ fontFamily: "'Playfair Display',serif", fontSize: 20, color: C.white, fontStyle: 'italic', margin: 0 }}>
+            Privacidade
+          </h1>
         </div>
 
-        {/* C.1 — Modo discreto */}
-        <div style={{ fontSize:11, color:colors.muted, textTransform:'uppercase',
-          letterSpacing:1, fontWeight:600, marginBottom:10, paddingLeft:4 }}>
-          Modo Discreto
+        {msg   && <div style={{ background: 'rgba(61,214,140,0.1)', border: `1px solid ${C.green}`, borderRadius: 10, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: C.green }}>{msg}</div>}
+        {error && <div style={{ background: 'rgba(224,92,122,0.1)', border: `1px solid ${C.red}`, borderRadius: 10, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: C.red }}>{error}</div>}
+
+        {/* Visibility */}
+        <div style={{ background: C.card, border: `1px solid ${C.plum}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: C.muted, padding: '10px 0 4px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Visibilidade</div>
+          <Row label="Aparecer no discovery" desc="O teu perfil é mostrado a outros utilizadores"
+            value={settings.visibleInDiscovery}
+            onChange={v => save({ visibleInDiscovery: v })} />
+          <Row label="Mostrar distância aproximada" desc="Outras pessoas vêem a distância em km"
+            value={settings.showDistance}
+            onChange={v => save({ showDistance: v })} />
+          <Row label="Mostrar estado online" desc="Mostrar quando estás activo/a"
+            value={settings.showOnlineStatus}
+            onChange={v => save({ showOnlineStatus: v })} />
+          <Row
+            label={<span>Modo invisível {!isPremium && <span style={{ fontSize: 10, color: C.accent, marginLeft: 4 }}>✦ Premium</span>}</span>}
+            desc="Navega sem aparecer no discovery"
+            value={settings.invisibleMode}
+            onChange={v => {
+              if (!isPremium && v) { setError('Modo invisível requer Between Plus.'); return }
+              save({ invisibleMode: v })
+            }} />
         </div>
 
-        <Toggle on={!!settings.invisibleMode} label="Modo Invisível"
-          sub={isPremium ? 'Navega sem aparecer no discovery' : 'Requer Premium — não apareces a ninguém'}
-          locked={!isPremium} onChange={v => update('invisibleMode', v)} />
-
-        <Toggle on={!!settings.hideExactDistance} label="Ocultar distância exata"
-          sub="Mostra «< 5 km» em vez da distância real"
-          onChange={v => update('hideExactDistance', v)} />
-
-        <Toggle on={!!settings.hideCity} label="Ocultar cidade"
-          sub="O teu perfil não mostra localização"
-          onChange={v => update('hideCity', v)} />
-
-        <Toggle on={settings.showOnlineStatus === true} label="Mostrar «online agora»"
-          sub="Outros veem quando estás ativo/a"
-          onChange={v => update('showOnlineStatus', v)} />
-
-        <Toggle on={settings.showDistance !== false} label="Mostrar distância aproximada"
-          sub="Mostra a tua zona de forma geral"
-          onChange={v => update('showDistance', v)} />
-
-        {/* Notificações discretas */}
-        <div style={{ fontSize:11, color:colors.muted, textTransform:'uppercase',
-          letterSpacing:1, fontWeight:600, marginBottom:10, paddingLeft:4, marginTop:20 }}>
-          Notificações
+        {/* Photos */}
+        <div style={{ background: C.card, border: `1px solid ${C.plum}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: C.muted, padding: '10px 0 4px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Fotos</div>
+          <Row label="Aceitar pedidos de fotos privadas" desc="Outros utilizadores podem pedir acesso às tuas fotos"
+            value={settings.allowPhotoRequests}
+            onChange={v => save({ allowPhotoRequests: v })} />
         </div>
 
-        <div style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
-          borderRadius:14, padding:'14px 16px', marginBottom:8 }}>
-          <div style={{ fontSize:14, fontWeight:500, color:colors.white, marginBottom:10 }}>
-            Modo de notificações
-          </div>
-          {[
-            { val:'NORMAL', label:'Normal', desc:'Mostra nome e conteúdo' },
-            { val:'DISCREET', label:'Discreto', desc:'Mostra apenas «Nova mensagem»' },
-            { val:'SILENT', label:'Silencioso', desc:'Sem notificações' }
-          ].map(opt => (
-            <div key={opt.val} onClick={() => update('notificationMode', opt.val)}
-              style={{ background: settings.notificationMode === opt.val
-                ? 'rgba(201,149,107,0.1)' : colors.bgInput,
-                border:`1.5px solid ${settings.notificationMode === opt.val
-                  ? colors.accent : colors.plum}`,
-                borderRadius:10, padding:'10px 12px', marginBottom:6,
-                cursor:'pointer', transition:'all 0.2s' }}>
-              <div style={{ color: settings.notificationMode === opt.val
-                ? colors.accent : colors.white, fontSize:13, fontWeight:600 }}>
-                {opt.label}
-              </div>
-              <div style={{ color:colors.muted, fontSize:11 }}>{opt.desc}</div>
-            </div>
-          ))}
+        {/* Notifications */}
+        <div style={{ background: C.card, border: `1px solid ${C.plum}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: C.muted, padding: '10px 0 4px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Notificações</div>
+          <Row
+            label={`Modo: ${settings.notificationMode === 'DISCREET' ? 'Discreto' : 'Normal'}`}
+            desc="Discreto: notificações sem nome nem conteúdo"
+            value={settings.notificationMode === 'DISCREET'}
+            onChange={v => save({ notificationMode: v ? 'DISCREET' : 'NORMAL' })} />
         </div>
 
-        {/* Fotos */}
-        <div style={{ fontSize:11, color:colors.muted, textTransform:'uppercase',
-          letterSpacing:1, fontWeight:600, marginBottom:10, paddingLeft:4, marginTop:20 }}>
-          Fotos & Pedidos
+        {/* Contacts */}
+        <div style={{ background: C.card, border: `1px solid ${C.plum}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: C.muted, padding: '10px 0 4px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Contactos</div>
+          <Row label="Bloquear contactos do telemóvel" desc="Oculta-te de pessoas que tens na agenda"
+            arrow onClick={() => navigate('/contacts/block')} />
         </div>
-
-        <Toggle on={settings.allowPhotoRequests !== false} label="Permitir pedidos de foto"
-          sub="Outros podem pedir acesso às tuas fotos privadas"
-          onChange={v => update('allowPhotoRequests', v)} />
 
         {/* RGPD */}
-        <div style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
-          borderRadius:14, padding:16, marginTop:20 }}>
-          <div style={{ fontSize:12, color:colors.muted, lineHeight:1.7 }}>
-            <strong style={{ color:colors.lavLight }}>🇪🇺 RGPD</strong><br/>
-            As tuas definições de privacidade são armazenadas de forma segura
-            e só utilizadas para personalizar a tua experiência.
-            Podes alterar ou remover os teus dados a qualquer momento.
-          </div>
+        <div style={{ background: C.card, border: `1px solid ${C.plum}`, borderRadius: 16, padding: '4px 16px' }}>
+          <div style={{ fontSize: 11, color: C.muted, padding: '10px 0 4px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Dados e conta</div>
+          <Row label="Exportar os meus dados" desc="Download RGPD dos teus dados"
+            arrow onClick={() => window.open('/api/auth/export', '_blank')} />
+          <Row label="Eliminar conta" desc="Remove todos os teus dados permanentemente"
+            arrow onClick={() => navigate('/delete-account')} />
         </div>
 
         {!isPremium && (
-          <div style={{ marginTop:20, background:'linear-gradient(135deg,#2D1B4E,#1A0A40)',
-            border:'1px solid rgba(201,149,107,0.4)', borderRadius:20, padding:20,
-            textAlign:'center' }}>
-            <div style={{ fontFamily:"'Playfair Display',serif", fontSize:16,
-              color:colors.accent, marginBottom:10 }}>✦ Modo Invisível é Premium</div>
-            <button onClick={() => navigate('/premium')}
-              style={{ background:`linear-gradient(135deg,${colors.accent},${colors.rose})`,
-                border:'none', borderRadius:50, padding:'12px 28px', fontSize:14,
-                fontWeight:700, color:'#1A0A2E', cursor:'pointer' }}>
-              Ver planos Premium
-            </button>
+          <div onClick={() => navigate('/premium')} style={{ marginTop: 16, background: 'rgba(201,149,107,0.08)', border: `1px solid rgba(201,149,107,0.2)`, borderRadius: 14, padding: 16, cursor: 'pointer', textAlign: 'center' }}>
+            <div style={{ fontSize: 14, color: C.accent, fontWeight: 600, marginBottom: 4 }}>✦ Between Plus</div>
+            <div style={{ fontSize: 12, color: C.muted }}>Desbloqueia modo invisível, Travel Mode e controlo avançado de privacidade.</div>
           </div>
         )}
       </div>
