@@ -492,4 +492,101 @@ router.post('/risk-scores/recalculate-all', requireAdmin('users'), async (req: A
   res.json({ ok: true, ...result })
 })
 
+
+// ─── Create user directly (admin) ────────────────────────────────────────────
+router.post('/users', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  try {
+    const { email, password, adminRole, reason } = req.body
+    if (!email || !password) return res.status(400).json({ error: 'Email e password obrigatórios.' })
+    if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.' })
+
+    // Only SUPER_ADMIN can create admin users
+    if (adminRole && (req as any).adminRole !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Apenas SUPER_ADMIN pode criar utilizadores com role de admin.' })
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email } })
+    if (existing) return res.status(409).json({ error: 'Email já registado.' })
+
+    const bcrypt = require('bcryptjs')
+    const passwordHash = await bcrypt.hash(password, 12)
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        passwordHash,
+        dateOfBirth: new Date('1990-01-01'), // placeholder — user updates on first login
+        emailVerifiedAt: new Date(), // admin-created accounts are pre-verified
+        status: 'ACTIVE',
+        adminRole: adminRole || null,
+        termsAcceptedAt: new Date(),
+        privacyAcceptedAt: new Date(),
+        subscription: { create: { plan: 'FREE', status: 'ACTIVE' } }
+      },
+      select: { id: true, email: true, status: true, adminRole: true, createdAt: true }
+    })
+
+    await logAdminAction(req.userId!, 'CREATE_USER', 'user', user.id, {
+      targetUserId: user.id,
+      reason,
+      newData: { email, adminRole: adminRole || null },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    })
+
+    res.status(201).json({ ok: true, user })
+  } catch (err: any) {
+    console.error('[CREATE USER]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// ─── Assign / remove admin role ───────────────────────────────────────────────
+router.put('/users/:id/role', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  try {
+    const { adminRole, reason } = req.body
+    if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.' })
+
+    // Only SUPER_ADMIN can assign roles
+    if ((req as any).adminRole !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Apenas SUPER_ADMIN pode atribuir roles de administrador.' })
+    }
+
+    const VALID_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MODERATOR', 'SUPPORT', 'FINANCE', 'CONTENT_REVIEWER', null]
+    if (!VALID_ROLES.includes(adminRole)) {
+      return res.status(400).json({ error: `Role inválido. Válidos: ${VALID_ROLES.filter(Boolean).join(', ')}` })
+    }
+
+    const prev = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      select: { email: true, adminRole: true }
+    })
+    if (!prev) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+    // Prevent removing own SUPER_ADMIN role
+    if (prev.adminRole === 'SUPER_ADMIN' && req.userId === req.params.id && adminRole !== 'SUPER_ADMIN') {
+      return res.status(400).json({ error: 'Não podes remover o teu próprio role de SUPER_ADMIN.' })
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { adminRole: adminRole || null },
+      select: { id: true, email: true, adminRole: true }
+    })
+
+    await logAdminAction(req.userId!, adminRole ? 'ASSIGN_ADMIN_ROLE' : 'REMOVE_ADMIN_ROLE', 'user', req.params.id, {
+      targetUserId: req.params.id,
+      reason,
+      previousData: { adminRole: prev.adminRole },
+      newData: { adminRole: adminRole || null },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    })
+
+    res.json({ ok: true, user: updated })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 export default router
