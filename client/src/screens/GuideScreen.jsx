@@ -2,149 +2,84 @@ import { useState } from 'react'
 
 const C = {
   bg:'#0A141A', surface:'#102129', elevated:'#172C36',
-  border:'#1E3340', input:'#0F1E26',
-  primary:'#B8A7FF', primaryDim:'rgba(184,167,255,0.12)',
+  border:'#1E3340', primary:'#B8A7FF', primaryDim:'rgba(184,167,255,0.1)',
   text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3',
-  success:'#4ADE80', successDim:'rgba(74,222,128,0.1)',
-  warning:'#FBBF24', danger:'#F87171', dangerDim:'rgba(248,113,113,0.1)',
 }
 
 const ARTICLES = [
-  {
-    icon:'💑', title:'Como definir limites em casal', time:'5 min',
-    content: `Definir limites em casal é o primeiro passo para explorar com segurança e confiança mútua.
-
-Comecem por conversar a sós, sem pressa, sobre o que cada um sente confortável em partilhar. Usem o Mapa de Limites da app para marcar Sim, Talvez ou Não em cada categoria — fotos, encontros presenciais, envolvimento emocional, entre outras.
-
-É normal que os limites de cada pessoa sejam diferentes. O sistema da Between Us assume sempre o limite mais restritivo entre os dois membros do casal, por isso não há necessidade de "convencer" o outro a aceitar mais do que se sente confortável.
-
-Revisitem os limites regularmente — podem mudar com o tempo e a experiência. A comunicação honesta é mais importante do que ter "as respostas certas" logo de início.`
-  },
-  {
-    icon:'🔓', title:'Como falar sobre fetiches sem pressão', time:'4 min',
-    content: `Falar sobre fetiches pode gerar ansiedade, mas não precisa de ser assim.
-
-Na Between Us, podes marcar interesses de forma privada — o sistema só revela compatibilidade quando ambas as partes assinalam o mesmo interesse, sem expor detalhes até existir match.
-
-Quando decidires falar abertamente, evita assumir que o outro já sabe o que queres dizer. Sê específico, mas também aberto a perguntas. Não é preciso ter tudo definido — "estou curioso/a sobre isto, queres explorar?" já é um ótimo início.
-
-Lembra-te: ninguém é obrigado a participar em nada. Um "não" ou "talvez no futuro" são respostas completamente válidas.`
-  },
-  {
-    icon:'🛡️', title:'Segurança em encontros presenciais', time:'6 min',
-    content: `Antes de um primeiro encontro presencial, há alguns passos que recomendamos sempre.
-
-Usa o Check-in de Encontro da app — define a hora e local previstos, e a app pode alertar caso não confirmes que estás bem. Combina sempre o encontro num espaço público nas primeiras vezes.
-
-Conversa por vídeo antes de te encontrares presencialmente, se possível. Confirma que a pessoa do perfil é quem diz ser. Informa um amigo ou familiar de confiança sobre onde vais e com quem.
-
-Confia no teu instinto. Se algo parecer errado antes ou durante o encontro, tens todo o direito de sair. O botão Safe Exit existe exatamente para isso.`
-  },
-  {
-    icon:'📱', title:'Privacidade digital', time:'3 min',
-    content: `A tua privacidade é a prioridade central da Between Us.
-
-Usa o Soft Reveal para controlar quando e a quem mostras o teu rosto. Começa com fotos desfocadas e revela progressivamente apenas a pessoas em quem confias.
-
-O Modo Invisível (Premium) permite-te navegar sem aparecer no discovery de outros. O bloqueio de contactos usa hash criptográfico — nunca guardamos os teus contactos em texto simples.
-
-Revê regularmente as tuas definições de privacidade em "Privacidade" no teu perfil. Podes apagar a tua conta e todos os dados a qualquer momento.`
-  },
-  {
-    icon:'💜', title:'O que é o poliamor?', time:'7 min',
-    content: `Poliamor é a prática de manter múltiplas relações românticas ou íntimas, consensuais e simultâneas, com o conhecimento de todas as pessoas envolvidas.
-
-Existem várias estruturas: poliamor hierárquico (com uma relação "principal"), não-hierárquico (sem hierarquia entre parceiros), solo poly (sem relação principal nem cohabitação), entre outras.
-
-A diferença fundamental face à infidelidade é o consentimento e a transparência — todas as pessoas sabem e concordam com a estrutura da relação.
-
-Na Between Us, podes indicar a tua dinâmica relacional como "Poliamoroso/a" e usar a intenção "Poliamor" para encontrares pessoas com expectativas alinhadas.`
-  },
-  {
-    icon:'✨', title:'Como criar um bom perfil', time:'4 min',
-    content: `Um bom perfil não precisa de ser perfeito — precisa de ser honesto e claro.
-
-Escreve uma bio que diga o que realmente procuras, não o que pensas que "deve" ser dito. Sê específico sobre as tuas intenções: queres conversa, encontro pontual, algo recorrente?
-
-As fotos não precisam de mostrar o rosto de imediato — usa o Soft Reveal a teu favor. Uma foto desfocada bem escolhida transmite mais confiança do que nenhuma foto.
-
-Preenche o Mapa de Limites com sinceridade. Isto não te vai "fechar portas" — vai trazer-te matches mais compatíveis e menos conversas desalinhadas.`
-  },
-  {
-    icon:'🚪', title:'Como usar o Safe Exit', time:'3 min',
-    content: `O Safe Exit é a tua ferramenta de saída segura em qualquer conversa.
-
-Ao tocar no botão "Sair" dentro de uma sala privada, tens seis opções: arquivar a conversa, silenciar notificações, revogar acesso às tuas fotos privadas, bloquear o utilizador, reportar e sair, ou simplesmente sair.
-
-Usa o Safe Exit sempre que sentires desconforto, pressão, ou que a conversa já não está alinhada com os teus limites. Não precisas de te justificar — a tua segurança e conforto vêm sempre primeiro.
-
-Bloquear ou reportar um utilizador é sempre confidencial e não notifica a outra pessoa.`
-  },
-  {
-    icon:'🤝', title:'Como funciona o consentimento contínuo', time:'5 min',
-    content: `Na Between Us, o consentimento não é um "sim" único — é algo que se confirma em cada nova fase da interação.
-
-O Consent Check pede confirmação explícita antes de avançar para fases mais íntimas: pedido de foto, revelação de rosto, videochamada, proposta de encontro. Cada fase exige aceitação de ambas as partes.
-
-Podes recusar ou revogar consentimento a qualquer momento, mesmo depois de teres aceitado anteriormente. Isto é normal e está sempre disponível — não há pressão para "manter consistência" com decisões passadas.
-
-Esta abordagem reduz mal-entendidos e protege todas as pessoas envolvidas.`
-  },
+  { id:1, cat:'Casais',       icon:'◎', title:'Como definir limites em casal',                 desc:'Antes de explorar juntos, alinhem expectativas e limites claros.' },
+  { id:2, cat:'Comunicação',  icon:'○', title:'Como falar sobre interesses privados',           desc:'Abordar fetiches e interesses com respeito e abertura.' },
+  { id:3, cat:'Privacidade',  icon:'◌', title:'Privacidade digital básica',                    desc:'Protege a tua identidade online. Passos simples e eficazes.' },
+  { id:4, cat:'Consentimento',icon:'◈', title:'Consentimento em ligações adultas',             desc:'O consentimento é contínuo. Como reconhecê-lo e respeitá-lo.' },
+  { id:5, cat:'Relações',     icon:'◑', title:'Relações abertas e comunicação',                desc:'O que diferencia uma relação aberta saudável de uma problemática.' },
+  { id:6, cat:'Segurança',    icon:'⊙', title:'Segurança no primeiro encontro',                desc:'Cuidados práticos para encontros presenciais com pessoas novas.' },
+  { id:7, cat:'Perfil',       icon:'○', title:'Como criar um perfil de confiança',             desc:'O que incluir, o que evitar, e como transmitir autenticidade.' },
+  { id:8, cat:'Casais',       icon:'◎', title:'A terceira pessoa não é um acessório',          desc:'Como respeitar e incluir uma terceira pessoa de forma equilibrada.' },
 ]
 
-export default function GuideScreen() {
-  const [selected, setSelected] = useState(null)
+const CATS = ['Todos','Casais','Comunicação','Privacidade','Consentimento','Relações','Segurança','Perfil']
 
-  if (selected) {
-    const a = ARTICLES[selected]
-    return (
-      <div style={{ padding:'60px 16px 40px' }}>
-        <button onClick={() => setSelected(null)}
-          style={{ background:'none', border:'none', color:C.text2,
-            fontSize:14, cursor:'pointer', marginBottom:20, padding:0 }}>
-          ← Voltar ao guia
-        </button>
-        <div style={{ fontSize:40, marginBottom:12 }}>{a.icon}</div>
-        <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:24,
-          fontWeight:700, color:C.text, marginBottom:8, lineHeight:1.3 }}>
-          {a.title}
-        </h1>
-        <div style={{ color:C.muted, fontSize:12, marginBottom:24 }}>
-          ⏱ {a.time} de leitura
-        </div>
-        <div style={{ color:C.text2, fontSize:15, lineHeight:1.8,
-          whiteSpace:'pre-line' }}>
-          {a.content}
+export default function GuideScreen() {
+  const [cat, setCat] = useState('Todos')
+  const [open, setOpen] = useState(null)
+  const filtered = cat === 'Todos' ? ARTICLES : ARTICLES.filter(a => a.cat === cat)
+  const article = ARTICLES.find(a => a.id === open)
+
+  if (article) return (
+    <div style={{ padding:'calc(20px + env(safe-area-inset-top)) 16px 32px', maxWidth:480, margin:'0 auto' }}>
+      <button onClick={() => setOpen(null)} style={{ background:'none', border:'none', color:C.muted, fontSize:22, cursor:'pointer', padding:'4px 0', marginBottom:20 }}>
+        &larr;
+      </button>
+      <div style={{ fontSize:11, color:C.primary, letterSpacing:'0.08em', textTransform:'uppercase', marginBottom:8 }}>{article.cat}</div>
+      <h1 style={{ fontSize:22, fontWeight:500, color:C.text, marginBottom:16, lineHeight:1.4 }}>{article.title}</h1>
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:20 }}>
+        <p style={{ color:C.text2, fontSize:15, lineHeight:1.7, margin:0 }}>{article.desc}</p>
+        <p style={{ color:C.text2, fontSize:15, lineHeight:1.7, marginTop:16 }}>
+          Este artigo está em construção. O Between Guide cresce com a comunidade — cada artigo é revisto antes de ser publicado.
+        </p>
+        <div style={{ marginTop:24, paddingTop:16, borderTop:`1px solid ${C.border}`, fontSize:12, color:C.muted }}>
+          Between Guide — conteúdo educativo para adultos
         </div>
       </div>
-    )
-  }
+    </div>
+  )
 
   return (
-    <div style={{ padding:'60px 16px 0' }}>
-      <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22,
-        fontWeight:700, marginBottom:4,
-        background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
-        WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>
-        Between Guide
+    <div style={{ padding:'calc(16px + env(safe-area-inset-top)) 16px 0', maxWidth:480, margin:'0 auto' }}>
+      <div style={{ marginBottom:20 }}>
+        <h1 style={{ fontSize:20, fontWeight:500, color:C.text, margin:'0 0 4px' }}>Between Guide</h1>
+        <p style={{ fontSize:13, color:C.muted, margin:0 }}>Conteúdo educativo sobre privacidade, consentimento e ligações adultas.</p>
       </div>
-      <div style={{ color:C.muted, fontSize:13, fontStyle:'italic', marginBottom:20 }}>
-        Aprende, explora com segurança.
+
+      <div style={{ display:'flex', gap:6, overflowX:'auto', paddingBottom:4, marginBottom:20, scrollbarWidth:'none' }}>
+        {CATS.map(c => (
+          <button key={c} onClick={() => setCat(c)} style={{
+            flexShrink:0, background: cat===c ? C.primaryDim : C.surface,
+            border:`1px solid ${cat===c ? C.primary : C.border}`,
+            borderRadius:20, padding:'7px 14px', fontSize:13,
+            color:cat===c ? C.primary : C.muted, cursor:'pointer', minHeight:36, whiteSpace:'nowrap',
+          }}>{c}</button>
+        ))}
       </div>
-      {ARTICLES.map((a, i) => (
-        <div key={i} onClick={() => setSelected(i)}
-          style={{ background:C.bgCard, border:`1px solid ${C.border}`,
-            borderRadius:16, padding:18, marginBottom:10, display:'flex',
-            alignItems:'center', gap:16, cursor:'pointer' }}>
-          <div style={{ fontSize:24, width:40, textAlign:'center' }}>{a.icon}</div>
-          <div style={{ flex:1 }}>
-            <div style={{ fontSize:14, fontWeight:600, color:C.text,
-              marginBottom:3 }}>{a.title}</div>
-            <div style={{ fontSize:11, color:C.muted }}>⏱ {a.time} leitura</div>
+
+      <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+        {filtered.map(a => (
+          <div key={a.id} onClick={() => setOpen(a.id)} style={{
+            background:C.surface, border:`1px solid ${C.border}`, borderRadius:16,
+            padding:16, cursor:'pointer', display:'flex', gap:14, alignItems:'flex-start',
+          }}>
+            <div style={{ width:40, height:40, borderRadius:12, background:C.elevated, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, color:C.primary, flexShrink:0 }}>
+              {a.icon}
+            </div>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:10, color:C.muted, letterSpacing:'0.05em', textTransform:'uppercase', marginBottom:4 }}>{a.cat}</div>
+              <div style={{ fontSize:15, fontWeight:500, color:C.text, marginBottom:4, lineHeight:1.4 }}>{a.title}</div>
+              <div style={{ fontSize:13, color:C.text2, lineHeight:1.5 }}>{a.desc}</div>
+            </div>
+            <span style={{ color:C.muted, fontSize:18, flexShrink:0, marginTop:2 }}>›</span>
           </div>
-          <div style={{ color:C.muted, fontSize:16 }}>›</div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }
