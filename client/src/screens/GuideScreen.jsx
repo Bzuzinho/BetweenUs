@@ -1,9 +1,12 @@
 import { useState } from 'react'
 
-const colors = {
-  bg:'#0E0818', bgCard:'#1A1028', plum:'#2D1B4E',
-  accent:'#C9956B', rose:'#F2C4B8', lavLight:'#B8A9D4',
-  white:'#FAF7F5', muted:'#7A6E88'
+const C = {
+  bg:'#0A141A', surface:'#102129', elevated:'#172C36',
+  border:'#1E3340', input:'#0F1E26',
+  primary:'#B8A7FF', primaryDim:'rgba(184,167,255,0.12)',
+  text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3',
+  success:'#4ADE80', successDim:'rgba(74,222,128,0.1)',
+  warning:'#FBBF24', danger:'#F87171', dangerDim:'rgba(248,113,113,0.1)',
 }
 
 const ARTICLES = [
@@ -97,19 +100,19 @@ export default function GuideScreen() {
     return (
       <div style={{ padding:'60px 16px 40px' }}>
         <button onClick={() => setSelected(null)}
-          style={{ background:'none', border:'none', color:colors.lavLight,
+          style={{ background:'none', border:'none', color:C.text2,
             fontSize:14, cursor:'pointer', marginBottom:20, padding:0 }}>
           ← Voltar ao guia
         </button>
         <div style={{ fontSize:40, marginBottom:12 }}>{a.icon}</div>
         <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:24,
-          fontWeight:700, color:colors.white, marginBottom:8, lineHeight:1.3 }}>
+          fontWeight:700, color:C.text, marginBottom:8, lineHeight:1.3 }}>
           {a.title}
         </h1>
-        <div style={{ color:colors.muted, fontSize:12, marginBottom:24 }}>
+        <div style={{ color:C.muted, fontSize:12, marginBottom:24 }}>
           ⏱ {a.time} de leitura
         </div>
-        <div style={{ color:colors.lavLight, fontSize:15, lineHeight:1.8,
+        <div style={{ color:C.text2, fontSize:15, lineHeight:1.8,
           whiteSpace:'pre-line' }}>
           {a.content}
         </div>
@@ -121,25 +124,25 @@ export default function GuideScreen() {
     <div style={{ padding:'60px 16px 0' }}>
       <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22,
         fontWeight:700, marginBottom:4,
-        background:`linear-gradient(135deg,${colors.accent},${colors.rose})`,
+        background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
         WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>
         Between Guide
       </div>
-      <div style={{ color:colors.muted, fontSize:13, fontStyle:'italic', marginBottom:20 }}>
+      <div style={{ color:C.muted, fontSize:13, fontStyle:'italic', marginBottom:20 }}>
         Aprende, explora com segurança.
       </div>
       {ARTICLES.map((a, i) => (
         <div key={i} onClick={() => setSelected(i)}
-          style={{ background:colors.bgCard, border:`1px solid ${colors.plum}`,
+          style={{ background:C.bgCard, border:`1px solid ${C.border}`,
             borderRadius:16, padding:18, marginBottom:10, display:'flex',
             alignItems:'center', gap:16, cursor:'pointer' }}>
           <div style={{ fontSize:24, width:40, textAlign:'center' }}>{a.icon}</div>
           <div style={{ flex:1 }}>
-            <div style={{ fontSize:14, fontWeight:600, color:colors.white,
+            <div style={{ fontSize:14, fontWeight:600, color:C.text,
               marginBottom:3 }}>{a.title}</div>
-            <div style={{ fontSize:11, color:colors.muted }}>⏱ {a.time} leitura</div>
+            <div style={{ fontSize:11, color:C.muted }}>⏱ {a.time} leitura</div>
           </div>
-          <div style={{ color:colors.muted, fontSize:16 }}>›</div>
+          <div style={{ color:C.muted, fontSize:16 }}>›</div>
         </div>
       ))}
     </div>
