@@ -16,22 +16,27 @@ const authLimiter = rateLimit({
   message: { error: 'Demasiadas tentativas. Tenta novamente em 15 minutos.' }
 })
 
+// Simplified schema — matches exactly what RegisterPage sends
 const registerSchema = z.object({
   email: z.string().email('Email inválido'),
-  password: z.string().min(8, 'Password deve ter pelo menos 8 caracteres'),
+  password: z.string().min(8, 'A password deve ter pelo menos 8 caracteres'),
   dateOfBirth: z.string().refine(val => {
-    const age = (Date.now() - new Date(val).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
+    const dob = new Date(val)
+    if (isNaN(dob.getTime())) return false
+    const age = (Date.now() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000)
     return age >= 18
-  }, 'Tens de ter pelo menos 18 anos'),
-  ageConfirmed: z.boolean().refine(v => v === true, 'Tens de confirmar que tens 18 ou mais anos'),
+  }, 'Tens de ter pelo menos 18 anos para te registar'),
+  // Frontend sends termsAccepted:true — we use it as umbrella for all required consents
   termsAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar os Termos de Utilização'),
-  privacyAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar a Política de Privacidade'),
-  sensitiveDataAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar o tratamento de dados sensíveis'),
-  communityGuidelinesAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar as Directrizes da Comunidade'),
+  betaCode: z.string().optional(),
+  // Optional granular consents from future UI (ignored if not sent)
+  ageConfirmed: z.boolean().optional(),
+  privacyAccepted: z.boolean().optional(),
+  sensitiveDataAccepted: z.boolean().optional(),
+  communityGuidelinesAccepted: z.boolean().optional(),
   locationConsent: z.boolean().optional().default(false),
   marketingConsent: z.boolean().optional().default(false),
   contactHashingConsent: z.boolean().optional().default(false),
-  betaCode: z.string().optional()
 })
 
 const hashToken = (t: string) => createHash('sha256').update(t).digest('hex')
@@ -59,12 +64,12 @@ const clearAuthCookies = (res: Response) => {
 
 const validateBetaCode = async (code: string | undefined, email: string) => {
   if (!BETA_CLOSED) return { ok: true, invite: null }
-  if (!code) return { ok: false, error: 'O Between Us está em beta fechado. Precisas de um convite.', errCode: 'BETA_REQUIRED' }
+  if (!code) return { ok: false, error: 'O Between Us está em beta fechado. Precisas de um código de convite.', errCode: 'BETA_REQUIRED' }
   const invite = await prisma.betaInvite.findUnique({ where: { code: code.toUpperCase() } })
-  if (!invite || !invite.active) return { ok: false, error: 'Convite inválido ou expirado.', errCode: 'BETA_INVALID' }
-  if (invite.expiresAt && invite.expiresAt < new Date()) return { ok: false, error: 'Este convite expirou.', errCode: 'BETA_EXPIRED' }
-  if (invite.useCount >= invite.maxUses) return { ok: false, error: 'Este convite já atingiu o limite.', errCode: 'BETA_EXHAUSTED' }
-  if (invite.email && invite.email.toLowerCase() !== email.toLowerCase()) return { ok: false, error: 'Convite reservado para outro email.', errCode: 'BETA_EMAIL_MISMATCH' }
+  if (!invite || !invite.active) return { ok: false, error: 'Código de convite inválido ou expirado.', errCode: 'BETA_INVALID' }
+  if (invite.expiresAt && invite.expiresAt < new Date()) return { ok: false, error: 'Este código de convite expirou.', errCode: 'BETA_EXPIRED' }
+  if (invite.useCount >= invite.maxUses) return { ok: false, error: 'Este código de convite já atingiu o limite.', errCode: 'BETA_EXHAUSTED' }
+  if (invite.email && invite.email.toLowerCase() !== email.toLowerCase()) return { ok: false, error: 'Este código está reservado para outro email.', errCode: 'BETA_EMAIL_MISMATCH' }
   return { ok: true, invite }
 }
 
@@ -82,23 +87,27 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
     const passwordHash = await bcrypt.hash(data.password, 12)
     const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown'
     const userAgent = req.headers['user-agent'] || 'unknown'
+    const consentVersion = '1.0'
 
     const user = await prisma.user.create({
       data: {
-        email: data.email, passwordHash,
+        email: data.email,
+        passwordHash,
         dateOfBirth: new Date(data.dateOfBirth),
-        // In prod: not verified yet — email must be confirmed
         emailVerifiedAt: isProd ? null : new Date(),
         status: isProd ? 'PENDING_VERIFICATION' : 'ACTIVE',
-        termsAcceptedAt: new Date(), privacyAcceptedAt: new Date(),
-        consents: { create: [
-          { consentType: 'TERMS',          version: '1.0', ipAddress, userAgent },
-          { consentType: 'PRIVACY_POLICY', version: '1.0', ipAddress, userAgent },
-          { consentType: 'SENSITIVE_DATA', version: '1.0', ipAddress, userAgent },
-          ...(data.locationConsent    ? [{ consentType: 'LOCATION'        as any, version: '1.0', ipAddress, userAgent }] : []),
-          ...(data.marketingConsent   ? [{ consentType: 'MARKETING'       as any, version: '1.0', ipAddress, userAgent }] : []),
-          ...(data.contactHashingConsent ? [{ consentType: 'CONTACT_HASHING' as any, version: '1.0', ipAddress, userAgent }] : []),
-        ]},
+        termsAcceptedAt: new Date(),
+        privacyAcceptedAt: new Date(),
+        consents: {
+          create: [
+            { consentType: 'TERMS',          version: consentVersion, ipAddress, userAgent },
+            { consentType: 'PRIVACY_POLICY', version: consentVersion, ipAddress, userAgent },
+            { consentType: 'SENSITIVE_DATA', version: consentVersion, ipAddress, userAgent },
+            ...(data.locationConsent       ? [{ consentType: 'LOCATION'        as any, version: consentVersion, ipAddress, userAgent }] : []),
+            ...(data.marketingConsent      ? [{ consentType: 'MARKETING'       as any, version: consentVersion, ipAddress, userAgent }] : []),
+            ...(data.contactHashingConsent ? [{ consentType: 'CONTACT_HASHING' as any, version: consentVersion, ipAddress, userAgent }] : []),
+          ]
+        },
         subscription: { create: { plan: 'FREE', status: 'ACTIVE' } }
       }
     })
@@ -108,7 +117,12 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
       const newUseCount = inv.useCount + 1
       await prisma.betaInvite.update({
         where: { id: inv.id },
-        data: { useCount: { increment: 1 }, usedById: inv.maxUses === 1 ? user.id : undefined, usedAt: inv.maxUses === 1 ? new Date() : undefined, active: newUseCount >= inv.maxUses ? false : inv.active }
+        data: {
+          useCount: { increment: 1 },
+          usedById: inv.maxUses === 1 ? user.id : undefined,
+          usedAt: inv.maxUses === 1 ? new Date() : undefined,
+          active: newUseCount >= inv.maxUses ? false : inv.active
+        }
       })
     }
 
@@ -117,9 +131,8 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
       const verifyToken = randomBytes(32).toString('hex')
       const redis = await getRedis()
       if (redis) await redis.setEx(`email_verify:${user.id}`, 3600, hashToken(verifyToken))
-      await sendVerificationEmail(user.email, user.id, verifyToken).catch(e => console.error('[EMAIL]', e.message))
+      await sendVerificationEmail(user.email, user.id, verifyToken).catch(e => console.error('[EMAIL VERIFY]', e.message))
     } else {
-      // Dev: send welcome directly (no verification needed)
       await sendWelcomeEmail(user.email).catch(() => {})
     }
 
@@ -129,8 +142,11 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
 
     setAuthCookies(res, accessToken, refreshToken)
     res.status(201).json({
-      message: isProd ? 'Conta criada! Verifica o teu email para activar a conta.' : 'Conta criada com sucesso!',
-      accessToken, refreshToken,
+      message: isProd
+        ? 'Conta criada! Verifica o teu email para activar a conta.'
+        : 'Conta criada com sucesso!',
+      accessToken,
+      refreshToken,
       user: { id: user.id, email: user.email, status: user.status },
       emailVerificationRequired: isProd
     })
@@ -144,13 +160,16 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
 // ─── POST /api/auth/login ─────────────────────────────────────────────────────
 router.post('/login', authLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password } = z.object({ email: z.string().email(), password: z.string().min(1) }).parse(req.body)
+    const { email, password } = z.object({
+      email: z.string().email(),
+      password: z.string().min(1)
+    }).parse(req.body)
 
     const user = await prisma.user.findUnique({ where: { email } })
     if (!user) return res.status(401).json({ error: 'Email ou password incorretos.' })
-    if (user.status === 'BANNED')    return res.status(403).json({ error: 'Esta conta foi suspensa.', code: 'ACCOUNT_BANNED' })
-    if (user.status === 'SUSPENDED') return res.status(403).json({ error: 'Conta temporariamente suspensa.', code: 'ACCOUNT_SUSPENDED' })
-    if (user.status === 'DELETED')   return res.status(403).json({ error: 'Esta conta foi eliminada.', code: 'ACCOUNT_DELETED' })
+    if (user.status === 'BANNED')    return res.status(403).json({ error: 'Esta conta foi suspensa.',             code: 'ACCOUNT_BANNED' })
+    if (user.status === 'SUSPENDED') return res.status(403).json({ error: 'Conta temporariamente suspensa.',     code: 'ACCOUNT_SUSPENDED' })
+    if (user.status === 'DELETED')   return res.status(403).json({ error: 'Esta conta foi eliminada.',           code: 'ACCOUNT_DELETED' })
 
     const valid = await bcrypt.compare(password, user.passwordHash)
     if (!valid) return res.status(401).json({ error: 'Email ou password incorretos.' })
@@ -163,7 +182,8 @@ router.post('/login', authLimiter, async (req: Request, res: Response) => {
 
     setAuthCookies(res, accessToken, refreshToken)
     res.json({
-      accessToken, refreshToken,
+      accessToken,
+      refreshToken,
       user: { id: user.id, email: user.email, status: user.status, adminRole: user.adminRole },
       emailVerified: !!user.emailVerifiedAt
     })
@@ -229,8 +249,7 @@ router.get('/me', async (req: Request, res: Response) => {
   }
 })
 
-// ─── POST /api/auth/email/verify ─────────────────────────────────────────────
-// Step 1: request a new verification email
+// ─── POST /api/auth/email/verify — resend verification email ─────────────────
 router.post('/email/verify', authLimiter, async (req: Request, res: Response) => {
   try {
     const token = req.headers.authorization?.split(' ')[1] || (req as any).cookies?.accessToken
@@ -259,18 +278,21 @@ router.post('/email/verify', authLimiter, async (req: Request, res: Response) =>
     await sendVerificationEmail(user.email, userId, verifyToken)
 
     if (!isProd) {
-      return res.json({ ok: true, message: 'Email enviado.', devToken: verifyToken, devUrl: `${process.env.CLIENT_URL}/verify-email?userId=${userId}&token=${encodeURIComponent(verifyToken)}` })
+      return res.json({
+        ok: true,
+        devToken: verifyToken,
+        devUrl: `${process.env.CLIENT_URL}/verify-email?userId=${userId}&token=${encodeURIComponent(verifyToken)}`
+      })
     }
 
     res.json({ ok: true, message: 'Email de verificação enviado. O link expira em 1 hora.' })
   } catch (err: any) {
-    console.error('[EMAIL VERIFY REQUEST]', err.message)
+    console.error('[EMAIL VERIFY]', err.message)
     res.status(500).json({ error: 'Erro ao enviar email.' })
   }
 })
 
-// ─── POST /api/auth/email/confirm ────────────────────────────────────────────
-// Step 2: confirm with token from email link
+// ─── POST /api/auth/email/confirm — confirm token from link ──────────────────
 router.post('/email/confirm', async (req: Request, res: Response) => {
   try {
     const { token, userId } = req.body
@@ -288,11 +310,10 @@ router.post('/email/confirm', async (req: Request, res: Response) => {
       data: { emailVerifiedAt: new Date(), status: 'ACTIVE' }
     })
 
-    // Send welcome email after successful verification
     await sendWelcomeEmail(user.email).catch(e => console.error('[EMAIL WELCOME]', e.message))
 
     res.json({ ok: true, message: 'Email verificado com sucesso! A tua conta está activa.' })
-  } catch (err: any) {
+  } catch {
     res.status(500).json({ error: 'Erro interno.' })
   }
 })
@@ -301,8 +322,6 @@ router.post('/email/confirm', async (req: Request, res: Response) => {
 router.post('/password/forgot', authLimiter, async (req: Request, res: Response) => {
   try {
     const { email } = z.object({ email: z.string().email() }).parse(req.body)
-
-    // Always return same message — don't leak whether email exists
     const user = await prisma.user.findUnique({ where: { email } })
 
     if (user && user.status !== 'BANNED' && user.status !== 'DELETED') {
@@ -315,6 +334,7 @@ router.post('/password/forgot', authLimiter, async (req: Request, res: Response)
       await sendPasswordResetEmail(user.email, user.id, resetToken).catch(e => console.error('[EMAIL RESET]', e.message))
     }
 
+    // Always same response — don't leak whether email exists
     res.json({ message: 'Se este email existe, receberás um link para repor a password.' })
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: 'Email inválido.' })
@@ -328,7 +348,7 @@ router.post('/password/reset', authLimiter, async (req: Request, res: Response) 
     const { userId, token, password } = z.object({
       userId:   z.string().uuid(),
       token:    z.string().min(1),
-      password: z.string().min(8, 'Password deve ter pelo menos 8 caracteres')
+      password: z.string().min(8, 'A password deve ter pelo menos 8 caracteres')
     }).parse(req.body)
 
     const redis = await getRedis()
@@ -341,7 +361,7 @@ router.post('/password/reset', authLimiter, async (req: Request, res: Response) 
     const passwordHash = await bcrypt.hash(password, 12)
     await prisma.user.update({ where: { id: userId }, data: { passwordHash } })
 
-    // Revoke all existing sessions after password change
+    // Revoke all sessions after password change
     if (redis) await redis.del(`refresh:${userId}`)
     clearAuthCookies(res)
 
@@ -369,7 +389,14 @@ router.delete('/account', async (req: Request, res: Response) => {
 
     await prisma.user.update({
       where: { id: userId },
-      data: { status: 'DELETED', email: `deleted-${userId}@deleted.betweenus`, passwordHash: 'DELETED', dateOfBirth: new Date('1900-01-01'), emailVerifiedAt: null, lastSeenAt: null }
+      data: {
+        status: 'DELETED',
+        email: `deleted-${userId}@deleted.betweenus`,
+        passwordHash: 'DELETED',
+        dateOfBirth: new Date('1900-01-01'),
+        emailVerifiedAt: null,
+        lastSeenAt: null
+      }
     })
 
     const redis = await getRedis()
@@ -394,7 +421,7 @@ router.get('/export', async (req: Request, res: Response) => {
         id: true, email: true, dateOfBirth: true, createdAt: true, status: true,
         profile: { select: { displayName: true, bio: true, gender: true, orientation: true, relationshipStatus: true, city: true, country: true, createdAt: true, intentions: { include: { intention: true } } } },
         consents: { select: { consentType: true, version: true, acceptedAt: true } },
-        subscription: { select: { plan: true, status: true } },
+        subscription: { select: { plan: true, status: true } }
       }
     })
     if (!user) return res.status(404).json({ error: 'Utilizador não encontrado.' })
