@@ -389,4 +389,65 @@ router.post('/avatar', avatarUpload.single('avatar'), async (req: Request, res: 
   }
 })
 
+
+// ─── POST /api/auth/otp — generate one-time login link (SUPER_ADMIN emergency) ─
+// Returns a URL that logs in a specific user once, without password
+// ONLY callable from admin panel, stored in Redis with 15min TTL
+router.post('/otp', async (req: Request, res: Response) => {
+  // Verify the caller is authenticated as SUPER_ADMIN
+  const callerToken = req.headers.authorization?.split(' ')[1]
+  if (!callerToken) return res.status(401).json({ error: 'Não autenticado.' })
+  try {
+    const { userId: callerId } = verifyAccessToken(callerToken)
+    const caller = await prisma.user.findUnique({ where: { id: callerId }, select: { adminRole: true } })
+    if (caller?.adminRole !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Apenas SUPER_ADMIN.' })
+
+    const { targetEmail } = req.body
+    if (!targetEmail) return res.status(400).json({ error: 'targetEmail obrigatório.' })
+
+    const target = await prisma.user.findUnique({ where: { email: targetEmail } })
+    if (!target) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+    const { randomBytes } = await import('crypto')
+    const otp = randomBytes(24).toString('hex')
+
+    const redis = await getRedis()
+    if (!redis) return res.status(503).json({ error: 'Redis não disponível.' })
+
+    // Store OTP with 15 minute TTL, one-time use
+    await redis.setEx(`otp:${otp}`, 900, target.id)
+
+    const loginUrl = `${process.env.CLIENT_URL}/otp-login?token=${otp}`
+    res.json({ ok: true, loginUrl, expiresIn: '15 minutes',
+      warning: 'Este link faz login automático. Partilha APENAS com o utilizador em causa.' })
+  } catch { res.status(401).json({ error: 'Token inválido.' }) }
+})
+
+// ─── GET /api/auth/otp-login — use one-time token to authenticate ─────────────
+router.get('/otp-login', async (req: Request, res: Response) => {
+  const { token } = req.query as { token: string }
+  if (!token) return res.status(400).json({ error: 'Token obrigatório.' })
+  try {
+    const redis = await getRedis()
+    if (!redis) return res.status(503).json({ error: 'Redis não disponível.' })
+    const userId = await redis.get(`otp:${token}`)
+    if (!userId) return res.status(400).json({ error: 'Link inválido ou expirado.' })
+    // One-time use — delete immediately
+    await redis.del(`otp:${token}`)
+    const user = await prisma.user.findUnique({ where: { id: userId } })
+    if (!user || user.status === 'BANNED' || user.status === 'DELETED') {
+      return res.status(403).json({ error: 'Conta não disponível.' })
+    }
+    const { accessToken, refreshToken } = generateTokens(userId)
+    const newHash = createHash('sha256').update(refreshToken).digest('hex')
+    const redis2 = await getRedis()
+    if (redis2) await redis2.setEx(`refresh:${userId}`, 30 * 24 * 60 * 60, newHash)
+    setAuthCookies(res, accessToken, refreshToken)
+    res.json({ ok: true, accessToken, refreshToken,
+      user: { id: user.id, email: user.email, status: user.status, adminRole: user.adminRole } })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 export default router
