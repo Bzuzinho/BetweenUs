@@ -241,7 +241,10 @@ function AdminHeader({ user, onLogout }) {
           display:'flex', alignItems:'center', justifyContent:'center',
           fontSize:14, fontWeight:600, color:C.primary, cursor:'pointer', flexShrink:0,
         }}>
-          {initials}
+          {user?.avatarPath
+            ? <img src={user.avatarPath} alt="" style={{ width:'100%', height:'100%', objectFit:'cover', borderRadius:'50%' }}/>
+            : initials
+          }
         </div>
 
         {showMenu && (
@@ -683,7 +686,13 @@ function UserDetail({ userId, onBack }) {
   const load = useCallback(() => {
     api.get(`/admin/users/${userId}`).then(r => {
       setData(r.data)
-      setForm({ email: r.data.email, displayName: r.data.profile?.displayName||'', bio: r.data.profile?.bio||'', city: r.data.profile?.city||'', profileStatus: r.data.profile?.status||'' })
+      setForm({
+        email: r.data.email,
+        displayName: r.data.profile?.displayName||'',
+        bio: r.data.profile?.bio||'',
+        city: r.data.profile?.city||'',
+        profileStatus: r.data.profile?.status||'PENDING_REVIEW',
+      })
     })
     api.get(`/admin/users/${userId}/history`).then(r => setHistory(r.data.history||[]))
   }, [userId])
@@ -757,23 +766,78 @@ function UserDetail({ userId, onBack }) {
         </div>
       )}
 
-      {view==='profile' && !p && <div style={{ color:C.muted, textAlign:'center', padding:20 }}>Sem perfil.</div>}
+      {view==='profile' && !p && <div style={{ color:C.muted, textAlign:'center', padding:20 }}>Sem perfil criado.</div>}
       {view==='profile' && p && (
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16 }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
-            <span style={{ fontSize:14, fontWeight:500, color:C.text2 }}>Perfil</span>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+            <span style={{ fontSize:14, fontWeight:500, color:C.text2 }}>Perfil público</span>
             <button onClick={() => setEditing('profile')} style={{ background:C.primary, border:'none', borderRadius:8, padding:'6px 14px', color:'#0A141A', fontSize:12, fontWeight:600, cursor:'pointer', minHeight:32 }}>Guardar</button>
           </div>
-          {[['Nome',form.displayName,'displayName'],['Bio',form.bio,'bio'],['Cidade',form.city,'city']].map(([lbl,val,key]) => (
-            <div key={key} style={{ marginBottom:8 }}>
-              <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:3 }}>{lbl.toUpperCase()}</label>
-              <input style={INP} value={val} onChange={e => setForm(pr => ({...pr,[key]:e.target.value}))}/>
+
+          {/* Status + estado do perfil */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14 }}>
+            <div style={{ background:C.elevated, borderRadius:10, padding:'10px 12px' }}>
+              <div style={{ fontSize:10, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Estado</div>
+              <select value={form.profileStatus} onChange={e => setForm(pr => ({...pr,profileStatus:e.target.value}))} style={{ background:'none', border:'none', color:C.primary, fontSize:13, fontWeight:600, cursor:'pointer', width:'100%', padding:0 }}>
+                {['DRAFT','PENDING_REVIEW','APPROVED','REJECTED','HIDDEN','SUSPENDED'].map(s => <option key={s} value={s} style={{background:C.surface}}>{s}</option>)}
+              </select>
+            </div>
+            <div style={{ background:C.elevated, borderRadius:10, padding:'10px 12px' }}>
+              <div style={{ fontSize:10, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Tipo</div>
+              <div style={{ fontSize:13, fontWeight:500, color:C.text }}>{p.type || 'INDIVIDUAL'}</div>
+            </div>
+          </div>
+
+          {/* Campos editáveis */}
+          {[
+            ['Nome visível', form.displayName, 'displayName'],
+            ['Bio',          form.bio,         'bio'],
+            ['Cidade',       form.city,         'city'],
+          ].map(([lbl,val,key]) => (
+            <div key={key} style={{ marginBottom:10 }}>
+              <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:3, textTransform:'uppercase', letterSpacing:'0.05em' }}>{lbl}</label>
+              {key==='bio'
+                ? <textarea value={val} onChange={e => setForm(pr => ({...pr,[key]:e.target.value}))} rows={3} style={{ ...INP, resize:'none', marginBottom:0 }}/>
+                : <input style={{ ...INP, marginBottom:0 }} value={val} onChange={e => setForm(pr => ({...pr,[key]:e.target.value}))}/>
+              }
             </div>
           ))}
-          <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:3 }}>STATUS</label>
-          <select value={form.profileStatus} onChange={e => setForm(pr => ({...pr,profileStatus:e.target.value}))} style={{ ...INP, marginBottom:0, cursor:'pointer' }}>
-            {['DRAFT','PENDING_REVIEW','APPROVED','REJECTED','HIDDEN','SUSPENDED'].map(s => <option key={s} value={s} style={{background:C.surface}}>{s}</option>)}
-          </select>
+
+          {/* Read-only fields */}
+          <div style={{ marginTop:14, padding:'12px 0', borderTop:`1px solid ${C.border}` }}>
+            <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:10 }}>Campos só de leitura</div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+              {[
+                ['Estado relacional', p.relationshipStatus],
+                ['Discrição',         p.discretionLevel],
+                ['Género',            p.gender],
+                ['Orientação',        p.orientation],
+                ['País',              p.country],
+                ['Fotos',             `${p.photos?.length || 0} fotos`],
+                ['Verificado',        p.user?.ageVerifiedAt ? '✅ Sim' : '❌ Não'],
+                ['Criado em',         new Date(p.createdAt).toLocaleDateString('pt')],
+              ].map(([label, value]) => value && (
+                <div key={label} style={{ background:C.elevated, borderRadius:8, padding:'8px 10px' }}>
+                  <div style={{ fontSize:10, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:2 }}>{label}</div>
+                  <div style={{ fontSize:12, color:C.text }}>{value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Intenções */}
+          {p.intentions?.length > 0 && (
+            <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${C.border}` }}>
+              <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:8 }}>Intenções</div>
+              <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+                {p.intentions.map(pi => (
+                  <span key={pi.intention?.id} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'3px 10px', fontSize:12, color:C.text2 }}>
+                    {pi.intention?.name || pi.intention?.slug}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
