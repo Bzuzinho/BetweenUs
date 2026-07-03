@@ -7,6 +7,7 @@ import ResetPasswordPage from './pages/ResetPasswordPage'
 import VerifyEmailPage from './pages/VerifyEmailPage'
 import CreateProfilePage from './pages/CreateProfilePage'
 import EditProfilePage from './pages/EditProfilePage'
+import AccountPage from './pages/AccountPage'
 import CouplePage, { CoupleInvitePage } from './pages/CouplePage'
 import PhotosPage from './pages/PhotosPage'
 import ContactsBlockPage from './pages/ContactsBlockPage'
@@ -18,7 +19,7 @@ import LegalPage from './pages/LegalPage'
 import AdminPage from './pages/AdminPage'
 import AppShell from './AppShell'
 
-const C = { bg:'#0A141A', primary:'#B8A7FF' }
+const C = { bg:'#0A141A' }
 
 const LoadingScreen = () => (
   <div style={{ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -87,6 +88,7 @@ export default function App() {
         <Route path="/admin/:tab" element={<AdminRoute><AdminPage /></AdminRoute>} />
 
         {/* Private */}
+        <Route path="/account"           element={<PrivateRoute requireProfile={false}><AccountPage /></PrivateRoute>} />
         <Route path="/create-profile"    element={<PrivateRoute requireProfile={false}><CreateProfilePage /></PrivateRoute>} />
         <Route path="/edit-profile"      element={<PrivateRoute><EditProfilePage /></PrivateRoute>} />
         <Route path="/couple"            element={<PrivateRoute><CouplePage /></PrivateRoute>} />
