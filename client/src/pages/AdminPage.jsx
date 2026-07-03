@@ -20,7 +20,7 @@ const INP = {
 
 /* ─── Role permissions ───────────────────────────────────────────────────────── */
 const ROLE_TABS = {
-  SUPER_ADMIN:      ['dashboard','reports','photos','profiles','users','verifications','conversations','audit','beta'],
+  SUPER_ADMIN:      ['dashboard','reports','photos','profiles','users','verifications','conversations','audit','beta','configuracoes'],
   ADMIN:            ['dashboard','reports','photos','profiles','users','verifications','conversations','audit','beta'],
   MODERATOR:        ['dashboard','reports','photos','profiles','conversations'],
   SUPPORT:          ['dashboard','users','reports'],
@@ -38,6 +38,7 @@ const ALL_TABS = [
   { key:'conversations', label:'Conversas',    icon:'◌',  desc:'Monitorização' },
   { key:'audit',         label:'Auditoria',    icon:'◑',  desc:'Histórico admin' },
   { key:'beta',          label:'Beta',         icon:'◇',  desc:'Convites' },
+  { key:'configuracoes', label:'Configurações', icon:'⚙',  desc:'Perfis e subscrições' },
 ]
 
 /* ─── Notification bell ──────────────────────────────────────────────────────── */
@@ -232,10 +233,7 @@ function AdminHeader({ user, onLogout }) {
         <div style={{ fontSize:11, color:C.primary, lineHeight:1.2 }}>{user?.adminRole}</div>
       </div>
 
-      {/* Bell */}
-      <NotificationBell />
 
-      {/* User avatar / menu */}
       <div ref={menuRef} style={{ position:'relative' }}>
         <div onClick={() => setShowMenu(o => !o)} style={{
           width:36, height:36, borderRadius:'50%',
@@ -1053,6 +1051,115 @@ function BetaTab() {
   )
 }
 
+
+/* ─── Configurações Tab (SUPER_ADMIN only) ───────────────────────────────────── */
+const ROLES_CONFIG = [
+  { value:'CONTENT_REVIEWER', label:'Revisor de conteúdo', desc:'Fotos e perfis', perms:['photos','profiles'] },
+  { value:'SUPPORT',          label:'Suporte',             desc:'Utilizadores e reports', perms:['users','reports'] },
+  { value:'MODERATOR',        label:'Moderador',           desc:'Perfis, fotos, conversas', perms:['profiles','photos','conversations'] },
+  { value:'FINANCE',          label:'Financeiro',          desc:'Subscrições e métricas', perms:['users'] },
+  { value:'ADMIN',            label:'Admin',               desc:'Tudo excepto roles', perms:['dashboard','reports','photos','profiles','users','verifications','conversations','audit','beta'] },
+  { value:'SUPER_ADMIN',      label:'Super Admin',         desc:'Acesso total incluindo roles e configurações', perms:['*'] },
+]
+
+function ConfiguracoesTab() {
+  const [subTab, setSubTab] = useState('perfis')
+  const [plans, setPlans] = useState([])
+  const [loadingPlans, setLoadingPlans] = useState(true)
+
+  useEffect(() => {
+    if (subTab === 'subscricoes') {
+      api.get('/admin/subscription-plans').then(r => setPlans(r.data.plans||[])).catch(()=>{}).finally(()=>setLoadingPlans(false))
+    }
+  }, [subTab])
+
+  return (
+    <div>
+      {/* Subtab bar */}
+      <div style={{ display:'flex', gap:6, marginBottom:20 }}>
+        {[['perfis','◎ Perfis'],['subscricoes','✦ Subscrições']].map(([k,l]) => (
+          <button key={k} onClick={()=>setSubTab(k)} style={{
+            background:subTab===k?C.primaryDim:C.surface,
+            border:`1.5px solid ${subTab===k?C.primary:C.border}`,
+            borderRadius:10, padding:'9px 18px',
+            color:subTab===k?C.primary:'#C8D4DC', fontSize:14,
+            cursor:'pointer', minHeight:40,
+          }}>{l}</button>
+        ))}
+      </div>
+
+      {/* ── Perfis subtab ── */}
+      {subTab==='perfis' && (
+        <div>
+          <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.2)`, borderRadius:12, padding:'12px 16px', marginBottom:20, fontSize:13, color:C.primary, lineHeight:1.5 }}>
+            Os perfis definem as permissões de cada tipo de utilizador no painel de administração.
+            Apenas o Super Admin pode atribuir ou remover roles.
+          </div>
+
+          {ROLES_CONFIG.map(role => (
+            <div key={role.value} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18, marginBottom:10 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
+                <div>
+                  <div style={{ fontSize:16, fontWeight:600, color:C.text, marginBottom:3 }}>{role.label}</div>
+                  <div style={{ fontSize:13, color:C.muted }}>{role.desc}</div>
+                </div>
+                <div style={{ fontSize:11, background:C.elevated, border:`1px solid ${C.border}`, borderRadius:8, padding:'4px 10px', color:C.text2, flexShrink:0, marginLeft:10 }}>
+                  {role.value}
+                </div>
+              </div>
+              <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>Permissões</div>
+              <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+                {role.perms[0]==='*' ? (
+                  <span style={{ background:'rgba(74,222,128,0.1)', border:`1px solid rgba(74,222,128,0.3)`, borderRadius:6, padding:'3px 10px', fontSize:12, color:C.success }}>★ Acesso total</span>
+                ) : role.perms.map(p => (
+                  <span key={p} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'3px 10px', fontSize:12, color:C.text2 }}>{p}</span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Subscrições subtab ── */}
+      {subTab==='subscricoes' && (
+        <div>
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:20, marginBottom:16 }}>
+            <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:12 }}>Criar produto premium</div>
+            <div style={{ fontSize:13, color:C.muted, lineHeight:1.6, marginBottom:12 }}>
+              Os produtos premium são geridos via Stripe Dashboard. Para criar ou editar um plano, acede ao painel Stripe e actualiza o STRIPE_PRICE_PREMIUM nas variáveis de ambiente do Railway.
+            </div>
+            <a href="https://dashboard.stripe.com/products" target="_blank" rel="noopener noreferrer"
+              style={{ display:'inline-block', background:C.primary, border:'none', borderRadius:50, padding:'10px 20px', fontSize:13, fontWeight:500, color:'#0A141A', textDecoration:'none', cursor:'pointer' }}>
+              Abrir Stripe Dashboard ↗
+            </a>
+          </div>
+
+          <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:10 }}>Planos actuais</div>
+          {[
+            { name:'Gratuito',      slug:'FREE',    price:'0€/mês',   features:['Criar perfil','Matches limitados','Chat básico'] },
+            { name:'Between Plus',  slug:'PREMIUM', price:'9.99€/mês',features:['Modo invisível','Travel Mode','Fotos privadas avançadas','Filtros premium','Bloquear contactos','Recibos discretos'] },
+          ].map(plan => (
+            <div key={plan.slug} style={{ background:C.surface, border:`1px solid ${plan.slug==='PREMIUM'?'rgba(184,167,255,0.3)':C.border}`, borderRadius:16, padding:18, marginBottom:10 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+                <div>
+                  <div style={{ fontSize:15, fontWeight:600, color:C.text }}>{plan.name}</div>
+                  <div style={{ fontSize:13, color:C.primary, marginTop:2 }}>{plan.price}</div>
+                </div>
+                <span style={{ fontSize:11, background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'3px 10px', color:C.text2 }}>{plan.slug}</span>
+              </div>
+              <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+                {plan.features.map(f => (
+                  <span key={f} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'3px 10px', fontSize:12, color:C.text2 }}>{f}</span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ─── Tab content map ────────────────────────────────────────────────────────── */
 const TAB_CONTENT = {
   dashboard:     ({ changeTab }) => <DashboardTab changeTab={changeTab}/>,
@@ -1064,6 +1171,7 @@ const TAB_CONTENT = {
   conversations: () => <ConversationsTab/>,
   audit:         () => <AuditTab/>,
   beta:          () => <BetaTab/>,
+  configuracoes: () => <ConfiguracoesTab/>,
 }
 
 /* ─── Main AdminPage ─────────────────────────────────────────────────────────── */
