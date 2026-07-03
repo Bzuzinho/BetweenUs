@@ -17,6 +17,7 @@ import PrivacySettingsPage from './pages/PrivacySettingsPage'
 import BetaJoinPage from './pages/BetaJoinPage'
 import LegalPage from './pages/LegalPage'
 import AdminPage from './pages/AdminPage'
+import OtpLoginPage from './pages/OtpLoginPage'
 import AppShell from './AppShell'
 
 const C = { bg:'#0A141A' }
@@ -80,6 +81,7 @@ export default function App() {
         <Route path="/verify-email"    element={<VerifyEmailPage />} />
         <Route path="/join"            element={<BetaJoinPage />} />
         <Route path="/join/:code"      element={<BetaJoinPage />} />
+        <Route path="/otp-login"         element={<OtpLoginPage />} />
         <Route path="/legal/:page"     element={<LegalPage />} />
         <Route path="/couple-invite/:token" element={<CoupleInvitePage />} />
 
