@@ -6,6 +6,7 @@ import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import ResetPasswordPage from './pages/ResetPasswordPage'
 import VerifyEmailPage from './pages/VerifyEmailPage'
 import CreateProfilePage from './pages/CreateProfilePage'
+import EditProfilePage from './pages/EditProfilePage'
 import CouplePage, { CoupleInvitePage } from './pages/CouplePage'
 import PhotosPage from './pages/PhotosPage'
 import ContactsBlockPage from './pages/ContactsBlockPage'
@@ -17,13 +18,14 @@ import LegalPage from './pages/LegalPage'
 import AdminPage from './pages/AdminPage'
 import AppShell from './AppShell'
 
-const C = { bg:'#0E0818', accent:'#C9956B', rose:'#F2C4B8' }
+const C = { bg:'#0A141A', primary:'#B8A7FF' }
 
 const LoadingScreen = () => (
   <div style={{ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center' }}>
-    <div style={{ fontFamily:"'Playfair Display',serif", fontSize:28, fontStyle:'italic', background:`linear-gradient(135deg,${C.accent},${C.rose})`, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>
-      Between Us
-    </div>
+    <svg width="56" height="28" viewBox="0 0 56 28">
+      <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" strokeWidth="3.5"/>
+      <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.75"/>
+    </svg>
   </div>
 )
 
@@ -69,37 +71,32 @@ export default function App() {
       <Routes>
         <Route path="/" element={<RootRedirect />} />
 
-        {/* Public auth routes */}
+        {/* Public */}
         <Route path="/login"           element={<PublicRoute><LoginPage /></PublicRoute>} />
         <Route path="/register"        element={<PublicRoute><RegisterPage /></PublicRoute>} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password"  element={<ResetPasswordPage />} />
         <Route path="/verify-email"    element={<VerifyEmailPage />} />
-
-        {/* Beta */}
-        <Route path="/join"      element={<BetaJoinPage />} />
-        <Route path="/join/:code" element={<BetaJoinPage />} />
-
-        {/* Legal — public */}
-        <Route path="/legal/:page" element={<LegalPage />} />
-
-        {/* Couple invite — public (needs auth check inside) */}
+        <Route path="/join"            element={<BetaJoinPage />} />
+        <Route path="/join/:code"      element={<BetaJoinPage />} />
+        <Route path="/legal/:page"     element={<LegalPage />} />
         <Route path="/couple-invite/:token" element={<CoupleInvitePage />} />
 
         {/* Admin */}
         <Route path="/admin"      element={<AdminRoute><AdminPage /></AdminRoute>} />
         <Route path="/admin/:tab" element={<AdminRoute><AdminPage /></AdminRoute>} />
 
-        {/* Private routes */}
-        <Route path="/create-profile"   element={<PrivateRoute requireProfile={false}><CreateProfilePage /></PrivateRoute>} />
-        <Route path="/couple"           element={<PrivateRoute><CouplePage /></PrivateRoute>} />
-        <Route path="/photos"           element={<PrivateRoute><PhotosPage /></PrivateRoute>} />
-        <Route path="/contacts/block"   element={<PrivateRoute><ContactsBlockPage /></PrivateRoute>} />
-        <Route path="/verify"           element={<PrivateRoute><VerificationPage /></PrivateRoute>} />
-        <Route path="/premium"          element={<PrivateRoute><PremiumPage /></PrivateRoute>} />
-        <Route path="/privacy-settings" element={<PrivateRoute><PrivacySettingsPage /></PrivateRoute>} />
+        {/* Private */}
+        <Route path="/create-profile"    element={<PrivateRoute requireProfile={false}><CreateProfilePage /></PrivateRoute>} />
+        <Route path="/edit-profile"      element={<PrivateRoute><EditProfilePage /></PrivateRoute>} />
+        <Route path="/couple"            element={<PrivateRoute><CouplePage /></PrivateRoute>} />
+        <Route path="/photos"            element={<PrivateRoute><PhotosPage /></PrivateRoute>} />
+        <Route path="/contacts/block"    element={<PrivateRoute><ContactsBlockPage /></PrivateRoute>} />
+        <Route path="/verify"            element={<PrivateRoute><VerificationPage /></PrivateRoute>} />
+        <Route path="/premium"           element={<PrivateRoute><PremiumPage /></PrivateRoute>} />
+        <Route path="/privacy-settings"  element={<PrivateRoute><PrivacySettingsPage /></PrivateRoute>} />
 
-        {/* Main app */}
+        {/* App shell */}
         <Route path="/explore" element={<PrivateRoute><AppShell screen="explore" /></PrivateRoute>} />
         <Route path="/matches"  element={<PrivateRoute><AppShell screen="matches" /></PrivateRoute>} />
         <Route path="/profile"  element={<PrivateRoute><AppShell screen="profile" /></PrivateRoute>} />
