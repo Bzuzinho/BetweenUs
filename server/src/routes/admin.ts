@@ -659,6 +659,36 @@ router.post('/users/:id/set-password', requireAdmin('users'), async (req: AuthRe
   }
 })
 
+
+// ─── POST /api/admin/test-email — send test email (SUPER_ADMIN only) ──────────
+router.post('/test-email', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  try {
+    if ((req as any).adminRole !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Apenas SUPER_ADMIN pode testar o email.' })
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: req.userId! } })
+    if (!user) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+    const to = req.body.to || user.email
+
+    const { sendVerificationEmail } = await import('../lib/email')
+    const { randomBytes } = await import('crypto')
+    const testToken = randomBytes(16).toString('hex')
+
+    await sendVerificationEmail(to, 'test-user-id', testToken)
+
+    res.json({ ok: true, message: `Email de teste enviado para ${to}` })
+  } catch (err: any) {
+    console.error('[TEST EMAIL]', err.message)
+    res.status(500).json({
+      error: 'Falha ao enviar email de teste',
+      detail: err.message,
+      hint: 'Verifica /health/email para diagnóstico da configuração SMTP'
+    })
+  }
+})
+
 export default router
 // ─── Notifications ────────────────────────────────────────────────────────────
 router.get('/notifications', requireAdmin(), async (req: AuthRequest, res: Response) => {
