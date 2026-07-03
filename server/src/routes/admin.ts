@@ -689,6 +689,46 @@ router.post('/test-email', requireAdmin(), async (req: AuthRequest, res: Respons
   }
 })
 
+
+// ─── GET /api/admin/email-config — SMTP diagnostic ────────────────────────────
+router.get('/email-config', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  const config = {
+    SMTP_HOST:  process.env.SMTP_HOST  || null,
+    SMTP_PORT:  process.env.SMTP_PORT  || '465',
+    SMTP_USER:  process.env.SMTP_USER  || 'resend',
+    SMTP_PASS:  process.env.SMTP_PASS  ? `set (${process.env.SMTP_PASS.slice(0,8)}…)` : null,
+    EMAIL_FROM: process.env.EMAIL_FROM || null,
+    CLIENT_URL: process.env.CLIENT_URL || null,
+    NODE_ENV:   process.env.NODE_ENV   || null,
+  }
+  const missing = Object.entries(config).filter(([k,v]) => !v && k !== 'NODE_ENV').map(([k]) => k)
+  if (missing.length > 0) {
+    return res.json({ status: 'misconfigured', missing, config,
+      fix: `No Railway: Service → Variables → adiciona: ${missing.join(', ')}` })
+  }
+  // Test connection
+  try {
+    const nodemailer = require('nodemailer')
+    const t = nodemailer.createTransport({
+      host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT || 465),
+      secure: Number(process.env.SMTP_PORT || 465) === 465,
+      auth: { user: process.env.SMTP_USER || 'resend', pass: process.env.SMTP_PASS },
+    })
+    await t.verify()
+    res.json({ status: 'ok', message: '✅ SMTP connection verified', config })
+  } catch (err: any) {
+    res.json({ status: 'error', message: err.message, config,
+      hints: [
+        'Confirma que SMTP_HOST=smtp.resend.com',
+        'Confirma que SMTP_PASS=re_XXXXX (API key do Resend)',
+        'Confirma que SMTP_PORT=465',
+        'Verifica em resend.com/api-keys se a chave ainda está activa',
+        'Verifica em resend.com/domains se o domínio está verificado'
+      ]
+    })
+  }
+})
+
 export default router
 // ─── Notifications ────────────────────────────────────────────────────────────
 router.get('/notifications', requireAdmin(), async (req: AuthRequest, res: Response) => {
