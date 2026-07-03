@@ -590,3 +590,112 @@ router.put('/users/:id/role', requireAdmin('users'), async (req: AuthRequest, re
 })
 
 export default router
+// ─── Notifications ────────────────────────────────────────────────────────────
+router.get('/notifications', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  const notifs = await (prisma as any).notification.findMany({
+    where: { userId: req.userId! },
+    orderBy: { createdAt: 'desc' },
+    take: 50
+  }).catch(() => [])
+  res.json({ notifications: notifs })
+})
+
+router.put('/notifications/:id/read', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  await (prisma as any).notification.updateMany({
+    where: { id: req.params.id, userId: req.userId! },
+    data: { readAt: new Date() }
+  }).catch(() => {})
+  res.json({ ok: true })
+})
+
+router.delete('/notifications/:id', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  await (prisma as any).notification.deleteMany({
+    where: { id: req.params.id, userId: req.userId! }
+  }).catch(() => {})
+  res.json({ ok: true })
+})
+
+router.delete('/notifications', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  await (prisma as any).notification.deleteMany({ where: { userId: req.userId! } }).catch(() => {})
+  res.json({ ok: true })
+})
+
+// ─── Service sessions ─────────────────────────────────────────────────────────
+router.post('/service/start', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  const user = await prisma.user.findUnique({ where: { id: req.userId! }, select: { adminRole: true } })
+  const role = user?.adminRole || 'MODERATOR'
+
+  // End any open session
+  const open = await (prisma as any).serviceSession.findFirst({
+    where: { userId: req.userId!, endedAt: null }
+  }).catch(() => null)
+  if (open) {
+    const dur = Math.round((Date.now() - new Date(open.startedAt).getTime()) / 60000)
+    await (prisma as any).serviceSession.update({
+      where: { id: open.id },
+      data: { endedAt: new Date(), durationMin: dur }
+    }).catch(() => {})
+  }
+
+  const session = await (prisma as any).serviceSession.create({
+    data: { userId: req.userId!, role }
+  }).catch(() => null)
+
+  // Notify all SUPER_ADMIN / ADMIN
+  await notifyAdmins(`${role} entrou ao serviço`, `${user?.adminRole} iniciou sessão de moderação`, req.userId!)
+
+  res.json({ ok: true, session })
+})
+
+router.post('/service/end', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  const { notes } = req.body
+  const open = await (prisma as any).serviceSession.findFirst({
+    where: { userId: req.userId!, endedAt: null }
+  }).catch(() => null)
+
+  if (!open) return res.status(404).json({ error: 'Sem sessão activa.' })
+
+  const dur = Math.round((Date.now() - new Date(open.startedAt).getTime()) / 60000)
+  const session = await (prisma as any).serviceSession.update({
+    where: { id: open.id },
+    data: { endedAt: new Date(), durationMin: dur, notes }
+  }).catch(() => null)
+
+  const user = await prisma.user.findUnique({ where: { id: req.userId! }, select: { adminRole: true } })
+  await notifyAdmins(`${user?.adminRole} saiu do serviço`, `Sessão de ${dur} minutos terminada`, req.userId!)
+
+  res.json({ ok: true, session })
+})
+
+router.get('/service/status', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  const open = await (prisma as any).serviceSession.findFirst({
+    where: { userId: req.userId!, endedAt: null }
+  }).catch(() => null)
+  res.json({ active: !!open, session: open })
+})
+
+router.get('/service/sessions', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  const { userId, limit = 30 } = req.query
+  const where: any = {}
+  if (userId) where.userId = userId
+  const sessions = await (prisma as any).serviceSession.findMany({
+    where, take: Number(limit),
+    orderBy: { startedAt: 'desc' }
+  }).catch(() => [])
+  res.json({ sessions })
+})
+
+// Helper: create notification for all admins
+async function notifyAdmins(title: string, body: string, excludeUserId?: string) {
+  const admins = await prisma.user.findMany({
+    where: { adminRole: { in: ['SUPER_ADMIN', 'ADMIN'] as any[] }, NOT: excludeUserId ? { id: excludeUserId } : undefined },
+    select: { id: true }
+  })
+  const notifs = admins.map(a => ({
+    userId: a.id, type: 'service_event', title, body,
+    data: JSON.stringify({ tab: 'audit' })
+  }))
+  if (notifs.length) {
+    await (prisma as any).notification.createMany({ data: notifs }).catch(() => {})
+  }
+}
