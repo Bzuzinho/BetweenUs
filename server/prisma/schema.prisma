@@ -665,3 +665,31 @@ model PhotoAccessRequest {
   @@unique([photoId, requesterId])
   @@map("photo_access_requests")
 }
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  type      String
+  title     String
+  body      String
+  data      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@map("notifications")
+}
+
+// ─── Service Sessions (Moderator / Support shift tracking) ────────────────────
+model ServiceSession {
+  id          String    @id @default(uuid())
+  userId      String
+  role        String
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  durationMin Int?
+  notes       String?
+  createdAt   DateTime  @default(now())
+
+  @@map("service_sessions")
+}
