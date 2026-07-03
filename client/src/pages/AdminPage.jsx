@@ -282,10 +282,10 @@ function TabBar({ tab, changeTab, allowedTabs }) {
   return (
     <div style={{
       display:'flex', overflowX:'auto', gap:4,
-      padding:'8px 12px', background:C.bg,
+      padding:'10px 16px', background:C.bg,
       borderBottom:`1px solid ${C.border}`,
       scrollbarWidth:'none', position:'sticky',
-      top:57, zIndex:40,
+      top:62, zIndex:40,
     }}>
       {tabs.map(t => {
         const active = tab === t.key
@@ -294,12 +294,12 @@ function TabBar({ tab, changeTab, allowedTabs }) {
             flexShrink:0, display:'flex', alignItems:'center', gap:5,
             background: active ? C.primaryDim : 'none',
             border:`1px solid ${active ? C.primary : 'transparent'}`,
-            borderRadius:8, padding:'6px 12px',
-            color: active ? C.primary : C.muted,
-            fontSize:12, fontWeight: active ? 500 : 400,
-            cursor:'pointer', whiteSpace:'nowrap', minHeight:32,
+            borderRadius:8, padding:'8px 14px',
+            color: active ? C.primary : '#C8D4DC',
+            fontSize:14, fontWeight: active ? 600 : 400,
+            cursor:'pointer', whiteSpace:'nowrap', minHeight:36,
           }}>
-            <span style={{ fontSize:13 }}>{t.icon}</span>
+            <span style={{ fontSize:15 }}>{t.icon}</span>
             {t.label}
           </button>
         )
@@ -439,22 +439,168 @@ function PhotosTab() {
 /* ─── Profiles ───────────────────────────────────────────────────────────────── */
 function ProfilesTab() {
   const [profiles, setProfiles] = useState([])
-  const load = useCallback(() => { api.get('/admin/profiles?status=PENDING_REVIEW').then(r => setProfiles(r.data.profiles||[])) }, [])
+  const [statusFilter, setStatusFilter] = useState('PENDING_REVIEW')
+  const [selected, setSelected] = useState(null)
+  const [modal, setModal] = useState(null)
+
+  const load = useCallback(() => {
+    api.get(`/admin/profiles?status=${statusFilter}`).then(r => setProfiles(r.data.profiles||[]))
+  }, [statusFilter])
+
   useEffect(() => { load() }, [load])
-  const mod = async (id, s) => { await api.put(`/admin/profiles/${id}/status`, { status:s, reason:'Admin review' }); setProfiles(p => p.filter(x => x.id !== id)) }
-  return (
-    <div>
-      {profiles.length===0 && <p style={{color:C.muted}}>Sem perfis pendentes.</p>}
-      {profiles.map(p => (
-        <div key={p.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:14, marginBottom:10 }}>
-          <div style={{ fontSize:15, fontWeight:500, color:C.text, marginBottom:3 }}>{p.displayName}</div>
-          <div style={{ color:C.muted, fontSize:12, marginBottom:10 }}>{p.user?.email} · {p.type}</div>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-            <button onClick={() => mod(p.id,'APPROVED')} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:10, padding:10, color:C.success, fontSize:13, minHeight:42, cursor:'pointer' }}>Aprovar</button>
-            <button onClick={() => mod(p.id,'REJECTED')} style={{ background:C.dangerDim, border:`1px solid ${C.danger}`, borderRadius:10, padding:10, color:C.danger, fontSize:13, minHeight:42, cursor:'pointer' }}>Rejeitar</button>
+
+  const mod = async (id, s, reason = 'Admin review') => {
+    await api.put(`/admin/profiles/${id}/status`, { status: s, reason })
+    setProfiles(p => p.filter(x => x.id !== id))
+    setSelected(null)
+    setModal(null)
+  }
+
+  if (selected) {
+    const p = selected
+    const photo = p.photos?.[0]
+    return (
+      <div style={{ maxWidth: 600 }}>
+        {modal === 'reject' && (
+          <ReasonModal title="Motivo de rejeição" onConfirm={r => mod(p.id, 'REJECTED', r)} onCancel={() => setModal(null)} />
+        )}
+        <button onClick={() => setSelected(null)} style={{ background:'none', border:'none', color:C.muted, fontSize:22, cursor:'pointer', marginBottom:16 }}>←</button>
+
+        {/* Profile card */}
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, overflow:'hidden', marginBottom:16 }}>
+          {/* Cover / primary photo */}
+          <div style={{ height:200, background:C.elevated, position:'relative', display:'flex', alignItems:'center', justifyContent:'center' }}>
+            {photo ? (
+              <img src={photo.storagePath} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
+            ) : (
+              <div style={{ fontSize:48, color:C.muted, opacity:0.4 }}>○</div>
+            )}
+            <div style={{ position:'absolute', top:12, right:12, background:'rgba(10,20,26,0.8)', borderRadius:8, padding:'3px 10px', fontSize:11, color:C.text2 }}>
+              {p.type}
+            </div>
+          </div>
+
+          {/* Info */}
+          <div style={{ padding:20 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:14 }}>
+              {/* Avatar */}
+              <div style={{ width:52, height:52, borderRadius:'50%', background:C.elevated, border:`1px solid ${C.border}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, color:C.text2, flexShrink:0 }}>
+                {photo ? (
+                  <img src={photo.storagePath} alt="" style={{ width:'100%', height:'100%', objectFit:'cover', borderRadius:'50%' }}/>
+                ) : (
+                  (p.displayName||'?')[0].toUpperCase()
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize:18, fontWeight:600, color:C.text }}>{p.displayName}</div>
+                <div style={{ fontSize:13, color:C.muted }}>{p.user?.email}</div>
+                <div style={{ fontSize:12, color:C.muted, marginTop:2 }}>{p.city||'—'} · criado {new Date(p.createdAt).toLocaleDateString('pt')}</div>
+              </div>
+            </div>
+
+            {p.bio && <p style={{ fontSize:14, color:C.text2, lineHeight:1.6, marginBottom:14, borderTop:`1px solid ${C.border}`, paddingTop:14 }}>{p.bio}</p>}
+
+            {/* Details grid */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, marginBottom:16 }}>
+              {[
+                ['Género', p.gender||'—'],
+                ['Orientação', p.orientation||'—'],
+                ['Estado', p.relationshipStatus||'—'],
+                ['Discrição', p.discretionLevel||'—'],
+                ['Fotos', `${p.photos?.length||0}`],
+                ['Status', p.status],
+              ].map(([label, value]) => (
+                <div key={label} style={{ background:C.elevated, borderRadius:10, padding:'10px 12px' }}>
+                  <div style={{ fontSize:10, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:3 }}>{label}</div>
+                  <div style={{ fontSize:13, color:C.text, fontWeight:500 }}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* All photos */}
+            {p.photos?.length > 0 && (
+              <div style={{ marginBottom:16 }}>
+                <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:8 }}>Fotos ({p.photos.length})</div>
+                <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                  {p.photos.map(ph => (
+                    <div key={ph.id} style={{ position:'relative' }}>
+                      <img src={ph.storagePath} alt="" style={{ width:80, height:80, objectFit:'cover', borderRadius:10, border:`1px solid ${C.border}` }}/>
+                      <div style={{ position:'absolute', bottom:3, left:3, background:'rgba(10,20,26,0.8)', borderRadius:4, padding:'1px 5px', fontSize:9, color:C.text2 }}>
+                        {ph.moderationStatus}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+              <button onClick={() => setModal('reject')} style={{ background:C.dangerDim, border:`1px solid ${C.danger}`, borderRadius:12, padding:13, color:C.danger, fontSize:14, fontWeight:500, cursor:'pointer', minHeight:48 }}>
+                Rejeitar
+              </button>
+              <button onClick={() => mod(p.id,'APPROVED')} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:12, padding:13, color:C.success, fontSize:14, fontWeight:600, cursor:'pointer', minHeight:48 }}>
+                ✓ Aprovar
+              </button>
+            </div>
           </div>
         </div>
-      ))}
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {/* Status filter */}
+      <div style={{ display:'flex', gap:6, marginBottom:16, flexWrap:'wrap' }}>
+        {['PENDING_REVIEW','APPROVED','REJECTED','DRAFT'].map(s => (
+          <button key={s} onClick={() => setStatusFilter(s)} style={{
+            background: statusFilter===s ? C.primaryDim : C.surface,
+            border:`1px solid ${statusFilter===s ? C.primary : C.border}`,
+            borderRadius:8, padding:'7px 14px', color:statusFilter===s ? C.primary : '#C8D4DC',
+            fontSize:13, cursor:'pointer', minHeight:36,
+          }}>{s}</button>
+        ))}
+      </div>
+
+      {profiles.length===0 && <p style={{color:C.muted}}>Sem perfis com este estado.</p>}
+
+      {/* Profile grid — desktop 2 cols */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))', gap:12 }}>
+        {profiles.map(p => {
+          const photo = p.photos?.[0]
+          return (
+            <div key={p.id} onClick={() => setSelected(p)} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, overflow:'hidden', cursor:'pointer' }}>
+              {/* Thumbnail */}
+              <div style={{ height:120, background:C.elevated, display:'flex', alignItems:'center', justifyContent:'center', position:'relative' }}>
+                {photo ? (
+                  <img src={photo.storagePath} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
+                ) : (
+                  <div style={{ fontSize:36, color:C.muted, opacity:0.3 }}>○</div>
+                )}
+                <div style={{ position:'absolute', top:8, right:8, background:'rgba(10,20,26,0.8)', borderRadius:6, padding:'2px 8px', fontSize:10, color:C.text2 }}>{p.type}</div>
+              </div>
+
+              {/* Info */}
+              <div style={{ padding:'12px 14px', display:'flex', alignItems:'center', gap:10 }}>
+                {/* Small avatar */}
+                <div style={{ width:36, height:36, borderRadius:'50%', background:C.elevated, border:`1px solid ${C.border}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, color:C.text2, flexShrink:0, overflow:'hidden' }}>
+                  {photo ? (
+                    <img src={photo.storagePath} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
+                  ) : (
+                    (p.displayName||'?')[0].toUpperCase()
+                  )}
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:14, fontWeight:500, color:C.text, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{p.displayName}</div>
+                  <div style={{ fontSize:11, color:C.muted }}>{p.user?.email}</div>
+                </div>
+                <span style={{ color:C.muted, fontSize:18 }}>›</span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -601,7 +747,7 @@ function UserDetail({ userId, onBack }) {
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16 }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
             <span style={{ fontSize:14, fontWeight:500, color:C.text2 }}>Conta</span>
-            <button onClick={() => setEditing('user')} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:8, padding:'5px 12px', color:C.text2, fontSize:12, cursor:'pointer', minHeight:32 }}>✏️ Editar</button>
+            <button onClick={() => setEditing('user')} style={{ background:C.primary, border:'none', borderRadius:8, padding:'6px 14px', color:'#0A141A', fontSize:12, fontWeight:600, cursor:'pointer', minHeight:32 }}>Guardar</button>
           </div>
           <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>EMAIL</label>
           <input style={INP} value={form.email} onChange={e => setForm(p => ({...p, email:e.target.value}))}/>
@@ -618,7 +764,7 @@ function UserDetail({ userId, onBack }) {
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16 }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
             <span style={{ fontSize:14, fontWeight:500, color:C.text2 }}>Perfil</span>
-            <button onClick={() => setEditing('profile')} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:8, padding:'5px 12px', color:C.text2, fontSize:12, cursor:'pointer', minHeight:32 }}>✏️ Editar</button>
+            <button onClick={() => setEditing('profile')} style={{ background:C.primary, border:'none', borderRadius:8, padding:'6px 14px', color:'#0A141A', fontSize:12, fontWeight:600, cursor:'pointer', minHeight:32 }}>Guardar</button>
           </div>
           {[['Nome',form.displayName,'displayName'],['Bio',form.bio,'bio'],['Cidade',form.city,'city']].map(([lbl,val,key]) => (
             <div key={key} style={{ marginBottom:8 }}>
@@ -941,7 +1087,7 @@ export default function AdminPage() {
   const Content = TAB_CONTENT[tab] || TAB_CONTENT['dashboard']
 
   return (
-    <div style={{ minHeight:'100vh', background:C.bg, maxWidth:960, margin:'0 auto' }}>
+    <div style={{ minHeight:'100vh', background:C.bg, width:'100%' }}>
       <AdminHeader user={user} onLogout={handleLogout}/>
       <ServiceStatus role={role}/>
       <TabBar tab={tab} changeTab={changeTab} allowedTabs={allowedTabs}/>
