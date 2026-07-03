@@ -58,9 +58,48 @@ app.use('/api/auth/register', strictLimiter)
 app.use('/api/auth/password', strictLimiter)
 
 app.get('/health', (_, res) => res.json({
-  status: 'ok', app: 'Between Us API', version: '2.5.0',
+  status: 'ok', app: 'Between Us API', version: '2.5.1',
   environment: process.env.NODE_ENV, timestamp: new Date().toISOString()
 }))
+
+// Email diagnostic endpoint — for debugging SMTP config
+app.get('/health/email', async (req, res) => {
+  const config = {
+    SMTP_HOST:  process.env.SMTP_HOST  || null,
+    SMTP_PORT:  process.env.SMTP_PORT  || '465',
+    SMTP_USER:  process.env.SMTP_USER  || 'resend',
+    SMTP_PASS:  process.env.SMTP_PASS  ? `set (${process.env.SMTP_PASS.slice(0,8)}…)` : null,
+    EMAIL_FROM: process.env.EMAIL_FROM || null,
+    CLIENT_URL: process.env.CLIENT_URL || null,
+  }
+
+  const missing = Object.entries(config).filter(([,v]) => !v).map(([k]) => k)
+
+  if (missing.length > 0) {
+    return res.json({
+      status: 'misconfigured',
+      missing,
+      config,
+      fix: 'Set missing variables in Railway → Service → Variables'
+    })
+  }
+
+  // Try to connect
+  try {
+    const nodemailer = require('nodemailer')
+    const t = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 465),
+      secure: Number(process.env.SMTP_PORT || 465) === 465,
+      auth: { user: process.env.SMTP_USER || 'resend', pass: process.env.SMTP_PASS },
+    })
+    await t.verify()
+    res.json({ status: 'ok', message: 'SMTP connection verified ✅', config })
+  } catch (err: any) {
+    res.json({ status: 'error', message: err.message, config,
+      hint: 'Check Resend dashboard → API Keys → SMTP credentials' })
+  }
+})
 
 import authRouter          from './routes/auth'
 import profileRouter       from './routes/profiles'
