@@ -1,53 +1,7 @@
 # Between Us — Estado Real do MVP
-> Última actualização: Julho 2026 — pós-roadmap v2 (rev. 4)
+> Última actualização: Julho 2026 — pós-roadmap v2 (rev. 5)
 > ⚠️ Documento interno. Actualizar sempre que uma funcionalidade muda.
-
----
-
-## Legenda
-- **DONE** — implementado, testado, sem riscos conhecidos activos
-- **PARTIAL** — existe mas com gaps conhecidos
-- **RISKY** — risco técnico, legal ou de segurança activo
-- **BLOCKER** — impede beta responsável
-- **NOT_STARTED** — não implementado
-
----
-
-| Módulo | Estado | O que funciona | O que falta | Próximo passo |
-|---|---|---|---|---|
-| Auth | DONE | Registo, login, refresh, logout, rate limit | — | — |
-| Email verification | DONE | Endpoints + Resend SMTP configurado, token Redis | Testar em prod | Enviar email de teste |
-| Password reset | DONE | forgot + reset com email real | — | — |
-| Age verification | DONE | Data nasc. ≥18; ageVerifiedAt preenchido após selfie aprovada | — | — |
-| Consentimento granular | DONE | termsAccepted + 3 opcionais; IP e userAgent guardados | Revogar consentimento individual | Endpoint FUTURE |
-| Perfis individuais | DONE | Criação, edição, intenções, discretion, city, coordenadas coarsened | — | — |
-| Perfis de casal | DONE | Convite, join, Double Consent, separação | — | — |
-| Discovery | DONE | Between Score, filtros, HMAC contact block, badges | — | — |
-| Between Score | DONE | Score ponderado + explicação visível | Pesos não calibrados com dados reais | Ajustar após beta |
-| Matching | DONE | Individual + couple, PENDING_COUPLE_APPROVAL | — | — |
-| Double Consent Match | DONE | Aprovação de ambos os parceiros | — | — |
-| Chat | DONE | Tempo real (Socket.io), membership validation, soft-delete | cron para expiresAt | Configurar Railway cron |
-| Private rooms | PARTIAL | UI: Modo Acordo + Safe Exit | Backend dedicado | Fase 2 |
-| Consent checks | DONE | 7 fases, membership, expiração | — | — |
-| Safety checkins | DONE | Criação, confirmação, cancelamento | Alerta automático se não confirmado | Fase 2 |
-| Reports | DONE | 14 categorias, prioridade auto, reincidência | — | — |
-| Admin panel | DONE | 9 tabs, RBAC 6 roles, audit log, customer support, histórico | — | — |
-| Photos | DONE | Upload, EXIF strip, blur, moderação, rate limit | URLs permanentes (não signed) | Fase 2 |
-| Soft Reveal | DONE | 4 níveis de visibilidade | — | — |
-| Contact blocking | DONE | HMAC-SHA256, sem fallback em prod, requer consentimento | — | — |
-| Privacy settings | DONE | Invisível (Premium gate), distância, notificações, foto requests | — | — |
-| Travel mode | DONE | Activar/desactivar, múltiplos destinos | Sem expiração automática | Fase 2 |
-| Subscriptions | DONE | Stripe checkout, cancel, providerCustomerId consistente | — | — |
-| Stripe webhooks | DONE | 4 eventos, assinatura verificada, secret obrigatório em prod | — | — |
-| GDPR export | DONE | GET /api/auth/export | Não inclui mensagens | Fase 2 |
-| GDPR account deletion | DONE | DELETE /api/auth/account, soft-delete, sessão revogada | Hard delete job 30d | Fase 2 |
-| Legal docs | PARTIAL | 11 templates criados | Revisão jurídica | Advogado antes de produção |
-| Tests | PARTIAL | 39+ testes, CI GitHub Actions | Testes email, Stripe prod | Sprint de testes |
-| Deploy/Railway | DONE | Frontend + Backend + PostgreSQL + Redis | ts-node em prod | Compilar com tsc em v1.0 |
-| Monitoring | NOT_STARTED | — | Sentry | Antes de v1.0 |
-| Jobs/cron | PARTIAL | cleanupExpiredMessages.ts criado | Não corre no Railway | Configurar cron |
-| Profile page | DONE | Status badges, email banner, quick links, RGPD links | — | — |
-| Password recovery | DONE | forgot + reset via Resend | — | — |
+> Regra: se a documentação e o código divergem, a documentação está errada.
 
 ---
 
@@ -57,17 +11,87 @@
 |---|---|---|
 | v0.1 Protótipo | ✅ DONE | |
 | v0.2 MVP técnico | ✅ DONE | |
-| v0.3 Beta privado | 🟡 98% | Falta: moderador humano activo, domínio próprio |
-| v1.0 Lançamento | 🔲 65% | Falta: landing, Sentry, Stripe live, legal review |
-| v1.5 Crescimento | 🔲 30% | Travel Mode feito, resto por fazer |
-| v2.0 App mobile | 🔲 0% | |
+| v0.3 Beta privado | 🟡 99% | Falta apenas moderador humano activo |
+| v1.0 Lançamento | 🔲 68% | Falta: landing, Sentry, Stripe live, revisão legal |
+| v1.5 Crescimento | 🔲 35% | Travel Mode feito; Private Room, eventos por fazer |
+| v2.0 App mobile | 🔲 0% | PWA activa em substituição |
 
 ---
 
-## Bloqueadores actuais
+## Módulos — estado actual
 
-| # | Bloqueador | Solução |
+| Módulo | Estado | O que funciona | O que falta |
+|---|---|---|---|
+| Auth | ✅ DONE | Registo, login, refresh, logout, rate limit | — |
+| Email verification | ✅ DONE | Endpoints + Resend SMTP, token Redis | Testar fluxo em prod |
+| Password reset | ✅ DONE | forgot + reset com email real | — |
+| Age verification | ✅ DONE | Data nasc. ≥18; ageVerifiedAt preenchido após selfie | — |
+| Consentimento | ✅ DONE | termsAccepted + opcionais; IP/userAgent gravados | Endpoint revogação individual |
+| Perfis individuais | ✅ DONE | Criação, edição dedicada (/edit-profile), intenções, discretion | — |
+| Editar perfil | ✅ DONE | EditProfilePage + PUT /profiles/me separados do create | — |
+| Perfis de casal | ✅ DONE | Convite, join, Double Consent, separação | — |
+| Discovery | ✅ DONE | Between Score, filtros, HMAC contact block, badges | — |
+| Between Score | ✅ DONE | Score ponderado + explicação visível | Pesos por calibrar com dados reais |
+| Matching | ✅ DONE | Individual + couple, PENDING_COUPLE_APPROVAL | — |
+| Double Consent Match | ✅ DONE | Aprovação de ambos os parceiros | — |
+| Chat | ✅ DONE | Tempo real (Socket.io), membership validation | cron para expiresAt |
+| Consent checks | ✅ DONE | 7 fases, membership, expiração | — |
+| Safety checkins | ✅ DONE | Criação, confirmação, cancelamento | Alertas automáticos (Fase 2) |
+| Reports | ✅ DONE | 14 categorias, prioridade auto, reincidência | — |
+| Admin panel | ✅ DONE | Header user+sino+menu, tabs compactas, RBAC, audit, histórico | — |
+| Service sessions | ✅ DONE | Moderador/Suporte entra/sai ao serviço, notifica admins | — |
+| Notificações admin | ✅ DONE | Bell com badge, CRUD, limpar tudo | Push nativas (Fase 2) |
+| Gestão de roles | ✅ DONE | SUPER_ADMIN cria utilizadores e atribui roles | — |
+| Customer support | ✅ DONE | Editar utilizador/perfil com motivo + histórico completo | — |
+| Photos | ✅ DONE | Upload, EXIF strip, blur, moderação, rate limit | Signed URLs (Fase 2) |
+| Soft Reveal | ✅ DONE | 4 níveis de visibilidade | — |
+| Contact blocking | ✅ DONE | HMAC-SHA256, sem fallback em prod, requer consentimento | — |
+| Privacy settings | ✅ DONE | Invisível (Premium gate), distância, notificações | — |
+| Travel mode | ✅ DONE | Activar/desactivar, múltiplos destinos | Expiração automática |
+| Subscriptions | ✅ DONE | Stripe checkout, cancel, campos consistentes | — |
+| Stripe webhooks | ✅ DONE | 4 eventos, assinatura verificada | — |
+| GDPR export | ✅ DONE | GET /api/auth/export | Matches/mensagens (Fase 2) |
+| GDPR delete | ✅ DONE | DELETE /api/auth/account, soft-delete, sessão revogada | Hard delete job 30d |
+| Design v3 | ✅ DONE | Option 3 palette (dark teal + lavender) em todas as páginas | — |
+| Legal docs | 🟡 PARTIAL | 11 templates criados | Revisão jurídica |
+| Tests | 🟡 PARTIAL | 39+ testes, CI GitHub Actions | Testes email verify, Stripe prod |
+| Deploy/Railway | ✅ DONE | Frontend + Backend + PostgreSQL + Redis | ts-node (melhorar em v1.0) |
+| Monitoring | ❌ NOT_STARTED | — | Sentry antes de v1.0 |
+| Landing page | ❌ NOT_STARTED | — | Necessário para v1.0 |
+| Hard delete job | ❌ NOT_STARTED | Soft-delete existe | Job 30 dias |
+
+---
+
+## Bloqueadores actuais para beta privado
+
+| # | Bloqueador | Acção necessária |
 |---|---|---|
-| 1 | Moderador humano activo | Designar alguém para rever fotos e reports |
-| 2 | Domínio próprio | DNS no Railway — 10 minutos |
-| 3 | Revisão jurídica | Advogado antes de qualquer lançamento público |
+| 1 | **Moderador humano activo** | Designar — o SUPER_ADMIN pode ser ele próprio |
+| 2 | **Revisão legal** (para produção) | Advogado antes de lançamento público |
+
+**Nota:** o SUPER_ADMIN pode desempenhar o papel de moderador usando o painel admin. O sistema de service sessions regista a entrada/saída ao serviço e notifica outros admins. Não há bloqueador técnico para beta privado.
+
+---
+
+## Sprints completos (do roadmap v2)
+
+| Sprint | Descrição | Estado |
+|---|---|---|
+| 1 | Setup, auth, CI/CD | ✅ |
+| 2 | Perfis, intenções, limites, fotos | ✅ |
+| 3 | Discovery, filtros, between score | ✅ |
+| 4 | Matching, double consent | ✅ |
+| 5 | Chat, denúncias, bloqueios | ✅ |
+| 6 | Privacidade, moderação, admin | ✅ |
+| 7 | Stripe, subscrições | ✅ |
+| 8 | Beta fechado, convites, service sessions | ✅ |
+
+---
+
+## Alterações desta sessão (rev. 5)
+
+- **Fix crítico:** botão "Editar perfil" apontava para `/create-profile` → novo `/edit-profile` com `EditProfilePage` dedicada e `PUT /profiles/me` no backend
+- **Admin redesign completo:** header com utilizador + sino de notificações + menu; tabs compactas horizontais sem scroll em grid; StatCards clicáveis que navegam para tab certa; modo serviço para Moderador/Suporte; auditoria com sessões de serviço
+- **Notificações admin:** bell com badge, CRUD, auto-reload 30s
+- **Service sessions:** Moderador/Suporte entra/sai ao serviço → notifica admins → registo de duração em auditoria
+- **Schema:** Notification + ServiceSession models adicionados
