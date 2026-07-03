@@ -46,7 +46,7 @@ export default function VerifyEmailPage() {
     if (!email) return
     setResending(true)
     try {
-      await api.post('/auth/email/verify', { email })
+      await api.post('/auth/email/verify', { email }).then(r => { if (r.data.devUrl) { console.log('[DEV] Verify URL:', r.data.devUrl); setMsg(r.data.devUrl) } return r })
       setMsg('Email reenviado. Verifica a tua caixa de entrada.')
       setStatus('resend_sent')
     } catch (err) {
