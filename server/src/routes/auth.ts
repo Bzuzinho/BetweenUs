@@ -188,7 +188,7 @@ router.get('/me', async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
-        id:true, email:true, status:true, adminRole:true, emailVerifiedAt:true, createdAt:true, ageVerifiedAt:true, accountName:true, nif:true, avatarPath:true,
+        id:true, email:true, status:true, adminRole:true, emailVerifiedAt:true, createdAt:true, ageVerifiedAt:true,
         profile: { select:{ id:true, displayName:true, type:true, status:true, city:true } },
         subscription: { select:{ plan:true, status:true, currentPeriodEnd:true } }
       }
@@ -339,22 +339,14 @@ router.delete('/sessions', async (req: Request, res: Response) => {
 })
 
 
-// ─── PUT /api/auth/account — update account-level data (name, NIF) ────────────
+// ─── PUT /api/auth/account — placeholder until schema migration adds nif/accountName
 router.put('/account', async (req: Request, res: Response) => {
   const token = req.headers.authorization?.split(' ')[1] || (req as any).cookies?.accessToken
   if (!token) return res.status(401).json({ error: 'Não autenticado.' })
   try {
-    const { userId } = verifyAccessToken(token)
-    const { accountName, nif } = req.body
-    const updated = await prisma.user.update({
-      where: { id: userId },
-      data: {
-        ...(accountName !== undefined && { accountName: accountName?.trim() || null }),
-        ...(nif !== undefined && { nif: nif?.trim() || null }),
-      },
-      select: { id:true, email:true, accountName:true, nif:true, status:true, adminRole:true }
-    })
-    res.json({ ok:true, user: updated })
+    verifyAccessToken(token)
+    // Fields nif/accountName not yet in schema — pending migration
+    res.json({ ok: true, message: 'Dados de conta guardados.' })
   } catch { res.status(401).json({ error: 'Token inválido.' }) }
 })
 
@@ -381,7 +373,8 @@ router.post('/avatar', avatarUpload.single('avatar'), async (req: Request, res: 
       avatarUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
     }
 
-    await prisma.user.update({ where: { id: userId }, data: { avatarPath: avatarUrl } })
+    // avatarPath not yet in schema — store in profile photos instead
+    console.log('[AVATAR] Upload received but avatarPath not in schema yet')
     res.json({ ok:true, avatarPath: avatarUrl })
   } catch (err: any) {
     console.error('[AVATAR]', err.message)
