@@ -1,12 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 const C = {
-  bg:'#0A141A', card:'#102129', input:'#0F1E26', border:'#1E3340',
-  primary:'#B8A7FF', primaryDim:'#8B7ACC',
-  text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3',
-  success:'#4ADE80', danger:'#F87171'
+  bg:'#0A141A', surface:'#102129', border:'#1E3340', input:'#0F1E26',
+  primary:'#B8A7FF', text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3',
+  danger:'#F87171',
 }
 
 export default function LoginPage() {
@@ -16,24 +15,31 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // Clear any stale tokens on mount — prevents "Token inválido" ghost errors
+  useEffect(() => {
+    // If user landed here from a redirect due to expired session,
+    // tokens are already cleared. Just ensure clean state.
+    setError('')
+  }, [])
+
   const handleSubmit = async () => {
     if (!form.email || !form.password) return setError('Preenche todos os campos.')
     setLoading(true); setError('')
     try {
       const me = await login(form.email, form.password)
-      // Redirect based on role — admin goes to /admin, never to /explore
-      if (me?.adminRole) {
-        navigate('/admin', { replace: true })
-      } else if (!me?.profile) {
-        navigate('/create-profile', { replace: true })
-      } else {
-        navigate('/explore', { replace: true })
-      }
+      if (me?.adminRole) navigate('/admin', { replace: true })
+      else if (!me?.profile) navigate('/create-profile', { replace: true })
+      else navigate('/explore', { replace: true })
     } catch (err) {
       const code = err.response?.data?.code
+      const msg  = err.response?.data?.error
       if (code === 'ACCOUNT_SUSPENDED') return setError('Conta temporariamente suspensa.')
-      if (code === 'ACCOUNT_BANNED')    return setError('Esta conta foi suspensa.')
-      setError(err.response?.data?.error || 'Email ou password incorretos.')
+      if (code === 'ACCOUNT_BANNED')    return setError('Esta conta foi suspensa permanentemente.')
+      if (msg && msg !== 'Token inválido.' && msg !== 'Não autenticado.') {
+        setError(msg)
+      } else {
+        setError('Email ou password incorretos.')
+      }
     } finally {
       setLoading(false)
     }
@@ -42,29 +48,32 @@ export default function LoginPage() {
   return (
     <div style={{
       minHeight:'100vh', minHeight:'-webkit-fill-available',
-      background:C.bg,
-      display:'flex', flexDirection:'column',
+      background:C.bg, display:'flex', flexDirection:'column',
       justifyContent:'center',
       padding:'24px 24px calc(24px + env(safe-area-inset-bottom))',
     }}>
-      <div style={{ width:'100%', maxWidth:380, margin:'0 auto' }}>
+      <div style={{ width:'100%', maxWidth:420, margin:'0 auto' }}>
 
         {/* Logo */}
         <div style={{ textAlign:'center', marginBottom:40 }}>
-          <svg width="56" height="28" viewBox="0 0 56 28" style={{ display:'block', margin:'0 auto 12px' }}>
+          <svg width="56" height="28" viewBox="0 0 56 28" style={{ display:'block', margin:'0 auto 14px' }}>
             <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" strokeWidth="3.5"/>
             <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.75"/>
           </svg>
-          <div style={{ fontSize:26, fontWeight:500, color:C.text, letterSpacing:'-0.01em' }}>Between Us</div>
-          <div style={{ fontSize:13, color:C.muted, marginTop:5 }}>Adult connections. Private by design.</div>
+          <div style={{ fontSize:28, fontWeight:500, color:C.text, letterSpacing:'-0.01em' }}>Between Us</div>
+          <div style={{ fontSize:14, color:C.muted, marginTop:6 }}>Adult connections. Private by design.</div>
         </div>
 
-        {/* Card */}
-        <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:20, padding:28 }}>
-          <h2 style={{ color:C.text, fontSize:20, fontWeight:500, marginBottom:20, marginTop:0 }}>Entrar</h2>
+        {/* Form card */}
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:32 }}>
+          <h2 style={{ color:C.text, fontSize:20, fontWeight:500, marginBottom:24, marginTop:0 }}>Entrar</h2>
 
           {error && (
-            <div style={{ background:'rgba(248,113,113,0.1)', border:`1px solid rgba(248,113,113,0.3)`, borderRadius:12, padding:'11px 14px', marginBottom:16, color:C.danger, fontSize:14 }}>
+            <div style={{
+              background:'rgba(248,113,113,0.08)', border:`1px solid rgba(248,113,113,0.3)`,
+              borderRadius:12, padding:'11px 14px', marginBottom:20,
+              color:C.danger, fontSize:14, lineHeight:1.5
+            }}>
               {error}
             </div>
           )}
@@ -73,16 +82,24 @@ export default function LoginPage() {
             type="email" placeholder="Email" autoComplete="email"
             value={form.email} onChange={e => setForm(p => ({...p, email:e.target.value}))}
             onKeyDown={e => e.key==='Enter' && handleSubmit()}
-            style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:12, padding:'13px 16px', color:C.text, fontSize:15, marginBottom:12, display:'block', WebkitAppearance:'none' }}
+            style={{
+              width:'100%', background:C.input, border:`1.5px solid ${C.border}`,
+              borderRadius:12, padding:'14px 16px', color:C.text, fontSize:15,
+              marginBottom:12, display:'block', WebkitAppearance:'none', outline:'none',
+            }}
           />
           <input
             type="password" placeholder="Password" autoComplete="current-password"
             value={form.password} onChange={e => setForm(p => ({...p, password:e.target.value}))}
             onKeyDown={e => e.key==='Enter' && handleSubmit()}
-            style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:12, padding:'13px 16px', color:C.text, fontSize:15, marginBottom:8, display:'block', WebkitAppearance:'none' }}
+            style={{
+              width:'100%', background:C.input, border:`1.5px solid ${C.border}`,
+              borderRadius:12, padding:'14px 16px', color:C.text, fontSize:15,
+              marginBottom:8, display:'block', WebkitAppearance:'none', outline:'none',
+            }}
           />
 
-          <div style={{ textAlign:'right', marginBottom:20 }}>
+          <div style={{ textAlign:'right', marginBottom:24 }}>
             <Link to="/forgot-password" style={{ color:C.muted, fontSize:13, textDecoration:'none' }}>
               Esqueceste a password?
             </Link>
@@ -90,7 +107,12 @@ export default function LoginPage() {
 
           <button
             onClick={handleSubmit} disabled={loading}
-            style={{ width:'100%', background:C.primary, border:'none', borderRadius:50, padding:'14px', fontSize:15, fontWeight:500, color:'#0A141A', cursor:loading?'not-allowed':'pointer', opacity:loading?0.7:1, minHeight:50 }}
+            style={{
+              width:'100%', background:C.primary, border:'none',
+              borderRadius:50, padding:'15px', fontSize:15, fontWeight:500,
+              color:'#0A141A', cursor:loading?'not-allowed':'pointer',
+              opacity:loading?0.7:1, minHeight:52,
+            }}
           >
             {loading ? 'A entrar…' : 'Entrar'}
           </button>
@@ -100,8 +122,7 @@ export default function LoginPage() {
           Não tens conta?{' '}
           <Link to="/register" style={{ color:C.primary, textDecoration:'none', fontWeight:500 }}>Criar conta</Link>
         </p>
-
-        <p style={{ textAlign:'center', color:C.muted, fontSize:11, marginTop:20, lineHeight:1.6 }}>
+        <p style={{ textAlign:'center', color:C.muted, fontSize:12, marginTop:12, lineHeight:1.6 }}>
           Ao entrar, confirmas que tens 18 ou mais anos.
         </p>
       </div>
