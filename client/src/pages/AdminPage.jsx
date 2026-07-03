@@ -1116,6 +1116,140 @@ function BetaTab() {
 }
 
 
+
+/* ─── Email Diagnostic Panel ─────────────────────────────────────────────────── */
+function EmailDiagnosticPanel() {
+  const [diag, setDiag] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [testTo, setTestTo] = useState('')
+  const [testMsg, setTestMsg] = useState('')
+  const [testErr, setTestErr] = useState('')
+  const [otpEmail, setOtpEmail] = useState('')
+  const [otpUrl, setOtpUrl] = useState('')
+
+  const runDiag = async () => {
+    setLoading(true)
+    try {
+      const r = await api.get('/admin/email-config')
+      setDiag(r.data)
+    } catch { setDiag({ status: 'error', message: 'Não foi possível obter diagnóstico.' }) }
+    finally { setLoading(false) }
+  }
+
+  const sendTest = async () => {
+    setTestMsg(''); setTestErr('')
+    try {
+      await api.post('/admin/test-email', { to: testTo })
+      setTestMsg(`Email enviado para ${testTo}`)
+    } catch (e) { setTestErr(e.response?.data?.detail || e.response?.data?.error || 'Erro') }
+  }
+
+  const genOtp = async () => {
+    try {
+      const r = await api.post('/auth/otp', { targetEmail: otpEmail })
+      setOtpUrl(r.data.loginUrl)
+    } catch (e) { setTestErr(e.response?.data?.error || 'Erro ao gerar OTP') }
+  }
+
+  useEffect(() => { runDiag() }, [])
+
+  return (
+    <div>
+      {/* SMTP Status */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18, marginBottom:14 }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+          <div style={{ fontSize:14, fontWeight:500, color:C.text }}>Configuração SMTP</div>
+          <button onClick={runDiag} disabled={loading} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:8, padding:'5px 12px', color:C.text2, fontSize:12, cursor:'pointer' }}>
+            {loading ? '…' : '↻ Testar'}
+          </button>
+        </div>
+
+        {diag && (
+          <>
+            <div style={{ display:'inline-block', borderRadius:6, padding:'3px 10px', fontSize:12, fontWeight:500, marginBottom:12,
+              background: diag.status==='ok' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
+              color: diag.status==='ok' ? C.success : C.danger,
+              border: `1px solid ${diag.status==='ok' ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`,
+            }}>
+              {diag.status==='ok' ? '✅ SMTP ligado' : diag.status==='misconfigured' ? '⚠️ Não configurado' : '❌ Erro de ligação'}
+            </div>
+
+            {diag.message && diag.status !== 'ok' && (
+              <div style={{ fontSize:12, color:C.danger, marginBottom:10, fontFamily:'monospace', background:C.elevated, borderRadius:8, padding:'8px 10px' }}>
+                {diag.message}
+              </div>
+            )}
+
+            {diag.missing?.length > 0 && (
+              <div style={{ marginBottom:10 }}>
+                <div style={{ fontSize:11, color:C.danger, marginBottom:6, textTransform:'uppercase', letterSpacing:'0.05em' }}>Variáveis em falta no Railway:</div>
+                {diag.missing.map(k => (
+                  <div key={k} style={{ fontFamily:'monospace', fontSize:12, color:C.danger, background:'rgba(248,113,113,0.05)', padding:'3px 8px', borderRadius:4, marginBottom:3 }}>{k}</div>
+                ))}
+              </div>
+            )}
+
+            {diag.hints && (
+              <div>
+                <div style={{ fontSize:11, color:C.muted, marginBottom:6, textTransform:'uppercase', letterSpacing:'0.05em' }}>Sugestões:</div>
+                {diag.hints.map((h,i) => (
+                  <div key={i} style={{ fontSize:12, color:C.text2, marginBottom:3 }}>• {h}</div>
+                ))}
+              </div>
+            )}
+
+            {diag.config && (
+              <div style={{ marginTop:10 }}>
+                <div style={{ fontSize:11, color:C.muted, marginBottom:6, textTransform:'uppercase', letterSpacing:'0.05em' }}>Valores actuais:</div>
+                {Object.entries(diag.config).map(([k,v]) => (
+                  <div key={k} style={{ display:'flex', gap:8, fontSize:12, marginBottom:2 }}>
+                    <span style={{ color:C.muted, minWidth:120, fontFamily:'monospace' }}>{k}</span>
+                    <span style={{ color: v ? C.text2 : C.danger, fontFamily:'monospace' }}>{v || '(não definido)'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Test email */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18, marginBottom:14 }}>
+        <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:12 }}>Enviar email de teste</div>
+        {testMsg && <div style={{ color:C.success, fontSize:13, marginBottom:8 }}>{testMsg}</div>}
+        {testErr && <div style={{ color:C.danger, fontSize:12, fontFamily:'monospace', marginBottom:8, background:C.elevated, borderRadius:8, padding:'8px 10px' }}>{testErr}</div>}
+        <div style={{ display:'flex', gap:8 }}>
+          <input value={testTo} onChange={e=>setTestTo(e.target.value)} placeholder="email@destino.com" style={{ ...INP, marginBottom:0, flex:1 }}/>
+          <button onClick={sendTest} disabled={!testTo} style={{ background:C.primary, border:'none', borderRadius:10, padding:'0 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer', flexShrink:0 }}>Enviar</button>
+        </div>
+      </div>
+
+      {/* OTP login (emergency) */}
+      <div style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:16, padding:18 }}>
+        <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:4 }}>Login de emergência (OTP)</div>
+        <div style={{ fontSize:12, color:C.muted, marginBottom:12, lineHeight:1.5 }}>
+          Gera um link de login único (15 min) para um utilizador sem precisar de email.
+          Útil quando o SMTP não está configurado.
+        </div>
+        <div style={{ display:'flex', gap:8 }}>
+          <input value={otpEmail} onChange={e=>setOtpEmail(e.target.value)} placeholder="email do utilizador" style={{ ...INP, marginBottom:0, flex:1 }}/>
+          <button onClick={genOtp} disabled={!otpEmail} style={{ background:C.elevated, border:`1px solid ${C.primary}`, borderRadius:10, padding:'0 14px', color:C.primary, fontWeight:600, fontSize:13, cursor:'pointer', flexShrink:0 }}>Gerar</button>
+        </div>
+        {otpUrl && (
+          <div style={{ marginTop:12 }}>
+            <div style={{ fontSize:11, color:C.muted, marginBottom:4 }}>Link de login (1 uso · 15 min):</div>
+            <div style={{ background:C.bg, borderRadius:8, padding:'10px 12px', fontSize:11, color:C.primary, fontFamily:'monospace', wordBreak:'break-all', marginBottom:6 }}>{otpUrl}</div>
+            <button onClick={() => navigator.clipboard.writeText(otpUrl)}
+              style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.muted, fontSize:12, cursor:'pointer' }}>
+              Copiar link
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /* ─── Configurações Tab (SUPER_ADMIN only) ───────────────────────────────────── */
 const ROLES_CONFIG = [
   { value:'CONTENT_REVIEWER', label:'Revisor de conteúdo', desc:'Fotos e perfis', perms:['photos','profiles'] },
@@ -1141,7 +1275,7 @@ function ConfiguracoesTab() {
     <div>
       {/* Subtab bar */}
       <div style={{ display:'flex', gap:6, marginBottom:20 }}>
-        {[['perfis','◎ Perfis'],['subscricoes','✦ Subscrições']].map(([k,l]) => (
+        {[['perfis','◎ Perfis'],['subscricoes','✦ Subscrições'],['email','✉ Email']].map(([k,l]) => (
           <button key={k} onClick={()=>setSubTab(k)} style={{
             background:subTab===k?C.primaryDim:C.surface,
             border:`1.5px solid ${subTab===k?C.primary:C.border}`,
@@ -1183,6 +1317,9 @@ function ConfiguracoesTab() {
           ))}
         </div>
       )}
+
+      {/* ── Email subtab ── */}
+      {subTab==='email' && <EmailDiagnosticPanel />}
 
       {/* ── Subscrições subtab ── */}
       {subTab==='subscricoes' && (
