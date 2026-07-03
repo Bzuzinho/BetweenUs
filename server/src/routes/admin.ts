@@ -676,9 +676,17 @@ router.post('/test-email', requireAdmin(), async (req: AuthRequest, res: Respons
     const { randomBytes } = await import('crypto')
     const testToken = randomBytes(16).toString('hex')
 
-    await sendVerificationEmail(to, 'test-user-id', testToken)
-
-    res.json({ ok: true, message: `Email de teste enviado para ${to}` })
+    try {
+      await sendVerificationEmail(to, 'test-user-id', testToken)
+      res.json({ ok: true, message: `Email enviado para ${to}` })
+    } catch (err: any) {
+      res.status(500).json({
+        error: 'Falha ao enviar email',
+        detail: err.message,
+        code: err.code,
+        hint: 'Verifica Configurações → Email para diagnóstico completo'
+      })
+    }
   } catch (err: any) {
     console.error('[TEST EMAIL]', err.message)
     res.status(500).json({
@@ -692,37 +700,44 @@ router.post('/test-email', requireAdmin(), async (req: AuthRequest, res: Respons
 
 // ─── GET /api/admin/email-config — SMTP diagnostic ────────────────────────────
 router.get('/email-config', requireAdmin(), async (req: AuthRequest, res: Response) => {
-  const config = {
-    SMTP_HOST:  process.env.SMTP_HOST  || null,
-    SMTP_PORT:  process.env.SMTP_PORT  || '465',
-    SMTP_USER:  process.env.SMTP_USER  || 'resend',
-    SMTP_PASS:  process.env.SMTP_PASS  ? `set (${process.env.SMTP_PASS.slice(0,8)}…)` : null,
-    EMAIL_FROM: process.env.EMAIL_FROM || null,
-    CLIENT_URL: process.env.CLIENT_URL || null,
-    NODE_ENV:   process.env.NODE_ENV   || null,
+  const { getEmailConfig } = await import('../lib/email')
+  const config = getEmailConfig()
+  const missing = Object.entries(config)
+    .filter(([k,v]) => !v && !['SMTP_PORT','SMTP_USER','configured'].includes(k))
+    .map(([k]) => k)
+
+  if (!config.configured) {
+    return res.json({
+      status: 'misconfigured', missing, config,
+      fix: 'No Railway → fearless-stillness → Variables, define: SMTP_HOST=smtp.resend.com, SMTP_PORT=465, SMTP_USER=resend, SMTP_PASS=re_XXXXX, EMAIL_FROM=Between Us <noreply@seudominio.com>'
+    })
   }
-  const missing = Object.entries(config).filter(([k,v]) => !v && k !== 'NODE_ENV').map(([k]) => k)
-  if (missing.length > 0) {
-    return res.json({ status: 'misconfigured', missing, config,
-      fix: `No Railway: Service → Variables → adiciona: ${missing.join(', ')}` })
-  }
-  // Test connection
+
+  // Test actual send connection
   try {
     const nodemailer = require('nodemailer')
     const t = nodemailer.createTransport({
-      host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT || 465),
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 465),
       secure: Number(process.env.SMTP_PORT || 465) === 465,
       auth: { user: process.env.SMTP_USER || 'resend', pass: process.env.SMTP_PASS },
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 8000,
     })
     await t.verify()
-    res.json({ status: 'ok', message: '✅ SMTP connection verified', config })
+    res.json({ status: 'ok', message: '✅ SMTP ligado e pronto', config })
   } catch (err: any) {
-    res.json({ status: 'error', message: err.message, config,
+    res.json({
+      status: 'error',
+      message: err.message,
+      code: err.code,
+      config,
       hints: [
-        'Confirma que SMTP_HOST=smtp.resend.com',
-        'Confirma que SMTP_PASS=re_XXXXX (API key do Resend)',
-        'Confirma que SMTP_PORT=465',
-        'Verifica em resend.com/api-keys se a chave ainda está activa',
+        'SMTP_HOST deve ser smtp.resend.com',
+        'SMTP_PASS deve ser a API key do Resend (começa com re_)',
+        'SMTP_PORT deve ser 465',
+        'EMAIL_FROM deve usar domínio verificado no Resend (ou onboarding@resend.dev para testes)',
+        'Verifica em resend.com/api-keys se a chave está activa',
         'Verifica em resend.com/domains se o domínio está verificado'
       ]
     })
