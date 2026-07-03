@@ -589,6 +589,76 @@ router.put('/users/:id/role', requireAdmin('users'), async (req: AuthRequest, re
   }
 })
 
+
+// ─── POST /api/admin/users/:id/reset-password ─────────────────────────────────
+// Sends password reset email to user
+router.post('/users/:id/reset-password', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.params.id } })
+    if (!user) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+    const { randomBytes } = await import('crypto')
+    const { createHash } = await import('crypto')
+    const resetToken = randomBytes(32).toString('hex')
+    const hash = createHash('sha256').update(resetToken).digest('hex')
+
+    let redis: any = null
+    try { redis = (await import('../lib/redis')).default; if (!redis.isOpen) await redis.connect() } catch {}
+    if (redis) {
+      await redis.del(`pwd_reset:${user.id}`)
+      await redis.setEx(`pwd_reset:${user.id}`, 3600, hash)
+    }
+
+    import('../lib/email').then(({ sendPasswordResetEmail }) => {
+      sendPasswordResetEmail(user.email, user.id, resetToken)
+        .then(() => console.log('[ADMIN] Password reset sent to', user.email))
+        .catch(e => console.error('[ADMIN RESET]', e.message))
+    })
+
+    await logAdminAction(req.userId!, 'RESET_PASSWORD_EMAIL', 'user', req.params.id, {
+      targetUserId: req.params.id,
+      reason: req.body.reason || 'Admin reset',
+      ipAddress: req.ip,
+    })
+
+    res.json({ ok: true, message: 'Email de reset enviado para ' + user.email })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// ─── POST /api/admin/users/:id/set-password ───────────────────────────────────
+// Directly set a new password (SUPER_ADMIN only — emergency use)
+router.post('/users/:id/set-password', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  try {
+    if ((req as any).adminRole !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Apenas SUPER_ADMIN pode definir password directamente.' })
+    }
+    const { password, reason } = req.body
+    if (!password || password.length < 8) return res.status(400).json({ error: 'Password inválida (mín. 8 caracteres).' })
+    if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.' })
+
+    const bcrypt = require('bcryptjs')
+    const passwordHash = await bcrypt.hash(password, 12)
+    await prisma.user.update({ where: { id: req.params.id }, data: { passwordHash } })
+
+    // Revoke all sessions
+    let redis: any = null
+    try { redis = (await import('../lib/redis')).default; if (!redis.isOpen) await redis.connect() } catch {}
+    if (redis) await redis.del(`refresh:${req.params.id}`)
+
+    await logAdminAction(req.userId!, 'SET_PASSWORD_DIRECT', 'user', req.params.id, {
+      targetUserId: req.params.id,
+      reason,
+      ipAddress: req.ip,
+    })
+
+    res.json({ ok: true, message: 'Password definida. Sessões revogadas.' })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 export default router
 // ─── Notifications ────────────────────────────────────────────────────────────
 router.get('/notifications', requireAdmin(), async (req: AuthRequest, res: Response) => {
