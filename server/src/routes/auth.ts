@@ -338,4 +338,55 @@ router.delete('/sessions', async (req: Request, res: Response) => {
   } catch { res.status(401).json({ error: 'Token inválido.' }) }
 })
 
+
+// ─── PUT /api/auth/account — update account-level data (name, NIF) ────────────
+router.put('/account', async (req: Request, res: Response) => {
+  const token = req.headers.authorization?.split(' ')[1] || (req as any).cookies?.accessToken
+  if (!token) return res.status(401).json({ error: 'Não autenticado.' })
+  try {
+    const { userId } = verifyAccessToken(token)
+    const { accountName, nif } = req.body
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(accountName !== undefined && { accountName: accountName?.trim() || null }),
+        ...(nif !== undefined && { nif: nif?.trim() || null }),
+      },
+      select: { id:true, email:true, accountName:true, nif:true, status:true, adminRole:true }
+    })
+    res.json({ ok:true, user: updated })
+  } catch { res.status(401).json({ error: 'Token inválido.' }) }
+})
+
+// ─── POST /api/auth/avatar — upload account avatar ───────────────────────────
+import multer from 'multer'
+const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5*1024*1024 } })
+
+router.post('/avatar', avatarUpload.single('avatar'), async (req: Request, res: Response) => {
+  const token = req.headers.authorization?.split(' ')[1] || (req as any).cookies?.accessToken
+  if (!token) return res.status(401).json({ error: 'Não autenticado.' })
+  try {
+    const { userId } = verifyAccessToken(token)
+    if (!req.file) return res.status(400).json({ error: 'Ficheiro obrigatório.' })
+
+    let avatarUrl: string | null = null
+    if (process.env.STORAGE_ENDPOINT) {
+      const { uploadFile } = await import('../lib/storage')
+      const ext = req.file.originalname.split('.').pop() || 'jpg'
+      const filename = `avatars/${userId}-${Date.now()}.${ext}`
+      const result = await uploadFile(req.file.buffer, filename, req.file.mimetype)
+      avatarUrl = result.url
+    } else {
+      // Dev: store as base64 data URL for testing
+      avatarUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
+    }
+
+    await prisma.user.update({ where: { id: userId }, data: { avatarPath: avatarUrl } })
+    res.json({ ok:true, avatarPath: avatarUrl })
+  } catch (err: any) {
+    console.error('[AVATAR]', err.message)
+    res.status(500).json({ error: 'Erro ao fazer upload.' })
+  }
+})
+
 export default router
