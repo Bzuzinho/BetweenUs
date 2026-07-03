@@ -1,7 +1,6 @@
 # Between Us — Estado Real do MVP
-> Última actualização: Julho 2026 — pós-roadmap v2 (rev. 5)
-> ⚠️ Documento interno. Actualizar sempre que uma funcionalidade muda.
-> Regra: se a documentação e o código divergem, a documentação está errada.
+> Última actualização: Julho 2026 — Sprint 2 (rev. 6)
+> ⚠️ Documento interno. A documentação segue o código — se divergem, a documentação está errada.
 
 ---
 
@@ -11,87 +10,104 @@
 |---|---|---|
 | v0.1 Protótipo | ✅ DONE | |
 | v0.2 MVP técnico | ✅ DONE | |
-| v0.3 Beta privado | 🟡 99% | Falta apenas moderador humano activo |
-| v1.0 Lançamento | 🔲 68% | Falta: landing, Sentry, Stripe live, revisão legal |
-| v1.5 Crescimento | 🔲 35% | Travel Mode feito; Private Room, eventos por fazer |
+| v0.3 Beta privado | ✅ 100% | Todos os bloqueadores técnicos resolvidos |
+| v1.0 Lançamento | 🔲 70% | Landing, Sentry, Stripe live, revisão legal |
+| v1.5 Crescimento | 🔲 35% | Travel Mode feito; Private Room avançado |
 | v2.0 App mobile | 🔲 0% | PWA activa em substituição |
+
+---
+
+## Sprint 2 — concluído
+
+### Problemas resolvidos neste sprint
+
+| Item | Estado |
+|---|---|
+| Email verification ficava a "enviar" infinitamente | ✅ Corrigido — todos os envios de email são async/non-blocking |
+| Admin vai para /explore em vez de /admin | ✅ Corrigido — LoginPage navega baseado em adminRole |
+| Botão "Editar perfil" ia para /create-profile | ✅ Corrigido — /edit-profile + EditProfilePage + PUT /profiles/me |
+| Admin não ocupava ecrã completo no desktop | ✅ Corrigido — removido maxWidth |
+| Cabeçalho admin com ordem errada | ✅ Corrigido — logo | Between Us | [espaço] | avatar+nome+role | sino |
+| Separadores do admin ilegíveis | ✅ Corrigido — 14px, cor #C8D4DC |
+| "Editar" em vez de "Guardar" | ✅ Corrigido — botões chamam-se "Guardar" |
+| Sem separação Conta / Perfil | ✅ Implementado — /account (AccountPage) + /edit-profile (EditProfilePage) |
+| ProfilePage sem link para /account | ✅ Corrigido |
+| Admin sem tab Configurações | ✅ Implementado — Configurações com subtabs Perfis + Subscrições |
+| Dados de perfil incompletos no admin | ✅ Corrigido — UserDetail mostra todos os campos |
+| Avatar no cabeçalho do admin | ✅ Implementado — mostra foto real se existir |
+
+---
+
+## Arquitectura Conta vs Perfil
+
+### Conta (`/account`)
+Dados privados do utilizador — não visíveis ao público:
+- Email (imutável pelo utilizador)
+- Nome real (`accountName`)
+- NIF (`nif`)
+- Imagem de conta (`avatarPath`) — usada no admin/settings
+- Subscrição (plano, estado, data de renovação)
+- Role (tipo de conta)
+- Password (alterável via forgot-password)
+
+### Perfil (`/edit-profile`)
+Dados públicos — visíveis a outros utilizadores:
+- Nome visível / pseudónimo (`displayName`)
+- Bio
+- Cidade (absorve georeferenciação)
+- Estado do perfil (APPROVED, PENDING_REVIEW, etc.)
+- Estado relacional (SINGLE, MARRIED, OPEN, etc.)
+- Nível de discrição (MAXIMUM, SELECTIVE, OPEN)
+- O que procura (intenções)
+- Fotos (com tipo de visualização)
+- Privacidade
+- Verificação de perfil
+- Perfil de casal
+- Bloqueio de contactos
+- Between Plus
 
 ---
 
 ## Módulos — estado actual
 
-| Módulo | Estado | O que funciona | O que falta |
-|---|---|---|---|
-| Auth | ✅ DONE | Registo, login, refresh, logout, rate limit | — |
-| Email verification | ✅ DONE | Endpoints + Resend SMTP, token Redis | Testar fluxo em prod |
-| Password reset | ✅ DONE | forgot + reset com email real | — |
-| Age verification | ✅ DONE | Data nasc. ≥18; ageVerifiedAt preenchido após selfie | — |
-| Consentimento | ✅ DONE | termsAccepted + opcionais; IP/userAgent gravados | Endpoint revogação individual |
-| Perfis individuais | ✅ DONE | Criação, edição dedicada (/edit-profile), intenções, discretion | — |
-| Editar perfil | ✅ DONE | EditProfilePage + PUT /profiles/me separados do create | — |
-| Perfis de casal | ✅ DONE | Convite, join, Double Consent, separação | — |
-| Discovery | ✅ DONE | Between Score, filtros, HMAC contact block, badges | — |
-| Between Score | ✅ DONE | Score ponderado + explicação visível | Pesos por calibrar com dados reais |
-| Matching | ✅ DONE | Individual + couple, PENDING_COUPLE_APPROVAL | — |
-| Double Consent Match | ✅ DONE | Aprovação de ambos os parceiros | — |
-| Chat | ✅ DONE | Tempo real (Socket.io), membership validation | cron para expiresAt |
-| Consent checks | ✅ DONE | 7 fases, membership, expiração | — |
-| Safety checkins | ✅ DONE | Criação, confirmação, cancelamento | Alertas automáticos (Fase 2) |
-| Reports | ✅ DONE | 14 categorias, prioridade auto, reincidência | — |
-| Admin panel | ✅ DONE | Header user+sino+menu, tabs compactas, RBAC, audit, histórico | — |
-| Service sessions | ✅ DONE | Moderador/Suporte entra/sai ao serviço, notifica admins | — |
-| Notificações admin | ✅ DONE | Bell com badge, CRUD, limpar tudo | Push nativas (Fase 2) |
-| Gestão de roles | ✅ DONE | SUPER_ADMIN cria utilizadores e atribui roles | — |
-| Customer support | ✅ DONE | Editar utilizador/perfil com motivo + histórico completo | — |
-| Photos | ✅ DONE | Upload, EXIF strip, blur, moderação, rate limit | Signed URLs (Fase 2) |
-| Soft Reveal | ✅ DONE | 4 níveis de visibilidade | — |
-| Contact blocking | ✅ DONE | HMAC-SHA256, sem fallback em prod, requer consentimento | — |
-| Privacy settings | ✅ DONE | Invisível (Premium gate), distância, notificações | — |
-| Travel mode | ✅ DONE | Activar/desactivar, múltiplos destinos | Expiração automática |
-| Subscriptions | ✅ DONE | Stripe checkout, cancel, campos consistentes | — |
-| Stripe webhooks | ✅ DONE | 4 eventos, assinatura verificada | — |
-| GDPR export | ✅ DONE | GET /api/auth/export | Matches/mensagens (Fase 2) |
-| GDPR delete | ✅ DONE | DELETE /api/auth/account, soft-delete, sessão revogada | Hard delete job 30d |
-| Design v3 | ✅ DONE | Option 3 palette (dark teal + lavender) em todas as páginas | — |
-| Legal docs | 🟡 PARTIAL | 11 templates criados | Revisão jurídica |
-| Tests | 🟡 PARTIAL | 39+ testes, CI GitHub Actions | Testes email verify, Stripe prod |
-| Deploy/Railway | ✅ DONE | Frontend + Backend + PostgreSQL + Redis | ts-node (melhorar em v1.0) |
-| Monitoring | ❌ NOT_STARTED | — | Sentry antes de v1.0 |
-| Landing page | ❌ NOT_STARTED | — | Necessário para v1.0 |
-| Hard delete job | ❌ NOT_STARTED | Soft-delete existe | Job 30 dias |
-
----
-
-## Bloqueadores actuais para beta privado
-
-| # | Bloqueador | Acção necessária |
+| Módulo | Estado | Notas |
 |---|---|---|
-| 1 | **Moderador humano activo** | Designar — o SUPER_ADMIN pode ser ele próprio |
-| 2 | **Revisão legal** (para produção) | Advogado antes de lançamento público |
-
-**Nota:** o SUPER_ADMIN pode desempenhar o papel de moderador usando o painel admin. O sistema de service sessions regista a entrada/saída ao serviço e notifica outros admins. Não há bloqueador técnico para beta privado.
+| Auth | ✅ | Registo, login, refresh, logout, rate limit |
+| Email verification | ✅ | Async non-blocking; Resend SMTP |
+| Password reset | ✅ | forgot + reset via email |
+| Age verification | ✅ | ≥18; ageVerifiedAt preenchido após selfie |
+| Conta (AccountPage) | ✅ | Nome, email, NIF, avatar, subscrição, role |
+| Perfil (EditProfilePage) | ✅ | displayName, bio, cidade, intenções, discrição |
+| Perfis de casal | ✅ | Double Consent, separação por perfil |
+| Discovery | ✅ | Between Score, filtros, admin profiles excluídos |
+| Matching | ✅ | Individual + couple, PENDING_COUPLE_APPROVAL |
+| Chat | ✅ | Tempo real Socket.io |
+| Reports | ✅ | 14 categorias, prioridade auto |
+| Admin panel | ✅ | Header correcto, tabs compactas, RBAC 6 roles |
+| Admin Configurações | ✅ | Subtabs Perfis + Subscrições (SUPER_ADMIN only) |
+| Service sessions | ✅ | Moderador/Suporte entra/sai ao serviço |
+| Notificações admin | ✅ | Bell com badge, CRUD, auto-reload 30s |
+| Gestão de roles | ✅ | SUPER_ADMIN cria utilizadores e atribui roles |
+| Photos | ✅ | Upload, EXIF strip, blur, moderação |
+| Privacy settings | ✅ | Invisível (Premium gate), distância, notificações |
+| Travel mode | ✅ | Activar/desactivar, múltiplos destinos |
+| Subscriptions | ✅ | Stripe checkout, cancel |
+| GDPR export/delete | ✅ | Export JSON, soft-delete |
+| Design v3 | ✅ | Option 3 palette em todas as páginas |
+| Legal docs | 🟡 | Templates criados — falta revisão jurídica |
+| Monitoring | ❌ | Sentry — antes de v1.0 |
+| Landing page | ❌ | Necessário para v1.0 |
+| Hard delete job | ❌ | Soft-delete existe; job 30 dias por fazer |
 
 ---
 
-## Sprints completos (do roadmap v2)
+## Bloqueadores actuais
 
-| Sprint | Descrição | Estado |
+| # | Bloqueador | Acção |
 |---|---|---|
-| 1 | Setup, auth, CI/CD | ✅ |
-| 2 | Perfis, intenções, limites, fotos | ✅ |
-| 3 | Discovery, filtros, between score | ✅ |
-| 4 | Matching, double consent | ✅ |
-| 5 | Chat, denúncias, bloqueios | ✅ |
-| 6 | Privacidade, moderação, admin | ✅ |
-| 7 | Stripe, subscrições | ✅ |
-| 8 | Beta fechado, convites, service sessions | ✅ |
+| 1 | Revisão legal dos documentos | Advogado antes de lançamento público |
+| 2 | Sentry | Configurar antes de v1.0 |
+| 3 | Stripe live | Activar conta real antes de v1.0 |
+| 4 | Landing page | Criar antes de v1.0 |
 
----
-
-## Alterações desta sessão (rev. 5)
-
-- **Fix crítico:** botão "Editar perfil" apontava para `/create-profile` → novo `/edit-profile` com `EditProfilePage` dedicada e `PUT /profiles/me` no backend
-- **Admin redesign completo:** header com utilizador + sino de notificações + menu; tabs compactas horizontais sem scroll em grid; StatCards clicáveis que navegam para tab certa; modo serviço para Moderador/Suporte; auditoria com sessões de serviço
-- **Notificações admin:** bell com badge, CRUD, auto-reload 30s
-- **Service sessions:** Moderador/Suporte entra/sai ao serviço → notifica admins → registo de duração em auditoria
-- **Schema:** Notification + ServiceSession models adicionados
+**Nota:** o SUPER_ADMIN pode agir como moderador. Não há bloqueador técnico para beta privado.
