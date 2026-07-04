@@ -117,6 +117,7 @@ import travelRouter        from './routes/travel'
 import consentRouter       from './routes/consent'
 import safetyRouter        from './routes/safety'
 import roomsRouter          from './routes/rooms'
+import guideRouter          from './routes/guide'
 import betaRouter          from './routes/beta'
 
 app.use('/api/auth',          authRouter)
@@ -135,6 +136,7 @@ app.use('/api/travel',        travelRouter)
 app.use('/api/consent',       consentRouter)
 app.use('/api/safety',        safetyRouter)
 app.use('/api/rooms',          roomsRouter)
+app.use('/api/guide',          guideRouter)
 app.use('/api/beta',          betaRouter)
 
 io.on('connection', socket => {
