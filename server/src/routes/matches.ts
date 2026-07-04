@@ -141,4 +141,82 @@ router.post('/:id/messages', requireAuth, async (req: AuthRequest, res: Response
   }
 })
 
+
+// POST /api/matches/accept/:fromProfileId — accept connection request
+router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
+    if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
+    const fromProfile = await prisma.profile.findUnique({
+      where: { id: req.params.fromProfileId },
+      include: { user: { select: { id:true } } }
+    })
+    if (!fromProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
+    // Verify there's a like from them to us
+    const theirLike = await prisma.profileAction.findFirst({
+      where: { actorProfileId: fromProfile.id, targetProfileId: viewer.profile.id, action: 'like' }
+    })
+    if (!theirLike) return res.status(400).json({ error: 'Sem pedido de ligação pendente.' })
+
+    // Check if match already exists
+    const existing = await prisma.match.findFirst({
+      where: { OR: [
+        { profileOneId: viewer.profile.id, profileTwoId: fromProfile.id },
+        { profileOneId: fromProfile.id, profileTwoId: viewer.profile.id },
+      ]}
+    })
+    if (existing) return res.json({ ok: true, matchId: existing.id, alreadyMatched: true })
+
+    // Create match + conversation
+    const match = await prisma.match.create({
+      data: {
+        profileOneId: fromProfile.id,
+        profileTwoId: viewer.profile.id,
+        status: 'ACTIVE',
+        matchedAt: new Date(),
+        conversation: { create: { type: 'ONE_TO_ONE' } }
+      }
+    })
+
+    // Record our like too
+    await prisma.profileAction.upsert({
+      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: fromProfile.id } },
+      update: { action: 'like' },
+      create: { actorProfileId: viewer.profile.id, targetProfileId: fromProfile.id, action: 'like' }
+    })
+
+    // Notify the requester
+    const { notifyUser } = await import('../lib/notify')
+    notifyUser(fromProfile.user.id, 'match',
+      '💫 Ligação aceite!',
+      `${viewer.profile.displayName || 'Alguém'} aceitou a tua ligação. Podem conversar agora.`,
+      { matchId: match.id, tab: 'matches' }
+    ).catch(() => {})
+
+    res.json({ ok: true, matchId: match.id })
+  } catch (err: any) {
+    console.error('[ACCEPT REQUEST]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// POST /api/matches/reject/:fromProfileId — reject connection request
+router.post('/reject/:fromProfileId', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
+    if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
+    // Record pass action
+    await prisma.profileAction.upsert({
+      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.fromProfileId } },
+      update: { action: 'pass' },
+      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.fromProfileId, action: 'pass' }
+    })
+    res.json({ ok: true })
+  } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
+})
+
 export default router
+
