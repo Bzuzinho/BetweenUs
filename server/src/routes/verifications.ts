@@ -5,6 +5,7 @@ import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
 import { uploadFile, deleteFile } from '../lib/storage'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { notifyAdmins } from '../lib/notify'
 
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
@@ -55,6 +56,16 @@ router.post('/submit', requireAuth, upload.single('selfie'), async (req: AuthReq
       await prisma.user.update({ where: { id: req.userId! }, data: { ageVerifiedAt: new Date() } })
       return res.json({ ok: true, status: 'APPROVED', message: '[DEV] Auto-aprovado.' })
     }
+
+    // Notify admins of pending verification (non-blocking)
+    const verUser = await prisma.user.findUnique({ where: { id: req.userId! }, select: { email: true } })
+    notifyAdmins(
+      'verification_pending',
+      '📋 Verificação de perfil pendente',
+      `${verUser?.email} submeteu uma selfie de verificação. Requer revisão.`,
+      { userId: req.userId, tab: 'verifications' }
+    ).catch(() => {})
+
     res.json({ ok: true, status: 'PENDING', message: 'Selfie recebida. Aguarda revisão.' })
   } catch (err: any) {
     console.error('[VERIFICATION]', err.message)
