@@ -1,184 +1,263 @@
 import { Router, Response } from 'express'
-import { createHmac } from 'crypto'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
-import { createLikeOrMatch, recordPass } from '../lib/matchService'
+import { notifyUser, notifyAdmins } from '../lib/notify'
 
 const router = Router()
-const isProd = process.env.NODE_ENV === 'production'
 
-// Point 14: no insecure fallback in production
-const getContactHashSecret = (): string => {
-  const secret = process.env.CONTACT_HASH_SECRET
-  if (isProd && !secret) {
-    throw new Error('CONTACT_HASH_SECRET obrigatório em produção.')
+// ─── Between Score calculator ─────────────────────────────────────────────────
+const calcScore = (viewer: any, target: any): number => {
+  let score = 0
+
+  // Intentions overlap (30%)
+  const vIntents = new Set(viewer.intentions?.map((i: any) => i.intention?.slug))
+  const tIntents = new Set(target.intentions?.map((i: any) => i.intention?.slug))
+  const overlap  = [...vIntents].filter(i => tIntents.has(i)).length
+  if (overlap > 0) score += Math.min(30, overlap * 10)
+
+  // No hard boundary conflict (25%)
+  const vNos = new Set(viewer.boundaries?.filter((b: any) => b.preference === 'no').map((b: any) => b.boundary?.slug))
+  const tYes = new Set(target.boundaries?.filter((b: any) => b.preference === 'yes').map((b: any) => b.boundary?.slug))
+  const conflicts = [...tYes].filter(s => vNos.has(s)).length
+  if (conflicts === 0) score += 25
+
+  // Relationship status compatible (15%)
+  const compatMap: Record<string, string[]> = {
+    SINGLE:      ['SINGLE','COUPLE_CURIOUS','COUPLE_LIBERAL','OPEN','POLYAMOROUS'],
+    OPEN:        ['SINGLE','OPEN','POLYAMOROUS','COUPLE_CURIOUS'],
+    POLYAMOROUS: ['SINGLE','OPEN','POLYAMOROUS'],
+    COUPLE_CURIOUS: ['SINGLE','OPEN'],
+    COUPLE_LIBERAL: ['SINGLE','COUPLE_LIBERAL','OPEN'],
   }
-  return secret || 'dev-only-insecure-fallback-secret'
+  const vStatus = viewer.relationshipStatus || 'SINGLE'
+  const tStatus = target.relationshipStatus || 'SINGLE'
+  if ((compatMap[vStatus] || []).includes(tStatus)) score += 15
+
+  // Photos exist (10%)
+  if (target.photos?.length > 0) score += 10
+
+  // Verified (10%)
+  if (target.user?.ageVerifiedAt) score += 10
+
+  // Discretion compatible (5%)
+  if (!viewer.discretionLevel || !target.discretionLevel ||
+      viewer.discretionLevel === target.discretionLevel) score += 5
+
+  // City match bonus (5%)
+  if (viewer.city && target.city && viewer.city.toLowerCase() === target.city.toLowerCase()) score += 5
+
+  return Math.min(100, score)
 }
 
-const hashContact = (value: string) =>
-  createHmac('sha256', getContactHashSecret()).update(value.toLowerCase().trim()).digest('hex')
-
-const getVerificationBadges = (profile: any, user: any, verification: any): string[] => {
-  const badges: string[] = []
-  if (user?.emailVerifiedAt) badges.push('email_verified')
-  if (user?.dateOfBirth) badges.push('age_declared')
-  if (verification?.status === 'APPROVED') badges.push('selfie_verified')
-  if (profile.type === 'COUPLE' && profile.coupleProfile?.coupleStatus === 'ACTIVE') badges.push('couple_confirmed')
-  if (profile.photos?.some((p: any) => p.moderationStatus === 'APPROVED')) badges.push('photos_reviewed')
-  if (user?.subscription?.plan !== 'FREE') badges.push('premium_active')
-  return badges
-}
-
-const calculateScore = (myProfile: any, profile: any, myIntentionIds: string[]) => {
-  let score = 50
-  const factors: string[] = []
-  const warnings: string[] = []
-
-  const theirIntentionIds = profile.intentions.map((i: any) => i.intentionId)
-  const overlap = myIntentionIds.filter((id: string) => theirIntentionIds.includes(id))
-
-  if (overlap.length >= 3) { score += 25; factors.push('Intenções muito compatíveis') }
-  else if (overlap.length >= 1) { score += 15; factors.push('Algumas intenções em comum') }
-  else { score -= 10; warnings.push('Intenções diferentes') }
-
-  if (myProfile.city && profile.city && myProfile.city.toLowerCase() === profile.city.toLowerCase()) {
-    score += 12; factors.push('Mesma cidade')
-  }
-  if (profile.photos?.length >= 3) { score += 8; factors.push('Perfil com fotos') }
-  else if (profile.photos?.length >= 1) { score += 4 }
-  if (profile.bio && profile.bio.length > 50) { score += 5; factors.push('Bio detalhada') }
-  if (profile.verificationBadges?.includes('selfie_verified')) { score += 8; factors.push('Perfil verificado') }
-  if (profile.verificationBadges?.includes('couple_confirmed')) { score += 5; factors.push('Casal confirmado') }
-
-  const myBoundaryNos = myProfile.boundaries?.filter((b: any) => b.preference === 'NO').map((b: any) => b.boundaryId) || []
-  const theirBoundaryYes = profile.boundaries?.filter((b: any) => b.preference === 'YES').map((b: any) => b.boundaryId) || []
-  const conflicts = myBoundaryNos.filter((id: string) => theirBoundaryYes.includes(id))
-  if (conflicts.length > 0) { score -= conflicts.length * 10; warnings.push(`${conflicts.length} limite(s) incompatível(is)`) }
-
-  score = Math.max(10, Math.min(99, score))
-
-  let explanation = ''
-  if (score >= 80) explanation = `Compatibilidade alta: ${factors.slice(0,2).join(', ')}.`
-  else if (score >= 60) explanation = `Compatibilidade média: ${factors[0] || 'alguns pontos em comum'}.`
-  else explanation = `Compatibilidade baixa: ${warnings[0] || 'poucos pontos em comum'}.`
-  if (warnings.length > 0 && score < 80) explanation += ` Nota: ${warnings[0]}.`
-
-  return { score, factors, warnings, explanation }
-}
-
+// GET /api/discovery — all profiles ordered by score
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const myProfile = await prisma.profile.findUnique({
-      where: { userId: req.userId! },
-      include: { intentions: true, boundaries: true, privacySettings: true }
-    })
-    if (!myProfile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
-
-    const { limit = 20, offset = 0, type, city } = req.query
-
-    const seen = await prisma.profileAction.findMany({
-      where: { actorProfileId: myProfile.id }, select: { targetProfileId: true }
-    })
-    const seenIds = seen.map(s => s.targetProfileId)
-
-    const myUser = await prisma.user.findUnique({ where: { id: req.userId! }, select: { email: true } })
-    const myEmailHash = hashContact(myUser?.email || '')
-
-    const usersWhoBlockedMe = await prisma.blockedContactHash.findMany({
-      where: { contactHash: myEmailHash }, select: { userId: true }
-    })
-    const blockedByUserIds = usersWhoBlockedMe.map(u => u.userId)
-
-    const whereClause: any = {
-      id: { notIn: [myProfile.id, ...seenIds] },
-      user: { adminRole: null, id: { notIn: [req.userId!, ...blockedByUserIds] }, status: 'ACTIVE' },
-      status: 'APPROVED',
-      visibilityMode: { not: 'INVISIBLE' },
-    }
-    if (type) whereClause.type = type
-    if (city) whereClause.city = { contains: city as string, mode: 'insensitive' }
-
-    const profiles = await prisma.profile.findMany({
-      where: whereClause,
-      include: {
-        photos: { where: { moderationStatus: 'APPROVED' }, orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }], take: 3 },
-        intentions: { include: { intention: true } },
-        boundaries: true,
-        privacySettings: true,
-        coupleProfile: true,
-        user: {
-          select: {
-            emailVerifiedAt: true, dateOfBirth: true,
-            subscription: { select: { plan: true } },
-            verification: { select: { status: true } }
-          }
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId! },
+      include: { profile: {
+        include: {
+          intentions: { include: { intention: true } },
+          boundaries: { include: { boundary: true } },
         }
+      }}
+    })
+    if (!user?.profile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
+
+    const viewerProfile = user.profile
+
+    // Get all blocked/passed/liked profiles by viewer
+    const myActions = await prisma.profileAction.findMany({
+      where: { actorProfileId: viewerProfile.id },
+      select: { targetProfileId: true, action: true }
+    })
+    const excludeIds = new Set([
+      viewerProfile.id,
+      ...myActions.filter(a => ['block','pass'].includes(a.action)).map(a => a.targetProfileId)
+    ])
+
+    // Get existing matches (already connected)
+    const myMatches = await prisma.match.findMany({
+      where: {
+        OR: [{ profileOneId: viewerProfile.id }, { profileTwoId: viewerProfile.id }],
+        status: { in: ['PENDING','ACTIVE'] }
       },
-      take: Number(limit), skip: Number(offset),
-      orderBy: { createdAt: 'desc' }
+      select: { profileOneId: true, profileTwoId: true }
+    })
+    myMatches.forEach(m => {
+      excludeIds.add(m.profileOneId === viewerProfile.id ? m.profileTwoId : m.profileOneId)
     })
 
-    const myIntentionIds = myProfile.intentions.map((i: any) => i.intentionId)
-
-    const scored = profiles.map(profile => {
-      const verificationBadges = getVerificationBadges(profile, profile.user, profile.user?.verification)
-      const profileWithBadges = { ...profile, verificationBadges }
-      const { score, factors, warnings, explanation } = calculateScore(myProfile, profileWithBadges, myIntentionIds)
-      const { userId, locationLat, locationLng, user, ...safe } = profile as any
-      return { ...safe, betweenScore: score, verificationBadges, scoreExplanation: explanation, scoreFactors: factors, scoreWarnings: warnings }
+    // Get all active profiles excluding admin roles
+    const profiles = await prisma.profile.findMany({
+      where: {
+        id: { notIn: [...excludeIds] },
+        status: 'APPROVED',
+        user: { status: 'ACTIVE', adminRole: null }
+      },
+      include: {
+        user: { select: { id:true, ageVerifiedAt:true } },
+        photos: { where: { moderationStatus: 'APPROVED' }, take: 3 },
+        intentions: { include: { intention: true } },
+        boundaries: { include: { boundary: true } },
+        privacySettings: true,
+      },
+      take: 100,
     })
 
-    scored.sort((a, b) => b.betweenScore - a.betweenScore)
-    res.json({ profiles: scored, total: scored.length, hasMore: scored.length === Number(limit) })
+    // Calculate scores and sort
+    const scored = profiles.map(p => ({
+      ...p,
+      score: calcScore(viewerProfile, p)
+    })).sort((a, b) => b.score - a.score)
+
+    // Mark which ones viewer has liked (pending connection)
+    const likedIds = new Set(myActions.filter(a => a.action === 'like').map(a => a.targetProfileId))
+
+    const result = scored.map(p => ({
+      id:                 p.id,
+      displayName:        p.displayName,
+      city:               p.city,
+      country:            p.country,
+      bio:                p.bio,
+      type:               p.type,
+      relationshipStatus: p.relationshipStatus,
+      discretionLevel:    p.discretionLevel,
+      score:              p.score,
+      verified:           !!p.user?.ageVerifiedAt,
+      hasPhotos:          p.photos.length > 0,
+      primaryPhoto:       p.photos.find(ph => ph.isPrimary)?.blurredPath || p.photos[0]?.blurredPath || null,
+      liked:              likedIds.has(p.id),
+    }))
+
+    res.json({ profiles: result })
   } catch (err: any) {
-    console.error('[DISCOVERY ERROR]', err.message)
-    res.status(500).json({ error: err.message?.includes('CONTACT_HASH_SECRET') ? err.message : 'Erro ao carregar perfis.' })
-  }
-})
-
-// Point 9: like now goes through the shared service — no more duplicated logic.
-// If either side is an active couple, this automatically returns a
-// PENDING_COUPLE_APPROVAL match instead of an ACTIVE one.
-router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) => {
-  try {
-    const myProfile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
-    if (!myProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-
-    const result = await createLikeOrMatch(myProfile.id, req.params.id)
-
-    switch (result.kind) {
-      case 'ERROR':
-        return res.status(400).json({ error: result.message })
-      case 'LIKE_RECORDED':
-        return res.json({ match: false })
-      case 'ALREADY_MATCHED':
-        return res.json({ match: true, matchId: result.matchId })
-      case 'MATCH_CREATED':
-        return res.json({ match: true, matchId: result.matchId })
-      case 'MATCH_PENDING_COUPLE_APPROVAL':
-        return res.json({
-          match: false, pendingCoupleApproval: true, matchId: result.matchId,
-          message: 'Há um casal envolvido — o match requer aprovação de ambos os membros.'
-        })
-      default:
-        return res.json({ match: false })
-    }
-  } catch (err: any) {
-    console.error('[LIKE ERROR]', err.message)
-    res.status(500).json({ error: 'Erro ao registar like.' })
-  }
-})
-
-router.post('/:id/pass', requireAuth, async (req: AuthRequest, res: Response) => {
-  try {
-    const myProfile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
-    if (!myProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-    await recordPass(myProfile.id, req.params.id)
-    res.json({ ok: true })
-  } catch (err: any) {
+    console.error('[DISCOVERY]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
   }
+})
+
+// POST /api/discovery/:id/like — send connection request
+router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const viewer = await prisma.user.findUnique({
+      where: { id: req.userId! },
+      include: { profile: true }
+    })
+    if (!viewer?.profile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
+
+    const target = await prisma.profile.findUnique({
+      where: { id: req.params.id },
+      include: { user: { select: { id:true } }, privacySettings: true }
+    })
+    if (!target) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
+    // Record like action
+    await prisma.profileAction.upsert({
+      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: target.id } },
+      update: { action: 'like' },
+      create: { actorProfileId: viewer.profile.id, targetProfileId: target.id, action: 'like' }
+    })
+
+    // Check if target already liked viewer → auto-match
+    const theirLike = await prisma.profileAction.findFirst({
+      where: { actorProfileId: target.id, targetProfileId: viewer.profile.id, action: 'like' }
+    })
+
+    let matched = false
+    let matchId: string | null = null
+
+    if (theirLike) {
+      // Mutual like → create match
+      const existing = await prisma.match.findFirst({
+        where: { OR: [
+          { profileOneId: viewer.profile.id, profileTwoId: target.id },
+          { profileOneId: target.id, profileTwoId: viewer.profile.id },
+        ]}
+      })
+
+      if (!existing) {
+        const match = await prisma.match.create({
+          data: {
+            profileOneId: viewer.profile.id,
+            profileTwoId: target.id,
+            status: 'ACTIVE',
+            matchedAt: new Date(),
+            conversation: { create: { type: 'ONE_TO_ONE' } }
+          }
+        })
+        matchId = match.id
+        matched = true
+
+        // Notify both users of match
+        notifyUser(target.user.id, 'match',
+          '💫 Novo match!',
+          `Tens um novo match com ${viewer.profile.displayName || 'alguém'}.`,
+          { matchId: match.id, tab: 'matches' }
+        ).catch(() => {})
+
+        notifyUser(req.userId!, 'match',
+          '💫 Match confirmado!',
+          `O teu pedido de ligação foi aceite. Agora podem conversar.`,
+          { matchId: match.id, tab: 'matches' }
+        ).catch(() => {})
+      } else {
+        matched = true
+        matchId = existing.id
+      }
+    } else {
+      // Send connection request notification to target
+      notifyUser(target.user.id, 'connection_request',
+        '🔔 Pedido de ligação',
+        `${viewer.profile.displayName || 'Alguém'} quer ligar-se contigo. Vê o perfil e decide.`,
+        { fromProfileId: viewer.profile.id, tab: 'matches' }
+      ).catch(() => {})
+    }
+
+    res.json({ ok: true, matched, matchId })
+  } catch (err: any) {
+    console.error('[LIKE]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// POST /api/discovery/:id/pass
+router.post('/:id/pass', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
+    if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    await prisma.profileAction.upsert({
+      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
+      update: { action: 'pass' },
+      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id, action: 'pass' }
+    })
+    res.json({ ok: true })
+  } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
+})
+
+// POST /api/discovery/:id/block
+router.post('/:id/block', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
+    if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    await prisma.profileAction.upsert({
+      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
+      update: { action: 'block' },
+      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id, action: 'block' }
+    })
+    res.json({ ok: true })
+  } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
+})
+
+// POST /api/discovery/:id/report
+router.post('/:id/report', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { reason, details } = req.body
+    const report = await prisma.report.create({
+      data: { reporterUserId: req.userId!, reportedProfileId: req.params.id, reason: reason || 'other', details }
+    })
+    notifyAdmins('new_report', '⚠️ Nova denúncia', `Denúncia: ${reason}`, { reportId: report.id, tab: 'reports' }).catch(()=>{})
+    res.json({ ok: true })
+  } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
 })
 
 export default router
