@@ -116,6 +116,7 @@ import verificationsRouter from './routes/verifications'
 import travelRouter        from './routes/travel'
 import consentRouter       from './routes/consent'
 import safetyRouter        from './routes/safety'
+import roomsRouter          from './routes/rooms'
 import betaRouter          from './routes/beta'
 
 app.use('/api/auth',          authRouter)
@@ -133,12 +134,15 @@ app.use('/api/verifications', verificationsRouter)
 app.use('/api/travel',        travelRouter)
 app.use('/api/consent',       consentRouter)
 app.use('/api/safety',        safetyRouter)
+app.use('/api/rooms',          roomsRouter)
 app.use('/api/beta',          betaRouter)
 
 io.on('connection', socket => {
   socket.on('join_conversation',  (id: string) => socket.join('conversation:' + id))
   socket.on('leave_conversation', (id: string) => socket.leave('conversation:' + id))
   socket.on('typing', (data: any) => socket.to('conversation:' + data.conversationId).emit('typing', data))
+  socket.on('join_room',  (id: string) => socket.join('room:' + id))
+  socket.on('leave_room', (id: string) => socket.leave('room:' + id))
 })
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
