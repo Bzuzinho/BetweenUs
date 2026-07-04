@@ -105,6 +105,7 @@ export default function App() {
         <Route path="/matches"  element={<PrivateRoute><AppShell screen="matches" /></PrivateRoute>} />
         <Route path="/profile"  element={<PrivateRoute><AppShell screen="profile" /></PrivateRoute>} />
         <Route path="/guide"    element={<PrivateRoute><AppShell screen="guide" /></PrivateRoute>} />
+        <Route path="/rooms"    element={<PrivateRoute><AppShell screen="rooms" /></PrivateRoute>} />
 
         <Route path="*" element={<RootRedirect />} />
       </Routes>
