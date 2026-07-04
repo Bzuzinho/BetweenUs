@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
 import { generateTokens, verifyRefreshToken, verifyAccessToken } from '../utils/jwt'
+import { notifyAdmins } from '../lib/notify'
 
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
