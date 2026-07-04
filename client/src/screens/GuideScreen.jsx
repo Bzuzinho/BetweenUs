@@ -51,7 +51,7 @@ export default function GuideScreen() {
         <p style={{ fontSize:13, color:C.muted, margin:0 }}>Conteúdo educativo sobre privacidade, consentimento e ligações adultas.</p>
       </div>
 
-      <div style={{ display:'flex', gap:6, overflowX:'auto', paddingBottom:4, marginBottom:20, scrollbarWidth:'none' }}>
+      <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:16 }}>
         {CATS.map(c => (
           <button key={c} onClick={() => setCat(c)} style={{
             flexShrink:0, background: cat===c ? C.primaryDim : C.surface,
