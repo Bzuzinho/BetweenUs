@@ -300,20 +300,16 @@ function AdminHeader({ user, onLogout }) {
 function TabBar({ tab, changeTab, allowedTabs }) {
   const tabs = ALL_TABS.filter(t => allowedTabs.includes(t.key))
   const stickyTop = 'calc(56px + env(safe-area-inset-top))'
+  const cols = Math.min(tabs.length, tabs.length <= 5 ? tabs.length : Math.ceil(tabs.length / 2))
 
   return (
     <>
-      {/* ── Mobile: single scrollable row, icon + tiny label, no wrap ── */}
+      {/* ── Mobile: icon grid, no scrolling ── */}
       <div
         className="admin-tabbar-mobile"
         style={{
-          display:'flex',
-          overflowX:'auto',
-          overflowY:'hidden',
-          flexWrap:'nowrap',
-          scrollbarWidth:'none',
-          msOverflowStyle:'none',
-          WebkitOverflowScrolling:'touch',
+          display:'grid',
+          gridTemplateColumns: `repeat(${Math.min(tabs.length, 5)}, 1fr)`,
           background:C.bg,
           borderBottom:`1px solid ${C.border}`,
           position:'sticky',
@@ -325,62 +321,46 @@ function TabBar({ tab, changeTab, allowedTabs }) {
           const active = tab === t.key
           return (
             <button key={t.key} onClick={() => changeTab(t.key)} style={{
-              flexShrink:0,
-              flexGrow:0,
-              display:'flex',
-              flexDirection:'column',
-              alignItems:'center',
-              justifyContent:'center',
-              gap:2,
-              padding:'7px 10px',
-              minWidth:56,
-              background:'none',
+              display:'flex', flexDirection:'column',
+              alignItems:'center', justifyContent:'center',
+              gap:2, padding:'7px 2px',
+              background: active ? C.primaryDim : 'none',
               border:'none',
               borderBottom: active ? `2px solid ${C.primary}` : '2px solid transparent',
               color: active ? C.primary : '#C8D4DC',
-              fontSize:9,
-              fontWeight: active ? 600 : 400,
-              cursor:'pointer',
-              minHeight:44,
-              whiteSpace:'nowrap',
+              fontSize:8, fontWeight: active ? 600 : 400,
+              cursor:'pointer', minHeight:44,
             }}>
-              <span style={{ fontSize:18, lineHeight:1 }}>{t.icon}</span>
-              <span style={{ marginTop:2 }}>{t.label}</span>
+              <span style={{ fontSize:16, lineHeight:1 }}>{t.icon}</span>
+              <span style={{ marginTop:1, textAlign:'center', lineHeight:1.1 }}>{t.label}</span>
             </button>
           )
         })}
       </div>
 
-      {/* ── Desktop: scrollable pill tabs ── */}
+      {/* ── Desktop: horizontal pill tabs ── */}
       <div
         className="admin-tabbar-desktop"
         style={{
-          display:'none',
-          overflowX:'auto',
-          gap:4,
-          padding:'10px 16px',
-          background:C.bg,
+          display:'none', flexWrap:'wrap', gap:4,
+          padding:'10px 16px', background:C.bg,
           borderBottom:`1px solid ${C.border}`,
-          scrollbarWidth:'none',
-          position:'sticky',
-          top: stickyTop,
-          zIndex:40,
+          position:'sticky', top: stickyTop, zIndex:40,
         }}
       >
         {tabs.map(t => {
           const active = tab === t.key
           return (
             <button key={t.key} onClick={() => changeTab(t.key)} style={{
-              flexShrink:0,
               display:'flex', alignItems:'center', gap:5,
               background: active ? C.primaryDim : 'none',
               border:`1px solid ${active ? C.primary : 'transparent'}`,
-              borderRadius:8, padding:'8px 14px',
+              borderRadius:8, padding:'7px 12px',
               color: active ? C.primary : '#C8D4DC',
-              fontSize:14, fontWeight: active ? 600 : 400,
-              cursor:'pointer', whiteSpace:'nowrap', minHeight:36,
+              fontSize:13, fontWeight: active ? 600 : 400,
+              cursor:'pointer', whiteSpace:'nowrap',
             }}>
-              <span style={{ fontSize:15 }}>{t.icon}</span>
+              <span style={{ fontSize:14 }}>{t.icon}</span>
               {t.label}
             </button>
           )
@@ -388,7 +368,6 @@ function TabBar({ tab, changeTab, allowedTabs }) {
       </div>
 
       <style>{`
-        .admin-tabbar-mobile::-webkit-scrollbar { display: none; }
         @media (min-width: 640px) {
           .admin-tabbar-mobile  { display: none !important; }
           .admin-tabbar-desktop { display: flex !important; }
