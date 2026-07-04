@@ -117,6 +117,7 @@ import travelRouter        from './routes/travel'
 import consentRouter       from './routes/consent'
 import safetyRouter        from './routes/safety'
 import roomsRouter          from './routes/rooms'
+import pushRouter           from './routes/push'
 import guideRouter          from './routes/guide'
 import betaRouter          from './routes/beta'
 
@@ -136,6 +137,7 @@ app.use('/api/travel',        travelRouter)
 app.use('/api/consent',       consentRouter)
 app.use('/api/safety',        safetyRouter)
 app.use('/api/rooms',          roomsRouter)
+app.use('/api/push',           pushRouter)
 app.use('/api/guide',          guideRouter)
 app.use('/api/beta',          betaRouter)
 
