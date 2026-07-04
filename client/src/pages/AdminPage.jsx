@@ -219,32 +219,46 @@ function AdminHeader({ user, onLogout }) {
     <div style={{
       background:C.surface, borderBottom:`1px solid ${C.border}`,
       padding:'10px 16px',
-      display:'flex', alignItems:'center', gap:10,
+      display:'flex', alignItems:'center', gap:8,
       position:'sticky', top:0, zIndex:50,
+      minHeight:56,
     }}>
-      {/* Logo */}
-      <svg width="28" height="14" viewBox="0 0 56 28" style={{ flexShrink:0 }}>
+      {/* Logo — bigger, legible */}
+      <svg width="34" height="17" viewBox="0 0 56 28" style={{ flexShrink:0 }}>
         <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" strokeWidth="3.5"/>
-        <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.75"/>
+        <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.8"/>
       </svg>
 
-      <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ fontSize:13, fontWeight:500, color:C.text, lineHeight:1.2 }}>Between Us · Admin</div>
-        <div style={{ fontSize:11, color:C.primary, lineHeight:1.2 }}>{user?.adminRole}</div>
-      </div>
+      {/* App name only — no "Admin" suffix */}
+      <span style={{ fontSize:16, fontWeight:600, color:C.text, letterSpacing:'-0.01em', flexShrink:0 }}>
+        Between Us
+      </span>
 
+      <div style={{ flex:1 }}/>
 
-      <div ref={menuRef} style={{ position:'relative' }}>
+      {/* Right side: avatar | name+role (hidden on very small screens) | bell */}
+      <div ref={menuRef} style={{ position:'relative', display:'flex', alignItems:'center', gap:8 }}>
+
+        {/* Avatar — clickable */}
         <div onClick={() => setShowMenu(o => !o)} style={{
           width:36, height:36, borderRadius:'50%',
           background:C.primaryDim, border:`1.5px solid ${C.primary}`,
           display:'flex', alignItems:'center', justifyContent:'center',
           fontSize:14, fontWeight:600, color:C.primary, cursor:'pointer', flexShrink:0,
+          overflow:'hidden',
         }}>
           {user?.avatarPath
             ? <img src={user.avatarPath} alt="" style={{ width:'100%', height:'100%', objectFit:'cover', borderRadius:'50%' }}/>
             : initials
           }
+        </div>
+
+        {/* Name + role — hidden on small phones */}
+        <div onClick={() => setShowMenu(o => !o)} style={{ cursor:'pointer', display:'none' }} className="admin-name-block">
+          <div style={{ fontSize:13, fontWeight:500, color:C.text, lineHeight:1.2, whiteSpace:'nowrap' }}>
+            {user?.accountName || user?.email?.split('@')[0] || 'Admin'}
+          </div>
+          <div style={{ fontSize:11, color:C.primary, lineHeight:1.2 }}>{user?.adminRole}</div>
         </div>
 
         {showMenu && (
@@ -280,32 +294,83 @@ function AdminHeader({ user, onLogout }) {
 /* ─── Compact tab bar ────────────────────────────────────────────────────────── */
 function TabBar({ tab, changeTab, allowedTabs }) {
   const tabs = ALL_TABS.filter(t => allowedTabs.includes(t.key))
+  // On mobile: show icon grid. On desktop: scrollable tab bar.
   return (
-    <div style={{
-      display:'flex', overflowX:'auto', gap:4,
-      padding:'10px 16px', background:C.bg,
-      borderBottom:`1px solid ${C.border}`,
-      scrollbarWidth:'none', position:'sticky',
-      top:62, zIndex:40,
-    }}>
-      {tabs.map(t => {
-        const active = tab === t.key
-        return (
-          <button key={t.key} onClick={() => changeTab(t.key)} style={{
-            flexShrink:0, display:'flex', alignItems:'center', gap:5,
-            background: active ? C.primaryDim : 'none',
-            border:`1px solid ${active ? C.primary : 'transparent'}`,
-            borderRadius:8, padding:'8px 14px',
-            color: active ? C.primary : '#C8D4DC',
-            fontSize:14, fontWeight: active ? 600 : 400,
-            cursor:'pointer', whiteSpace:'nowrap', minHeight:36,
-          }}>
-            <span style={{ fontSize:15 }}>{t.icon}</span>
-            {t.label}
+    <>
+      {/* Mobile tab grid — icon + short label, no horizontal scroll */}
+      <div style={{
+        display:'grid',
+        gridTemplateColumns: `repeat(${Math.min(tabs.length, 5)}, 1fr)`,
+        gap:0,
+        background:C.bg,
+        borderBottom:`1px solid ${C.border}`,
+        position:'sticky', top:56, zIndex:40,
+      }} className="admin-tabbar-mobile">
+        {tabs.slice(0, 9).map(t => {
+          const active = tab === t.key
+          return (
+            <button key={t.key} onClick={() => changeTab(t.key)} style={{
+              display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+              gap:2, padding:'8px 4px',
+              background: active ? C.primaryDim : 'none',
+              border:'none',
+              borderBottom: active ? `2px solid ${C.primary}` : '2px solid transparent',
+              color: active ? C.primary : '#C8D4DC',
+              fontSize:9, fontWeight: active ? 600 : 400,
+              cursor:'pointer', minHeight:48,
+            }}>
+              <span style={{ fontSize:16 }}>{t.icon}</span>
+              <span style={{ letterSpacing:0.2 }}>{t.label}</span>
+            </button>
+          )
+        })}
+        {/* If more than 5 tabs and active is > 5, show overflow indicator */}
+        {tabs.length > 9 && (
+          <button style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:2, padding:'8px 4px', background:'none', border:'none', color:C.muted, fontSize:9, cursor:'default', minHeight:48 }}>
+            <span style={{ fontSize:16 }}>⋯</span>
+            <span>Mais</span>
           </button>
-        )
-      })}
-    </div>
+        )}
+      </div>
+
+      <style>{`
+        @media (min-width: 640px) {
+          .admin-tabbar-mobile { display: none !important; }
+          .admin-tabbar-desktop { display: flex !important; }
+          .admin-name-block { display: block !important; }
+        }
+        @media (max-width: 639px) {
+          .admin-tabbar-desktop { display: none !important; }
+        }
+      `}</style>
+
+      {/* Desktop scrollable tab bar */}
+      <div style={{
+        display:'none', overflowX:'auto', gap:4,
+        padding:'10px 16px', background:C.bg,
+        borderBottom:`1px solid ${C.border}`,
+        scrollbarWidth:'none', position:'sticky',
+        top:56, zIndex:40,
+      }} className="admin-tabbar-desktop">
+        {tabs.map(t => {
+          const active = tab === t.key
+          return (
+            <button key={t.key} onClick={() => changeTab(t.key)} style={{
+              flexShrink:0, display:'flex', alignItems:'center', gap:5,
+              background: active ? C.primaryDim : 'none',
+              border:`1px solid ${active ? C.primary : 'transparent'}`,
+              borderRadius:8, padding:'8px 14px',
+              color: active ? C.primary : '#C8D4DC',
+              fontSize:14, fontWeight: active ? 600 : 400,
+              cursor:'pointer', whiteSpace:'nowrap', minHeight:36,
+            }}>
+              <span style={{ fontSize:15 }}>{t.icon}</span>
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
+    </>
   )
 }
 
