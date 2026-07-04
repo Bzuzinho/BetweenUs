@@ -3,6 +3,7 @@ import ProfilePage from './pages/ProfilePage'
 import ExploreScreen from './screens/ExploreScreen'
 import MatchesScreen from './screens/MatchesScreen'
 import GuideScreen from './screens/GuideScreen'
+import RoomsScreen from './screens/RoomsScreen'
 
 const C = {
   bg:'#0A141A', surface:'#102129', border:'#1E3340',
@@ -13,6 +14,7 @@ const NAV = [
   { key:'explore', label:'Explorar', icon:'○',  path:'/explore' },
   { key:'matches', label:'Matches',  icon:'◎',  path:'/matches' },
   { key:'profile', label:'Perfil',   icon:'◌',  path:'/profile' },
+  { key:'rooms',   label:'Salas',    icon:'◎',  path:'/rooms'   },
   { key:'guide',   label:'Guia',     icon:'◈',  path:'/guide'   },
 ]
 
@@ -23,6 +25,7 @@ export default function AppShell({ screen }) {
     switch(screen) {
       case 'profile': return <ProfilePage />
       case 'matches': return <MatchesScreen />
+      case 'rooms':   return <RoomsScreen />
       case 'guide':   return <GuideScreen />
       default:        return <ExploreScreen />
     }
