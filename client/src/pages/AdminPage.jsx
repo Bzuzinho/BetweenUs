@@ -225,23 +225,34 @@ function AdminHeader({ user, onLogout }) {
       position:'sticky', top:0, zIndex:50,
       minHeight:'calc(56px + env(safe-area-inset-top))',
     }}>
-      {/* Logo — bigger, legible */}
+      {/* Logo */}
       <svg width="34" height="17" viewBox="0 0 56 28" style={{ flexShrink:0 }}>
         <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" strokeWidth="3.5"/>
         <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.8"/>
       </svg>
 
-      {/* App name only — no "Admin" suffix */}
+      {/* App name */}
       <span style={{ fontSize:16, fontWeight:600, color:C.text, letterSpacing:'-0.01em', flexShrink:0 }}>
         Between Us
       </span>
 
       <div style={{ flex:1 }}/>
 
-      {/* Right side: avatar | name+role (hidden on very small screens) | bell */}
+      {/* Bell — always visible on mobile and desktop */}
+      <NotificationBell />
+
+      {/* Avatar + name/role — name hidden on mobile */}
       <div ref={menuRef} style={{ position:'relative', display:'flex', alignItems:'center', gap:8 }}>
 
-        {/* Avatar — clickable */}
+        {/* Name + role — desktop only */}
+        <div onClick={() => setShowMenu(o => !o)} style={{ cursor:'pointer', textAlign:'right' }} className="admin-name-block">
+          <div style={{ fontSize:13, fontWeight:500, color:C.text, lineHeight:1.2, whiteSpace:'nowrap' }}>
+            {user?.accountName || user?.email?.split('@')[0] || 'Admin'}
+          </div>
+          <div style={{ fontSize:11, color:C.primary, lineHeight:1.2 }}>{user?.adminRole}</div>
+        </div>
+
+        {/* Avatar — always visible */}
         <div onClick={() => setShowMenu(o => !o)} style={{
           width:36, height:36, borderRadius:'50%',
           background:C.primaryDim, border:`1.5px solid ${C.primary}`,
@@ -253,14 +264,6 @@ function AdminHeader({ user, onLogout }) {
             ? <img src={user.avatarPath} alt="" style={{ width:'100%', height:'100%', objectFit:'cover', borderRadius:'50%' }}/>
             : initials
           }
-        </div>
-
-        {/* Name + role — hidden on small phones */}
-        <div onClick={() => setShowMenu(o => !o)} style={{ cursor:'pointer', display:'none' }} className="admin-name-block">
-          <div style={{ fontSize:13, fontWeight:500, color:C.text, lineHeight:1.2, whiteSpace:'nowrap' }}>
-            {user?.accountName || user?.email?.split('@')[0] || 'Admin'}
-          </div>
-          <div style={{ fontSize:11, color:C.primary, lineHeight:1.2 }}>{user?.adminRole}</div>
         </div>
 
         {showMenu && (
@@ -334,14 +337,19 @@ function TabBar({ tab, changeTab, allowedTabs }) {
       </div>
 
       <style>{`
+        /* Mobile: hide name, show bell + avatar */
+        @media (max-width: 639px) {
+          .admin-tabbar-desktop { display: none !important; }
+          .admin-name-block { display: none !important; }
+        }
+        /* Desktop: show name, use desktop tabs */
         @media (min-width: 640px) {
           .admin-tabbar-mobile { display: none !important; }
           .admin-tabbar-desktop { display: flex !important; }
           .admin-name-block { display: block !important; }
         }
-        @media (max-width: 639px) {
-          .admin-tabbar-desktop { display: none !important; }
-        }
+        /* Hide scrollbar on tab rows */
+        .admin-tabbar-mobile::-webkit-scrollbar { display: none; }
       `}</style>
 
       {/* Desktop scrollable tab bar */}
