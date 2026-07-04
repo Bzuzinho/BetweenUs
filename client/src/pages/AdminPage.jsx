@@ -299,72 +299,80 @@ function AdminHeader({ user, onLogout }) {
 /* ─── Compact tab bar ────────────────────────────────────────────────────────── */
 function TabBar({ tab, changeTab, allowedTabs }) {
   const tabs = ALL_TABS.filter(t => allowedTabs.includes(t.key))
-  // On mobile: show icon grid. On desktop: scrollable tab bar.
+  const stickyTop = 'calc(56px + env(safe-area-inset-top))'
+
   return (
     <>
-      {/* Mobile tab grid — icon + short label, no horizontal scroll */}
-      {/* Mobile: single scrollable row, icon + tiny label */}
-      <div style={{
-        display:'flex',
-        overflowX:'auto',
-        scrollbarWidth:'none',
-        msOverflowStyle:'none',
-        background:C.bg,
-        borderBottom:`1px solid ${C.border}`,
-        position:'sticky', top:'calc(56px + env(safe-area-inset-top))', zIndex:40,
-        WebkitOverflowScrolling:'touch',
-      }} className="admin-tabbar-mobile">
+      {/* ── Mobile: single scrollable row, icon + tiny label, no wrap ── */}
+      <div
+        className="admin-tabbar-mobile"
+        style={{
+          display:'flex',
+          overflowX:'auto',
+          overflowY:'hidden',
+          flexWrap:'nowrap',
+          scrollbarWidth:'none',
+          msOverflowStyle:'none',
+          WebkitOverflowScrolling:'touch',
+          background:C.bg,
+          borderBottom:`1px solid ${C.border}`,
+          position:'sticky',
+          top: stickyTop,
+          zIndex:40,
+        }}
+      >
         {tabs.map(t => {
           const active = tab === t.key
           return (
             <button key={t.key} onClick={() => changeTab(t.key)} style={{
               flexShrink:0,
-              display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-              gap:2, padding:'8px 10px',
-              background: active ? C.primaryDim : 'none',
+              flexGrow:0,
+              display:'flex',
+              flexDirection:'column',
+              alignItems:'center',
+              justifyContent:'center',
+              gap:2,
+              padding:'7px 10px',
+              minWidth:56,
+              background:'none',
               border:'none',
               borderBottom: active ? `2px solid ${C.primary}` : '2px solid transparent',
               color: active ? C.primary : '#C8D4DC',
-              fontSize:9, fontWeight: active ? 600 : 400,
-              cursor:'pointer', minHeight:46, minWidth:52,
+              fontSize:9,
+              fontWeight: active ? 600 : 400,
+              cursor:'pointer',
+              minHeight:44,
               whiteSpace:'nowrap',
             }}>
-              <span style={{ fontSize:17 }}>{t.icon}</span>
-              <span>{t.label}</span>
+              <span style={{ fontSize:18, lineHeight:1 }}>{t.icon}</span>
+              <span style={{ marginTop:2 }}>{t.label}</span>
             </button>
           )
         })}
       </div>
 
-      <style>{`
-        /* Mobile: hide name, show bell + avatar */
-        @media (max-width: 639px) {
-          .admin-tabbar-desktop { display: none !important; }
-          .admin-name-block { display: none !important; }
-        }
-        /* Desktop: show name, use desktop tabs */
-        @media (min-width: 640px) {
-          .admin-tabbar-mobile { display: none !important; }
-          .admin-tabbar-desktop { display: flex !important; }
-          .admin-name-block { display: block !important; }
-        }
-        /* Hide scrollbar on tab rows */
-        .admin-tabbar-mobile::-webkit-scrollbar { display: none; }
-      `}</style>
-
-      {/* Desktop scrollable tab bar */}
-      <div style={{
-        display:'none', overflowX:'auto', gap:4,
-        padding:'10px 16px', background:C.bg,
-        borderBottom:`1px solid ${C.border}`,
-        scrollbarWidth:'none', position:'sticky',
-        top:'calc(56px + env(safe-area-inset-top))', zIndex:40,
-      }} className="admin-tabbar-desktop">
+      {/* ── Desktop: scrollable pill tabs ── */}
+      <div
+        className="admin-tabbar-desktop"
+        style={{
+          display:'none',
+          overflowX:'auto',
+          gap:4,
+          padding:'10px 16px',
+          background:C.bg,
+          borderBottom:`1px solid ${C.border}`,
+          scrollbarWidth:'none',
+          position:'sticky',
+          top: stickyTop,
+          zIndex:40,
+        }}
+      >
         {tabs.map(t => {
           const active = tab === t.key
           return (
             <button key={t.key} onClick={() => changeTab(t.key)} style={{
-              flexShrink:0, display:'flex', alignItems:'center', gap:5,
+              flexShrink:0,
+              display:'flex', alignItems:'center', gap:5,
               background: active ? C.primaryDim : 'none',
               border:`1px solid ${active ? C.primary : 'transparent'}`,
               borderRadius:8, padding:'8px 14px',
@@ -378,6 +386,19 @@ function TabBar({ tab, changeTab, allowedTabs }) {
           )
         })}
       </div>
+
+      <style>{`
+        .admin-tabbar-mobile::-webkit-scrollbar { display: none; }
+        @media (min-width: 640px) {
+          .admin-tabbar-mobile  { display: none !important; }
+          .admin-tabbar-desktop { display: flex !important; }
+          .admin-name-block     { display: block !important; }
+        }
+        @media (max-width: 639px) {
+          .admin-tabbar-desktop { display: none !important; }
+          .admin-name-block     { display: none !important; }
+        }
+      `}</style>
     </>
   )
 }
