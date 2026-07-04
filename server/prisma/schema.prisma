@@ -244,6 +244,7 @@ model User {
   messages             Message[]
   coupleApprovals      CoupleMatchApproval[]
   privateRoomMembers   PrivateRoomMember[]
+  roomMessages         RoomMessage[]       @relation("RoomMessageSender")
   adminActionsPerformed AdminAction[]        @relation("AdminPerformer")
   adminActionsReceived  AdminAction[]        @relation("AdminTarget")
   betaInvites          BetaInvite[]         @relation("InviteCreator")
@@ -467,16 +468,32 @@ model Message {
 }
 
 model PrivateRoom {
-  id        String              @id @default(uuid())
-  matchId   String              @unique
-  match     Match               @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  title     String?
-  rules     String[]
-  status    String              @default("active")
-  createdAt DateTime            @default(now())
-  members   PrivateRoomMember[]
+  id          String              @id @default(uuid())
+  matchId     String?             @unique   // optional — rooms can exist without a match
+  match       Match?              @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  title       String?
+  roomType    String              @default("CUSTOM")
+  description String?
+  rules       String[]
+  status      String              @default("ACTIVE")
+  createdAt   DateTime            @default(now())
+  members     PrivateRoomMember[]
+  messages    RoomMessage[]
 
   @@map("private_rooms")
+}
+
+model RoomMessage {
+  id          String      @id @default(uuid())
+  roomId      String
+  room        PrivateRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  senderUserId String
+  sender      User        @relation("RoomMessageSender", fields: [senderUserId], references: [id])
+  body        String
+  createdAt   DateTime    @default(now())
+  deletedAt   DateTime?
+
+  @@map("room_messages")
 }
 
 model PrivateRoomMember {
