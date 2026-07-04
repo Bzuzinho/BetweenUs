@@ -37,7 +37,7 @@ export default function AppShell({ screen }) {
       minHeight:'100vh', minHeight:'-webkit-fill-available',
       background:C.bg, position:'relative',
     }}>
-      <div style={{ paddingBottom:'calc(68px + env(safe-area-inset-bottom))' }}>
+      <div style={{ paddingBottom:'calc(68px + env(safe-area-inset-bottom))', paddingTop:'env(safe-area-inset-top)' }}>
         {renderScreen()}
       </div>
 
