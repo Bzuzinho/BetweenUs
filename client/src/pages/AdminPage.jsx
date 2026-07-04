@@ -218,10 +218,12 @@ function AdminHeader({ user, onLogout }) {
   return (
     <div style={{
       background:C.surface, borderBottom:`1px solid ${C.border}`,
-      padding:'10px 16px',
+      paddingTop:'calc(10px + env(safe-area-inset-top))',
+      paddingBottom:'10px',
+      paddingLeft:16, paddingRight:16,
       display:'flex', alignItems:'center', gap:8,
       position:'sticky', top:0, zIndex:50,
-      minHeight:56,
+      minHeight:'calc(56px + env(safe-area-inset-top))',
     }}>
       {/* Logo — bigger, legible */}
       <svg width="34" height="17" viewBox="0 0 56 28" style={{ flexShrink:0 }}>
@@ -298,39 +300,37 @@ function TabBar({ tab, changeTab, allowedTabs }) {
   return (
     <>
       {/* Mobile tab grid — icon + short label, no horizontal scroll */}
+      {/* Mobile: single scrollable row, icon + tiny label */}
       <div style={{
-        display:'grid',
-        gridTemplateColumns: `repeat(${Math.min(tabs.length, 5)}, 1fr)`,
-        gap:0,
+        display:'flex',
+        overflowX:'auto',
+        scrollbarWidth:'none',
+        msOverflowStyle:'none',
         background:C.bg,
         borderBottom:`1px solid ${C.border}`,
-        position:'sticky', top:56, zIndex:40,
+        position:'sticky', top:'calc(56px + env(safe-area-inset-top))', zIndex:40,
+        WebkitOverflowScrolling:'touch',
       }} className="admin-tabbar-mobile">
-        {tabs.slice(0, 9).map(t => {
+        {tabs.map(t => {
           const active = tab === t.key
           return (
             <button key={t.key} onClick={() => changeTab(t.key)} style={{
+              flexShrink:0,
               display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-              gap:2, padding:'8px 4px',
+              gap:2, padding:'8px 10px',
               background: active ? C.primaryDim : 'none',
               border:'none',
               borderBottom: active ? `2px solid ${C.primary}` : '2px solid transparent',
               color: active ? C.primary : '#C8D4DC',
               fontSize:9, fontWeight: active ? 600 : 400,
-              cursor:'pointer', minHeight:48,
+              cursor:'pointer', minHeight:46, minWidth:52,
+              whiteSpace:'nowrap',
             }}>
-              <span style={{ fontSize:16 }}>{t.icon}</span>
-              <span style={{ letterSpacing:0.2 }}>{t.label}</span>
+              <span style={{ fontSize:17 }}>{t.icon}</span>
+              <span>{t.label}</span>
             </button>
           )
         })}
-        {/* If more than 5 tabs and active is > 5, show overflow indicator */}
-        {tabs.length > 9 && (
-          <button style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:2, padding:'8px 4px', background:'none', border:'none', color:C.muted, fontSize:9, cursor:'default', minHeight:48 }}>
-            <span style={{ fontSize:16 }}>⋯</span>
-            <span>Mais</span>
-          </button>
-        )}
       </div>
 
       <style>{`
@@ -350,7 +350,7 @@ function TabBar({ tab, changeTab, allowedTabs }) {
         padding:'10px 16px', background:C.bg,
         borderBottom:`1px solid ${C.border}`,
         scrollbarWidth:'none', position:'sticky',
-        top:56, zIndex:40,
+        top:'calc(56px + env(safe-area-inset-top))', zIndex:40,
       }} className="admin-tabbar-desktop">
         {tabs.map(t => {
           const active = tab === t.key
