@@ -84,17 +84,26 @@ function NotificationBell() {
   return (
     <div ref={ref} style={{ position:'relative' }}>
       <button onClick={() => setOpen(o => !o)} style={{
-        position:'relative', background:'none', border:`1px solid ${C.border}`,
+        position:'relative', background:'none', border:`1px solid ${unread > 0 ? 'rgba(184,167,255,0.4)' : C.border}`,
         borderRadius:10, width:38, height:38, cursor:'pointer',
-        display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, color:C.text2,
+        display:'flex', alignItems:'center', justifyContent:'center', fontSize:18,
+        color: unread > 0 ? C.primary : C.text2,
+        transition:'all 0.2s',
       }}>
         🔔
         {unread > 0 && (
-          <span style={{ position:'absolute', top:-4, right:-4, background:C.danger, color:'#fff', fontSize:9, fontWeight:700, borderRadius:10, padding:'1px 5px', minWidth:16, textAlign:'center' }}>
+          <span style={{
+            position:'absolute', top:-5, right:-5,
+            background:C.danger, color:'#fff',
+            fontSize:9, fontWeight:700, borderRadius:10,
+            padding:'1px 5px', minWidth:16, textAlign:'center',
+            animation:'pulse 1.5s infinite',
+          }}>
             {unread > 9 ? '9+' : unread}
           </span>
         )}
       </button>
+      <style>{`@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.7;transform:scale(1.15)} }`}</style>
 
       {open && (
         <div style={{
@@ -113,7 +122,14 @@ function NotificationBell() {
               <div style={{ padding:20, textAlign:'center', color:C.muted, fontSize:13 }}>Sem notificações</div>
             )}
             {notifs.map(n => (
-              <div key={n.id} onClick={() => markRead(n.id)} style={{
+              <div key={n.id} onClick={() => {
+                markRead(n.id)
+                // Navigate to relevant admin tab
+                try {
+                  const d = n.data ? JSON.parse(n.data) : {}
+                  if (d.tab) { setOpen(false); navigate(`/admin/${d.tab}`) }
+                } catch {}
+              }} style={{
                 padding:'12px 14px', borderBottom:`1px solid ${C.border}`, cursor:'pointer',
                 background: n.readAt ? 'none' : C.elevated, display:'flex', gap:10, alignItems:'flex-start',
               }}>
