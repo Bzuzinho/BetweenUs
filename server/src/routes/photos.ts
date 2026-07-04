@@ -5,6 +5,7 @@ import prisma from '../lib/prisma'
 import { uploadFile, deleteFile } from '../lib/storage'
 import { processImage, detectRealImageType } from '../lib/imageProcessing'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { notifyAdmins } from '../lib/notify'
 
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
