@@ -1323,6 +1323,204 @@ function EmailDiagnosticPanel() {
   )
 }
 
+
+/* ─── Guide Manager (Between Guide content) ─────────────────────────────────── */
+const GUIDE_CATS = ['Casais','Comunicação','Privacidade','Consentimento','Relações','Segurança','Perfil','Outro']
+const GUIDE_ICONS = ['○','◎','◉','◌','◑','◈','⊙','∞','✓','⚑']
+
+function GuideManager() {
+  const [articles, setArticles] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState(null)   // null | 'new' | article object
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  const [form, setForm] = useState({ title:'', category:'Privacidade', summary:'', body:'', icon:'○', published:false, sortOrder:0 })
+
+  const load = useCallback(() => {
+    api.get('/guide/admin/all').then(r => setArticles(r.data.articles||[])).catch(()=>{}).finally(()=>setLoading(false))
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const openNew = () => {
+    setForm({ title:'', category:'Privacidade', summary:'', body:'', icon:'○', published:false, sortOrder: articles.length })
+    setEditing('new')
+    setMsg(''); setErr('')
+  }
+
+  const openEdit = (a) => {
+    setForm({ title:a.title, category:a.category, summary:a.summary||'', body:a.body||'', icon:a.icon||'○', published:a.published, sortOrder:a.sortOrder||0 })
+    setEditing(a)
+    setMsg(''); setErr('')
+  }
+
+  const save = async () => {
+    if (!form.title.trim() || !form.body.trim()) return setErr('Título e conteúdo obrigatórios.')
+    setSaving(true); setMsg(''); setErr('')
+    try {
+      if (editing === 'new') {
+        await api.post('/guide/admin', form)
+        setMsg('Artigo criado.')
+      } else {
+        await api.put(`/guide/admin/${editing.id}`, form)
+        setMsg('Artigo guardado.')
+      }
+      setEditing(null); load()
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Erro ao guardar.')
+    } finally { setSaving(false) }
+  }
+
+  const del = async (id) => {
+    if (!confirm('Eliminar artigo?')) return
+    await api.delete(`/guide/admin/${id}`).catch(()=>{})
+    load()
+  }
+
+  const togglePublish = async (a) => {
+    await api.put(`/guide/admin/${a.id}`, { published: !a.published }).catch(()=>{})
+    load()
+  }
+
+  // ── Editor ──
+  if (editing !== null) return (
+    <div>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20 }}>
+        <button onClick={() => setEditing(null)} style={{ background:'none', border:'none', color:C.muted, fontSize:20, cursor:'pointer' }}>←</button>
+        <h3 style={{ color:C.text, fontSize:16, fontWeight:500, margin:0, flex:1 }}>
+          {editing === 'new' ? 'Novo artigo' : 'Editar artigo'}
+        </h3>
+        <button onClick={save} disabled={saving} style={{ background:C.primary, border:'none', borderRadius:8, padding:'8px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer', opacity:saving?0.6:1 }}>
+          {saving ? '…' : 'Guardar'}
+        </button>
+      </div>
+
+      {msg && <div style={{ color:C.success, fontSize:13, marginBottom:10 }}>{msg}</div>}
+      {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+
+      {/* Icon picker */}
+      <div style={{ marginBottom:12 }}>
+        <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>Ícone</div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
+          {GUIDE_ICONS.map(ic => (
+            <button key={ic} onClick={() => setForm(p=>({...p,icon:ic}))} style={{
+              width:36, height:36, borderRadius:8, border:`1.5px solid ${form.icon===ic?C.primary:C.border}`,
+              background:form.icon===ic?C.primaryDim:C.elevated, fontSize:18, cursor:'pointer', color:form.icon===ic?C.primary:C.text2
+            }}>{ic}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Category */}
+      <div style={{ marginBottom:10 }}>
+        <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>Categoria</div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+          {GUIDE_CATS.map(c => (
+            <button key={c} onClick={() => setForm(p=>({...p,category:c}))} style={{
+              background:form.category===c?C.primaryDim:C.elevated,
+              border:`1px solid ${form.category===c?C.primary:C.border}`,
+              borderRadius:8, padding:'6px 12px', color:form.category===c?C.primary:C.text2, fontSize:12, cursor:'pointer'
+            }}>{c}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Title */}
+      <div style={{ marginBottom:10 }}>
+        <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Título *</div>
+        <input value={form.title} onChange={e=>setForm(p=>({...p,title:e.target.value}))}
+          placeholder="Título do artigo"
+          style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14 }}/>
+      </div>
+
+      {/* Summary */}
+      <div style={{ marginBottom:10 }}>
+        <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Resumo</div>
+        <input value={form.summary} onChange={e=>setForm(p=>({...p,summary:e.target.value}))}
+          placeholder="Uma linha que aparece na lista"
+          style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14 }}/>
+      </div>
+
+      {/* Body */}
+      <div style={{ marginBottom:14 }}>
+        <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Conteúdo *</div>
+        <textarea value={form.body} onChange={e=>setForm(p=>({...p,body:e.target.value}))}
+          placeholder="Escreve o conteúdo completo do artigo..."
+          rows={12}
+          style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14, resize:'vertical', lineHeight:1.6 }}/>
+      </div>
+
+      {/* Published toggle */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:C.elevated, borderRadius:10, padding:'12px 14px' }}>
+        <div>
+          <div style={{ fontSize:14, color:C.text }}>Publicado</div>
+          <div style={{ fontSize:12, color:C.muted }}>Visível para os utilizadores</div>
+        </div>
+        <div onClick={() => setForm(p=>({...p,published:!p.published}))} style={{
+          width:44, height:24, borderRadius:12, cursor:'pointer',
+          background:form.published?C.primary:C.input, position:'relative', border:`1px solid ${form.published?C.primary:C.border}`,
+        }}>
+          <div style={{ position:'absolute', top:3, width:16, height:16, borderRadius:'50%', background:'white', left:form.published?23:3, transition:'left 0.2s' }}/>
+        </div>
+      </div>
+    </div>
+  )
+
+  // ── List ──
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+        <div>
+          <div style={{ fontSize:15, fontWeight:500, color:C.text }}>Artigos do Between Guide</div>
+          <div style={{ fontSize:12, color:C.muted, marginTop:2 }}>{articles.length} artigos · {articles.filter(a=>a.published).length} publicados</div>
+        </div>
+        <button onClick={openNew} style={{ background:C.primary, border:'none', borderRadius:10, padding:'9px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>
+          + Novo artigo
+        </button>
+      </div>
+
+      {loading && <div style={{ color:C.muted, padding:20, textAlign:'center' }}>A carregar…</div>}
+
+      {!loading && articles.length === 0 && (
+        <div style={{ textAlign:'center', padding:'40px 20px', color:C.muted }}>
+          <div style={{ fontSize:32, marginBottom:12 }}>◈</div>
+          <div>Ainda sem artigos no Guia.</div>
+          <div style={{ fontSize:13, marginTop:6 }}>Cria o primeiro artigo para os utilizadores.</div>
+        </div>
+      )}
+
+      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+        {articles.map(a => (
+          <div key={a.id} style={{ background:C.surface, border:`1px solid ${a.published?'rgba(74,222,128,0.2)':C.border}`, borderRadius:14, padding:'12px 14px' }}>
+            <div style={{ display:'flex', alignItems:'flex-start', gap:10 }}>
+              <div style={{ fontSize:20, width:28, textAlign:'center', flexShrink:0, marginTop:2 }}>{a.icon}</div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:2 }}>{a.title}</div>
+                <div style={{ fontSize:11, color:C.muted }}>
+                  {a.category} · {a.published ? <span style={{color:C.success}}>● Publicado</span> : <span>○ Rascunho</span>}
+                </div>
+                {a.summary && <div style={{ fontSize:12, color:C.text2, marginTop:4, lineHeight:1.4 }}>{a.summary}</div>}
+              </div>
+            </div>
+            <div style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>
+              <button onClick={() => openEdit(a)} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.text2, fontSize:12, cursor:'pointer' }}>
+                ✏️ Editar
+              </button>
+              <button onClick={() => togglePublish(a)} style={{ background:a.published?C.dangerDim:C.successDim, border:`1px solid ${a.published?C.danger:C.success}`, borderRadius:6, padding:'5px 12px', color:a.published?C.danger:C.success, fontSize:12, cursor:'pointer' }}>
+                {a.published ? 'Despublicar' : 'Publicar'}
+              </button>
+              <button onClick={() => del(a.id)} style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.muted, fontSize:12, cursor:'pointer' }}>
+                🗑
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /* ─── Configurações Tab (SUPER_ADMIN only) ───────────────────────────────────── */
 const ROLES_CONFIG = [
   { value:'CONTENT_REVIEWER', label:'Revisor de conteúdo', desc:'Fotos e perfis', perms:['photos','profiles'] },
@@ -1348,7 +1546,7 @@ function ConfiguracoesTab() {
     <div>
       {/* Subtab bar */}
       <div style={{ display:'flex', gap:6, marginBottom:20 }}>
-        {[['perfis','◎ Perfis'],['subscricoes','✦ Subscrições'],['email','✉ Email']].map(([k,l]) => (
+        {[['perfis','◎ Perfis'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia']].map(([k,l]) => (
           <button key={k} onClick={()=>setSubTab(k)} style={{
             background:subTab===k?C.primaryDim:C.surface,
             border:`1.5px solid ${subTab===k?C.primary:C.border}`,
@@ -1393,6 +1591,9 @@ function ConfiguracoesTab() {
 
       {/* ── Email subtab ── */}
       {subTab==='email' && <EmailDiagnosticPanel />}
+
+      {/* ── Guia subtab ── */}
+      {subTab==='guia' && <GuideManager />}
 
       {/* ── Subscrições subtab ── */}
       {subTab==='subscricoes' && (
