@@ -72,7 +72,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     })
     const excludeIds = new Set([
       viewerProfile.id,
-      ...myActions.filter(a => ['block','pass'].includes(a.action)).map(a => a.targetProfileId)
+      ...myActions.filter(a => ['BLOCK','PASS'].includes(a.action)).map(a => a.targetProfileId)
     ])
 
     // Get existing matches (already connected)
@@ -111,7 +111,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     })).sort((a, b) => b.score - a.score)
 
     // Mark which ones viewer has liked (pending connection)
-    const likedIds = new Set(myActions.filter(a => a.action === 'like').map(a => a.targetProfileId))
+    const likedIds = new Set(myActions.filter(a => a.action === 'LIKE').map(a => a.targetProfileId))
 
     const result = scored.map(p => ({
       id:                 p.id,
@@ -154,13 +154,13 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
     // Record like action
     await prisma.profileAction.upsert({
       where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: target.id } },
-      update: { action: 'like' },
-      create: { actorProfileId: viewer.profile.id, targetProfileId: target.id, action: 'like' }
+      update: { action: 'LIKE' },
+      create: { actorProfileId: viewer.profile.id, targetProfileId: target.id, action: 'LIKE' }
     })
 
     // Check if target already liked viewer → auto-match
     const theirLike = await prisma.profileAction.findFirst({
-      where: { actorProfileId: target.id, targetProfileId: viewer.profile.id, action: 'like' }
+      where: { actorProfileId: target.id, targetProfileId: viewer.profile.id, action: 'LIKE' }
     })
 
     let matched = false
@@ -227,8 +227,8 @@ router.post('/:id/pass', requireAuth, async (req: AuthRequest, res: Response) =>
     if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
     await prisma.profileAction.upsert({
       where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
-      update: { action: 'pass' },
-      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id, action: 'pass' }
+      update: { action: 'PASS' },
+      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id, action: 'PASS' }
     })
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
@@ -241,8 +241,8 @@ router.post('/:id/block', requireAuth, async (req: AuthRequest, res: Response) =
     if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
     await prisma.profileAction.upsert({
       where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
-      update: { action: 'block' },
-      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id, action: 'block' }
+      update: { action: 'BLOCK' },
+      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id, action: 'BLOCK' }
     })
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }

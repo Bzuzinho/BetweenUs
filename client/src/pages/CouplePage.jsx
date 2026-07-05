@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
+import UserNotificationBell from '../components/UserNotificationBell'
 
 const C = {
   bg:'#0A141A', surface:'#102129', elevated:'#172C36',
@@ -120,7 +121,8 @@ export default function CouplePage() {
             style={{ background:'none', border:'none',
               color:C.text2, fontSize:20, cursor:'pointer' }}>←</button>
           <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:24,
-            fontWeight:700, color:C.text }}>Perfil de Casal</h1>
+            fontWeight:700, color:C.text, flex:1 }}>Perfil de Casal</h1>
+          <UserNotificationBell />
         </div>
 
         {step === 'create' && (

@@ -120,6 +120,7 @@ import roomsRouter          from './routes/rooms'
 import pushRouter           from './routes/push'
 import guideRouter          from './routes/guide'
 import betaRouter          from './routes/beta'
+import notificationsRouter  from './routes/notifications'
 
 app.use('/api/auth',          authRouter)
 app.use('/api/profiles',      profileRouter)
@@ -140,6 +141,7 @@ app.use('/api/rooms',          roomsRouter)
 app.use('/api/push',           pushRouter)
 app.use('/api/guide',          guideRouter)
 app.use('/api/beta',          betaRouter)
+app.use('/api/notifications', notificationsRouter)
 
 io.on('connection', socket => {
   socket.on('join_conversation',  (id: string) => socket.join('conversation:' + id))

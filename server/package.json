@@ -9,7 +9,8 @@
     "test:coverage": "dotenv -e .env.test -- jest --runInBand --forceExit --coverage",
     "test:watch": "dotenv -e .env.test -- jest --watch --runInBand",
     "db:migrate": "npx prisma migrate deploy",
-    "db:seed": "ts-node prisma/seed.ts"
+    "db:seed": "ts-node prisma/seed.ts",
+    "db:backfill-members": "ts-node --transpile-only src/scripts/backfillProfileMembers.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.540.0",
