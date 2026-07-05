@@ -9,6 +9,7 @@ import CreateProfilePage from './pages/CreateProfilePage'
 import EditProfilePage from './pages/EditProfilePage'
 import AccountPage from './pages/AccountPage'
 import CouplePage, { CoupleInvitePage } from './pages/CouplePage'
+import GroupPage, { GroupInvitePage } from './pages/GroupPage'
 import PhotosPage from './pages/PhotosPage'
 import ContactsBlockPage from './pages/ContactsBlockPage'
 import VerificationPage from './pages/VerificationPage'
@@ -84,6 +85,7 @@ export default function App() {
         <Route path="/otp-login"         element={<OtpLoginPage />} />
         <Route path="/legal/:page"     element={<LegalPage />} />
         <Route path="/couple-invite/:token" element={<CoupleInvitePage />} />
+        <Route path="/group-invite/:token" element={<GroupInvitePage />} />
 
         {/* Admin */}
         <Route path="/admin"      element={<AdminRoute><AdminPage /></AdminRoute>} />
@@ -94,6 +96,7 @@ export default function App() {
         <Route path="/create-profile"    element={<PrivateRoute requireProfile={false}><CreateProfilePage /></PrivateRoute>} />
         <Route path="/edit-profile"      element={<PrivateRoute><EditProfilePage /></PrivateRoute>} />
         <Route path="/couple"            element={<PrivateRoute><CouplePage /></PrivateRoute>} />
+        <Route path="/group"             element={<PrivateRoute><GroupPage /></PrivateRoute>} />
         <Route path="/photos"            element={<PrivateRoute><PhotosPage /></PrivateRoute>} />
         <Route path="/contacts/block"    element={<PrivateRoute><ContactsBlockPage /></PrivateRoute>} />
         <Route path="/verify"            element={<PrivateRoute><VerificationPage /></PrivateRoute>} />

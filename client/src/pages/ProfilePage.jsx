@@ -104,6 +104,7 @@ export default function ProfilePage() {
         <Row to="/privacy-settings"icon="🔒" label="Privacidade"            desc="Invisível, distância, notificações"/>
         <Row to="/verify"          icon="✅" label={isVerified ? "Verificado ✓" : "Verificar perfil"} desc="Selfie de verificação"/>
         <Row to="/couple"          icon="◎"  label="Perfil de casal"        desc="Criar ou gerir perfil de casal"/>
+        <Row to="/group"           icon="◐"  label="Perfil de grupo"        desc="Trio, poliamor ou grupo personalizado"/>
         <Row to="/contacts/block"  icon="⊘"  label="Bloquear contactos"    desc="Ocultar-te de pessoas conhecidas" last/>
       </Section>
 

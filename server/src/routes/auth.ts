@@ -195,6 +195,18 @@ router.get('/me', async (req: Request, res: Response) => {
       }
     })
     if (!user) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+    // Sprint 3: invited couple/group members have no owned Profile row —
+    // fall back to the shared profile they've been accepted into, so the
+    // frontend's PrivateRoute doesn't wrongly send them to /create-profile.
+    if (!user.profile) {
+      const membership = await (prisma as any).profileMember.findFirst({
+        where: { userId, status: 'ACCEPTED' },
+        include: { profile: { select: { id:true, displayName:true, type:true, status:true, city:true } } }
+      })
+      if (membership?.profile) (user as any).profile = membership.profile
+    }
+
     res.json(user)
   } catch { res.status(401).json({ error: 'Token inválido.' }) }
 })
