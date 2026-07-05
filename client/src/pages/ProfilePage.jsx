@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
+import UserNotificationBell from '../components/UserNotificationBell'
 
 const C = {
   bg:'#0A141A', surface:'#102129', elevated:'#172C36',
@@ -61,10 +62,13 @@ export default function ProfilePage() {
       {/* Header */}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24 }}>
         <h1 style={{ fontSize:20, fontWeight:500, color:C.text, margin:0 }}>Perfil</h1>
-        <button onClick={async () => { await logout(); navigate('/login') }}
-          style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:10, padding:'7px 14px', color:C.muted, fontSize:13, cursor:'pointer', minHeight:36 }}>
-          Sair
-        </button>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <UserNotificationBell />
+          <button onClick={async () => { await logout(); navigate('/login') }}
+            style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:10, padding:'7px 14px', color:C.muted, fontSize:13, cursor:'pointer', minHeight:36 }}>
+            Sair
+          </button>
+        </div>
       </div>
 
       {/* Avatar + name card */}

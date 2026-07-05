@@ -32,6 +32,13 @@ enum AdminRole {
 enum ProfileType {
   INDIVIDUAL
   COUPLE
+  GROUP
+}
+
+enum ProfileMemberStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
 }
 
 enum ProfileStatus {
@@ -243,6 +250,7 @@ model User {
   reportsReceived      Report[]              @relation("ReportedUser")
   messages             Message[]
   coupleApprovals      CoupleMatchApproval[]
+  profileMemberships   ProfileMember[]
   privateRoomMembers   PrivateRoomMember[]
   roomMessages         RoomMessage[]       @relation("RoomMessageSender")
   adminActionsPerformed AdminAction[]        @relation("AdminPerformer")
@@ -276,7 +284,9 @@ model Profile {
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
+  sharedDescription String?         // used by COUPLE/GROUP profiles — replaces coupleProfile.coupleDescription going forward
   coupleProfile    CoupleProfile?
+  members          ProfileMember[]
   photos           ProfilePhoto[]
   intentions       ProfileIntention[]
   boundaries       ProfileBoundary[]
@@ -307,6 +317,27 @@ model CoupleProfile {
   updatedAt             DateTime     @updatedAt
 
   @@map("couple_profiles")
+}
+
+// Generalizes CoupleProfile's fixed partnerOne/partnerTwo pair to support
+// any number of members — needed for GROUP profiles (trio, poly, etc).
+// CoupleProfile stays in place for existing couple data; new group creation
+// and eventually couple creation should write here instead.
+model ProfileMember {
+  id           String              @id @default(uuid())
+  profileId    String
+  profile      Profile             @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  userId       String?
+  user         User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invitedEmail String?
+  isCreator    Boolean             @default(false)
+  status       ProfileMemberStatus @default(PENDING)
+  inviteToken  String?             @unique
+  invitedAt    DateTime            @default(now())
+  respondedAt  DateTime?
+
+  @@unique([profileId, userId])
+  @@map("profile_members")
 }
 
 model ProfilePhoto {

@@ -156,7 +156,7 @@ router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res:
 
     // Verify there's a like from them to us
     const theirLike = await prisma.profileAction.findFirst({
-      where: { actorProfileId: fromProfile.id, targetProfileId: viewer.profile.id, action: 'like' }
+      where: { actorProfileId: fromProfile.id, targetProfileId: viewer.profile.id, action: 'LIKE' }
     })
     if (!theirLike) return res.status(400).json({ error: 'Sem pedido de ligação pendente.' })
 
@@ -183,8 +183,8 @@ router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res:
     // Record our like too
     await prisma.profileAction.upsert({
       where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: fromProfile.id } },
-      update: { action: 'like' },
-      create: { actorProfileId: viewer.profile.id, targetProfileId: fromProfile.id, action: 'like' }
+      update: { action: 'LIKE' },
+      create: { actorProfileId: viewer.profile.id, targetProfileId: fromProfile.id, action: 'LIKE' }
     })
 
     // Notify the requester
@@ -211,8 +211,8 @@ router.post('/reject/:fromProfileId', requireAuth, async (req: AuthRequest, res:
     // Record pass action
     await prisma.profileAction.upsert({
       where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.fromProfileId } },
-      update: { action: 'pass' },
-      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.fromProfileId, action: 'pass' }
+      update: { action: 'PASS' },
+      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.fromProfileId, action: 'PASS' }
     })
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }

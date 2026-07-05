@@ -4,6 +4,8 @@ import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { createLikeOrMatch } from '../lib/matchService'
 
+const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
+
 const router = Router()
 
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -28,9 +30,20 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     })
     await prisma.profile.update({ where: { id: myProfile.id }, data: { type: 'COUPLE' } })
 
+    // Sprint 3: dual-write into the generalized ProfileMember model so
+    // couple approvals can run through the same code path as future groups.
+    await (prisma as any).profileMember.create({
+      data: { profileId: myProfile.id, userId: req.userId!, isCreator: true, status: 'ACCEPTED' }
+    }).catch((e: any) => console.error('[PROFILE MEMBER DUAL-WRITE]', e.message))
+    if (partnerEmail) {
+      await (prisma as any).profileMember.create({
+        data: { profileId: myProfile.id, invitedEmail: partnerEmail, status: 'PENDING', inviteToken }
+      }).catch((e: any) => console.error('[PROFILE MEMBER DUAL-WRITE]', e.message))
+    }
+
     res.status(201).json({
       couple, inviteToken,
-      inviteUrl: `${process.env.CLIENT_URL}/couple-invite/${inviteToken}`
+      inviteUrl: `${CLIENT_URL}/couple-invite/${inviteToken}`
     })
   } catch (err: any) {
     console.error('[COUPLE CREATE]', err.message)
@@ -68,6 +81,13 @@ router.post('/join/:token', requireAuth, async (req: AuthRequest, res: Response)
         coupleInviteToken: null
       }
     })
+
+    // Sprint 3: mirror acceptance into ProfileMember
+    await (prisma as any).profileMember.updateMany({
+      where: { profileId: couple.profileId, inviteToken: req.params.token },
+      data: { userId: req.userId, status: 'ACCEPTED', respondedAt: new Date(), inviteToken: null }
+    }).catch((e: any) => console.error('[PROFILE MEMBER DUAL-WRITE]', e.message))
+
     res.json({ ok: true, message: 'Perfil de casal ativado! Ambos podem agora explorar juntos.' })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
@@ -113,31 +133,19 @@ router.post('/like/:targetProfileId', requireAuth, async (req: AuthRequest, res:
 
 router.post('/matches/:matchId/approve', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const match = await prisma.match.findUnique({
-      where: { id: req.params.matchId },
-      include: {
-        profileOne: { include: { coupleProfile: true } },
-        profileTwo: { include: { coupleProfile: true } }
-      }
-    })
+    const match = await prisma.match.findUnique({ where: { id: req.params.matchId } })
     if (!match) return res.status(404).json({ error: 'Match não encontrado.' })
 
-    const coupleSide = match.profileOne.coupleProfile?.coupleStatus === 'ACTIVE'
-      ? match.profileOne.coupleProfile
-      : match.profileTwo.coupleProfile?.coupleStatus === 'ACTIVE'
-        ? match.profileTwo.coupleProfile
-        : null
+    const { getRequiredApproverUserIds } = await import('../lib/matchService')
+    const requiredOne = await getRequiredApproverUserIds(match.profileOneId)
+    const requiredTwo = await getRequiredApproverUserIds(match.profileTwoId)
+    const requiredApprovers = [...new Set([...requiredOne, ...requiredTwo])]
 
-    if (!coupleSide) {
-      return res.status(400).json({ error: 'Este match não envolve um casal ativo — nada para aprovar.' })
+    if (!requiredApprovers.includes(req.userId!)) {
+      return res.status(403).json({ error: 'Não pertences a este match.' })
     }
-
-    const belongsToCouple =
-      coupleSide.partnerOneUserId === req.userId ||
-      coupleSide.partnerTwoUserId === req.userId
-
-    if (!belongsToCouple) {
-      return res.status(403).json({ error: 'Não pertences ao casal envolvido neste match.' })
+    if (requiredOne.length <= 1 && requiredTwo.length <= 1) {
+      return res.status(400).json({ error: 'Este match não envolve casal/grupo — nada para aprovar.' })
     }
 
     await prisma.coupleMatchApproval.upsert({
@@ -149,17 +157,20 @@ router.post('/matches/:matchId/approve', requireAuth, async (req: AuthRequest, r
     const approvals = await prisma.coupleMatchApproval.findMany({
       where: { matchId: match.id, approvedAt: { not: null } }
     })
-
-    const requiredApprovers = [coupleSide.partnerOneUserId, coupleSide.partnerTwoUserId].filter(Boolean)
     const approvedUserIds = new Set(approvals.map(a => a.userId))
-    const allApproved = requiredApprovers.every(uid => approvedUserIds.has(uid!))
+    const allApproved = requiredApprovers.every(uid => approvedUserIds.has(uid))
 
     if (allApproved) {
       await prisma.match.update({ where: { id: match.id }, data: { status: 'ACTIVE', matchedAt: new Date() } })
-      return res.json({ ok: true, active: true, message: 'Ambos aprovaram! Match ativo.' })
+      const { notifyUser } = await import('../lib/notify')
+      requiredApprovers
+        .filter(uid => uid !== req.userId)
+        .forEach(uid => notifyUser(uid, 'match', '💫 Match ativo!',
+          'Todos aprovaram. Já podem conversar.', { matchId: match.id, tab: 'matches' }).catch(() => {}))
+      return res.json({ ok: true, active: true, message: 'Todos aprovaram! Match ativo.' })
     }
 
-    res.json({ ok: true, active: false, message: 'Aprovação registada. A aguardar o/a parceiro/a.' })
+    res.json({ ok: true, active: false, message: 'Aprovação registada. A aguardar restantes membros.' })
   } catch (err: any) {
     console.error('[COUPLE APPROVE]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
