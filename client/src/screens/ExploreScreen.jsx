@@ -10,10 +10,60 @@ const C = {
 }
 
 const FILTERS = [
-  { key:'',         label:'Todos' },
+  { key:'',           label:'Todos' },
   { key:'INDIVIDUAL', label:'Solteiros' },
   { key:'COUPLE',     label:'Casais' },
+  { key:'GROUP',      label:'Grupos' },
 ]
+
+const TYPE_ICON = { INDIVIDUAL: '○', COUPLE: '◎', GROUP: '👥' }
+const TYPE_LABEL = { INDIVIDUAL: 'Individual', COUPLE: 'Casal', GROUP: 'Grupo' }
+
+function GridTile({ profile, onOpen }) {
+  return (
+    <div onClick={() => onOpen(profile)} style={{
+      background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14,
+      overflow: 'hidden', cursor: 'pointer', position: 'relative',
+    }}>
+      <div style={{
+        aspectRatio: '3 / 4', width: '100%',
+        background: `linear-gradient(160deg, ${C.elevated} 0%, ${C.bg} 100%)`,
+        position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        {profile.photos?.length > 0 ? (
+          <img src={profile.photos[0].blurredPath || profile.photos[0].storagePath} alt=""
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        ) : (
+          <span style={{ fontSize: 22, color: C.muted }}>{TYPE_ICON[profile.type] || '○'}</span>
+        )}
+
+        {profile.type !== 'INDIVIDUAL' && (
+          <div style={{ position: 'absolute', top: 6, left: 6, background: 'rgba(10,20,26,0.85)',
+            border: `1px solid rgba(184,167,255,0.3)`, borderRadius: 20, padding: '2px 7px',
+            fontSize: 9, color: C.primary, backdropFilter: 'blur(6px)' }}>
+            {TYPE_ICON[profile.type]} {TYPE_LABEL[profile.type]}
+          </div>
+        )}
+
+        <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(10,20,26,0.85)',
+          borderRadius: 10, padding: '2px 6px', fontSize: 9, color: C.text,
+          display: 'flex', alignItems: 'center', gap: 3, backdropFilter: 'blur(6px)' }}>
+          <div style={{ width: 5, height: 5, borderRadius: '50%',
+            background: profile.betweenScore > 80 ? C.success : profile.betweenScore > 60 ? C.warning : C.muted }} />
+          {profile.betweenScore}
+        </div>
+      </div>
+      <div style={{ padding: '8px 8px 10px' }}>
+        <div style={{ fontSize: 12, fontWeight: 500, color: C.text, whiteSpace: 'nowrap',
+          overflow: 'hidden', textOverflow: 'ellipsis' }}>{profile.displayName}</div>
+        <div style={{ fontSize: 10, color: C.muted, whiteSpace: 'nowrap',
+          overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {[profile.city, profile.distance && `${profile.distance} km`].filter(Boolean).join(' · ')}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function ProfileCard({ profile, onLike, onPass }) {
   const [actioned, setActioned] = useState(null)
@@ -62,7 +112,7 @@ function ProfileCard({ profile, onLike, onPass }) {
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 28, color: C.muted,
             }}>
-              {profile.type === 'COUPLE' ? '◎' : '○'}
+              {TYPE_ICON[profile.type] || '○'}
             </div>
           )}
 
@@ -85,8 +135,8 @@ function ProfileCard({ profile, onLike, onPass }) {
             {profile.verificationBadges?.includes('selfie_verified') && (
               <div style={{ background:'rgba(29,158,117,0.2)', border:`1px solid rgba(29,158,117,0.4)`, borderRadius:20, padding:'3px 8px', fontSize:11, color:C.success, backdropFilter:'blur(4px)' }}>✓ Verificado</div>
             )}
-            {profile.type === 'COUPLE' && (
-              <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.3)`, borderRadius:20, padding:'3px 8px', fontSize:11, color:C.primary, backdropFilter:'blur(4px)' }}>Casal</div>
+            {profile.type !== 'INDIVIDUAL' && (
+              <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.3)`, borderRadius:20, padding:'3px 8px', fontSize:11, color:C.primary, backdropFilter:'blur(4px)' }}>{TYPE_LABEL[profile.type] || profile.type}</div>
             )}
           </div>
 
@@ -189,6 +239,7 @@ export default function ExploreScreen() {
   const [filter, setFilter] = useState('')
   const [empty, setEmpty] = useState(false)
   const [error, setError] = useState('')
+  const [selected, setSelected] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true); setError(''); setEmpty(false)
@@ -216,6 +267,7 @@ export default function ExploreScreen() {
   const handlePass = async (id) => {
     await api.post(`/discovery/${id}/pass`).catch(() => {})
     setProfiles(prev => prev.filter(p => p.id !== id))
+    setSelected(null)
   }
 
   return (
@@ -285,9 +337,34 @@ export default function ExploreScreen() {
         </div>
       )}
 
-      {!loading && !error && profiles.map(p => (
-        <ProfileCard key={p.id} profile={p} onLike={handleLike} onPass={handlePass} />
-      ))}
+      {!loading && !error && (
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:10, paddingBottom:24 }}>
+          {profiles.map(p => (
+            <GridTile key={p.id} profile={p} onOpen={setSelected} />
+          ))}
+        </div>
+      )}
+
+      {selected && (
+        <div onClick={e => { if (e.target === e.currentTarget) setSelected(null) }} style={{
+          position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', zIndex:250,
+          display:'flex', alignItems:'flex-end', justifyContent:'center',
+        }}>
+          <div style={{ width:'100%', maxWidth:480, maxHeight:'88vh', overflowY:'auto',
+            background:C.bg, borderRadius:'20px 20px 0 0', padding:'12px 12px 24px' }}>
+            <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:4 }}>
+              <button onClick={() => setSelected(null)} style={{
+                background:'none', border:'none', color:C.muted, fontSize:22,
+                cursor:'pointer', minWidth:44, minHeight:44 }}>✕</button>
+            </div>
+            <ProfileCard
+              profile={selected}
+              onLike={async id => { const r = await handleLike(id); return r }}
+              onPass={handlePass}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
