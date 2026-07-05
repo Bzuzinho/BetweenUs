@@ -121,6 +121,7 @@ import pushRouter           from './routes/push'
 import guideRouter          from './routes/guide'
 import betaRouter          from './routes/beta'
 import notificationsRouter  from './routes/notifications'
+import catalogRouter         from './routes/catalog'
 
 app.use('/api/auth',          authRouter)
 app.use('/api/profiles',      profileRouter)
@@ -142,6 +143,7 @@ app.use('/api/push',           pushRouter)
 app.use('/api/guide',          guideRouter)
 app.use('/api/beta',          betaRouter)
 app.use('/api/notifications', notificationsRouter)
+app.use('/api/catalog',       catalogRouter)
 
 io.on('connection', socket => {
   socket.on('join_conversation',  (id: string) => socket.join('conversation:' + id))

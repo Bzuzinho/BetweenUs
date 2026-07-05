@@ -27,6 +27,43 @@ const profileSchema = z.object({
 const normaliseIntentions = (raw: any[]): { slug: string; preference: 'YES'|'MAYBE'|'NO' }[] =>
   raw.map(i => typeof i === 'string' ? { slug: i, preference: 'YES' as const } : { slug: i.slug, preference: i.preference || 'YES' as const })
 
+// Sprint 3: a couple's Profile.userId is only the creator (partnerOne).
+// Without this, the invited partner gets 403 trying to edit shared
+// intentions/boundaries/privacy — checks ProfileMember as the source of
+// truth, falling back to CoupleProfile for profiles not yet backfilled.
+async function canManageProfile(profileId: string, userId: string): Promise<boolean> {
+  const profile = await prisma.profile.findUnique({
+    where: { id: profileId },
+    include: { coupleProfile: true }
+  })
+  if (!profile) return false
+  if (profile.userId === userId) return true
+
+  const member = await (prisma as any).profileMember.findFirst({
+    where: { profileId, userId, status: 'ACCEPTED' }
+  })
+  if (member) return true
+
+  return profile.coupleProfile?.partnerTwoUserId === userId
+}
+
+// Resolves "my" profile for /me routes — the profile I own, OR (Sprint 3)
+// the shared couple/group profile I've been accepted into as a member.
+async function resolveMyProfileId(userId: string): Promise<string | null> {
+  const owned = await prisma.profile.findUnique({ where: { userId }, select: { id: true } })
+  if (owned) return owned.id
+
+  const membership = await (prisma as any).profileMember.findFirst({
+    where: { userId, status: 'ACCEPTED' }, select: { profileId: true }
+  })
+  if (membership) return membership.profileId
+
+  const coupleProfile = await prisma.coupleProfile.findFirst({
+    where: { partnerTwoUserId: userId }, select: { profileId: true }
+  })
+  return coupleProfile?.profileId || null
+}
+
 async function upsertIntentions(profileId: string, intentions: { slug: string; preference: 'YES'|'MAYBE'|'NO' }[]) {
   for (const { slug } of intentions) {
     await prisma.intention.upsert({
@@ -52,8 +89,10 @@ router.get('/onboarding/steps', requireAuth, async (req: AuthRequest, res: Respo
 
 // GET /api/profiles/me
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
+  const profileId = await resolveMyProfileId(req.userId!)
+  if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
   const profile = await prisma.profile.findUnique({
-    where: { userId: req.userId! },
+    where: { id: profileId },
     include: {
       photos:          { where: { moderationStatus: 'APPROVED' }, orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }] },
       intentions:      { include: { intention: true } },
@@ -70,11 +109,11 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
 // PUT /api/profiles/me  ← new: edit own profile
 router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const profile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
-    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    const profileId = await resolveMyProfileId(req.userId!)
+    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
     const data = profileSchema.partial().parse(req.body)
     const updated = await prisma.profile.update({
-      where: { userId: req.userId! },
+      where: { id: profileId },
       data: {
         ...(data.displayName      !== undefined && { displayName: data.displayName }),
         ...(data.bio              !== undefined && { bio: data.bio }),
@@ -88,7 +127,7 @@ router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
         ...(data.discretionLevel  !== undefined && { discretionLevel: data.discretionLevel }),
       }
     })
-    if (data.intentions?.length) await upsertIntentions(profile.id, normaliseIntentions(data.intentions))
+    if (data.intentions?.length) await upsertIntentions(updated.id, normaliseIntentions(data.intentions))
     res.json(updated)
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
@@ -180,7 +219,7 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profile = await prisma.profile.findUnique({ where: { id: req.params.id } })
     if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-    if (profile.userId !== req.userId) return res.status(403).json({ error: 'Sem permissão.' })
+    if (!(await canManageProfile(profile.id, req.userId!))) return res.status(403).json({ error: 'Sem permissão.' })
     const data = profileSchema.partial().parse(req.body)
     const updated = await prisma.profile.update({
       where: { id: req.params.id },
@@ -215,9 +254,19 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json(pub)
 })
 
+router.put('/me/boundaries', requireAuth, async (req: AuthRequest, res: Response) => {
+  const profileId = await resolveMyProfileId(req.userId!)
+  if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+  const { boundaries } = req.body
+  if (!Array.isArray(boundaries)) return res.status(400).json({ error: 'Formato inválido.' })
+  await prisma.profileBoundary.deleteMany({ where: { profileId } })
+  await prisma.profileBoundary.createMany({ data: boundaries.map((b: any) => ({ profileId, boundaryId: b.boundaryId, preference: b.preference })) })
+  res.json({ message: 'Limites actualizados.' })
+})
+
 router.put('/:id/boundaries', requireAuth, async (req: AuthRequest, res: Response) => {
   const profile = await prisma.profile.findUnique({ where: { id: req.params.id } })
-  if (!profile || profile.userId !== req.userId) return res.status(403).json({ error: 'Sem permissão.' })
+  if (!profile || !(await canManageProfile(profile.id, req.userId!))) return res.status(403).json({ error: 'Sem permissão.' })
   const { boundaries } = req.body
   if (!Array.isArray(boundaries)) return res.status(400).json({ error: 'Formato inválido.' })
   await prisma.profileBoundary.deleteMany({ where: { profileId: profile.id } })
@@ -227,7 +276,7 @@ router.put('/:id/boundaries', requireAuth, async (req: AuthRequest, res: Respons
 
 router.put('/:id/privacy', requireAuth, async (req: AuthRequest, res: Response) => {
   const profile = await prisma.profile.findUnique({ where: { id: req.params.id } })
-  if (!profile || profile.userId !== req.userId) return res.status(403).json({ error: 'Sem permissão.' })
+  if (!profile || !(await canManageProfile(profile.id, req.userId!))) return res.status(403).json({ error: 'Sem permissão.' })
   const sub = await prisma.subscription.findUnique({ where: { userId: req.userId! } })
   if (req.body.invisibleMode && (!sub || sub.plan === 'FREE')) return res.status(403).json({ error: 'Modo invisível requer Premium.', code: 'PREMIUM_REQUIRED' })
   const settings = await prisma.privacySettings.upsert({ where: { profileId: profile.id }, update: req.body, create: { profileId: profile.id, ...req.body } })

@@ -385,8 +385,10 @@ model ProfileIntention {
 model Boundary {
   id          String            @id @default(uuid())
   name        String
+  slug        String            @unique
   category    String
   description String?
+  active      Boolean           @default(true)
   profiles    ProfileBoundary[]
 
   @@map("boundaries")

@@ -76,13 +76,52 @@ export default function CouplePage() {
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [catalogIntentions, setCatalogIntentions] = useState([])
+  const [catalogBoundaries, setCatalogBoundaries] = useState([])
+  const [sharedIntentions, setSharedIntentions] = useState([]) // slugs
+  const [sharedBoundaries, setSharedBoundaries] = useState({}) // boundaryId -> YES|MAYBE|NO
+  const [savingAcordo, setSavingAcordo] = useState(false)
+  const [acordoSaved, setAcordoSaved] = useState(false)
 
   useEffect(() => {
     api.get('/couples/me')
       .then(res => { setCouple(res.data); setStep('manage') })
       .catch(() => setStep('create'))
       .finally(() => setLoading(false))
+
+    Promise.all([
+      api.get('/catalog/intentions').then(r => setCatalogIntentions(r.data.intentions || [])).catch(() => {}),
+      api.get('/catalog/boundaries').then(r => setCatalogBoundaries(r.data.boundaries || [])).catch(() => {}),
+      api.get('/profiles/me').then(r => {
+        setSharedIntentions((r.data.intentions || []).map(i => i.intention?.slug).filter(Boolean))
+        const b = {}
+        ;(r.data.boundaries || []).forEach(pb => { b[pb.boundaryId] = pb.preference })
+        setSharedBoundaries(b)
+      }).catch(() => {}),
+    ])
   }, [])
+
+  const toggleSharedIntention = slug => {
+    setSharedIntentions(prev => prev.includes(slug) ? prev.filter(s => s !== slug) : [...prev, slug])
+  }
+
+  const setSharedBoundary = (boundaryId, preference) => {
+    setSharedBoundaries(prev => ({ ...prev, [boundaryId]: preference }))
+  }
+
+  const saveAcordo = async () => {
+    setSavingAcordo(true)
+    try {
+      await api.put('/profiles/me', { intentions: sharedIntentions.map(slug => ({ slug, preference: 'YES' })) })
+      await api.put('/profiles/me/boundaries', {
+        boundaries: Object.entries(sharedBoundaries).map(([boundaryId, preference]) => ({ boundaryId, preference }))
+      })
+      setAcordoSaved(true)
+      setTimeout(() => setAcordoSaved(false), 2000)
+    } catch {
+      // silencioso — o botão simplesmente não confirma
+    } finally { setSavingAcordo(false) }
+  }
 
   const handleCreate = async () => {
     setSaving(true); setError('')
@@ -232,6 +271,85 @@ export default function CouplePage() {
                   Quando alguém der like no vosso perfil, ambos recebem
                   notificação e têm de aprovar.
                 </p>
+              </div>
+            )}
+
+            {/* Modo Acordo — intenções e limites do casal */}
+            {couple?.coupleStatus === 'ACTIVE' && (
+              <div style={{ background:C.bgCard, border:`1px solid ${C.border}`,
+                borderRadius:20, padding:20, marginBottom:16 }}>
+                <div style={{ fontSize:14, color:C.text, fontWeight:600, marginBottom:4 }}>
+                  📜 Modo Acordo
+                </div>
+                <p style={{ color:C.muted, fontSize:12, lineHeight:1.5, marginBottom:16 }}>
+                  Definam juntos o que procuram e os vossos limites enquanto casal.
+                  Qualquer um dos dois pode editar — fica sempre visível para ambos.
+                </p>
+
+                <div style={{ fontSize:12, color:C.text2, fontWeight:600, marginBottom:8 }}>
+                  O que procuramos
+                </div>
+                <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:20 }}>
+                  {catalogIntentions.map(i => {
+                    const selected = sharedIntentions.includes(i.slug)
+                    return (
+                      <button key={i.id} onClick={() => toggleSharedIntention(i.slug)} style={{
+                        background: selected ? C.primaryDim : C.bgInput,
+                        border: `1px solid ${selected ? C.primary : C.border}`,
+                        borderRadius: 20, padding: '7px 14px', fontSize: 12,
+                        color: selected ? C.primary : C.text2, cursor: 'pointer',
+                      }}>
+                        {i.name}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                <div style={{ fontSize:12, color:C.text2, fontWeight:600, marginBottom:8 }}>
+                  Mapa de Limites
+                </div>
+                {Object.entries(
+                  catalogBoundaries.reduce((acc, b) => {
+                    (acc[b.category] = acc[b.category] || []).push(b)
+                    return acc
+                  }, {})
+                ).map(([category, items]) => (
+                  <div key={category} style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, color: C.muted, textTransform: 'uppercase',
+                      letterSpacing: '0.04em', marginBottom: 6 }}>{category.replace(/_/g, ' ')}</div>
+                    {items.map(b => (
+                      <div key={b.id} style={{ display: 'flex', alignItems: 'center',
+                        justifyContent: 'space-between', padding: '8px 0',
+                        borderBottom: `1px solid ${C.border}` }}>
+                        <span style={{ fontSize: 13, color: C.text }}>{b.name}</span>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          {['NO', 'MAYBE', 'YES'].map(pref => {
+                            const active = sharedBoundaries[b.id] === pref
+                            const label = pref === 'YES' ? 'Sim' : pref === 'MAYBE' ? 'Talvez' : 'Não'
+                            return (
+                              <button key={pref} onClick={() => setSharedBoundary(b.id, pref)} style={{
+                                background: active ? C.primaryDim : 'transparent',
+                                border: `1px solid ${active ? C.primary : C.border}`,
+                                borderRadius: 8, padding: '4px 10px', fontSize: 11,
+                                color: active ? C.primary : C.muted, cursor: 'pointer',
+                              }}>{label}</button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+
+                <button onClick={saveAcordo} disabled={savingAcordo} style={{
+                  width: '100%', marginTop: 12,
+                  background: acordoSaved ? 'rgba(61,214,140,0.15)' : `linear-gradient(135deg,${C.primary},${C.primaryDim})`,
+                  border: acordoSaved ? `1px solid ${C.success}` : 'none',
+                  borderRadius: 50, padding: 12, fontSize: 14, fontWeight: 600,
+                  color: acordoSaved ? C.success : '#1A0A2E', cursor: 'pointer',
+                }}>
+                  {savingAcordo ? 'A guardar...' : acordoSaved ? '✓ Guardado' : 'Guardar Modo Acordo'}
+                </button>
               </div>
             )}
 
