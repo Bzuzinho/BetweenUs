@@ -766,6 +766,7 @@ function RoleManager({ userId, currentRole, onChanged }) {
 }
 
 function UserDetail({ userId, onBack }) {
+  const { user: me } = useAuth()
   const [data, setData] = useState(null)
   const [history, setHistory] = useState([])
   const [view, setView] = useState('info')
@@ -775,11 +776,18 @@ function UserDetail({ userId, onBack }) {
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
 
+  // Sprint 2.5.4: light field-level permission gating — full PermissionService
+  // (2.5.11) is a larger follow-up, this covers the sensitive fields called
+  // out explicitly in the sprint (NIF).
+  const canSeeNif = ['SUPER_ADMIN', 'ADMIN', 'FINANCE'].includes(me?.adminRole)
+
   const load = useCallback(() => {
     api.get(`/admin/users/${userId}`).then(r => {
       setData(r.data)
       setForm({
         email: r.data.email,
+        accountName: r.data.accountName || '',
+        nif: r.data.nif || '',
         displayName: r.data.profile?.displayName||'',
         bio: r.data.profile?.bio||'',
         city: r.data.profile?.city||'',
@@ -791,7 +799,16 @@ function UserDetail({ userId, onBack }) {
 
   useEffect(() => { load() }, [load])
 
-  const saveUser = async (reason, note) => { setEditing(null); try { await api.put(`/admin/users/${userId}`, { email: form.email, reason, internalNote: note }); setMsg('Actualizado.'); load() } catch (e) { setErr(e.response?.data?.error||'Erro.') } }
+  const saveUser = async (reason, note) => {
+    setEditing(null)
+    const payload = { email: form.email, accountName: form.accountName, reason, internalNote: note }
+    if (canSeeNif) payload.nif = form.nif
+    try { await api.put(`/admin/users/${userId}`, payload); setMsg('Actualizado.'); load() } catch (e) { setErr(e.response?.data?.error||'Erro.') }
+  }
+  const reviewVerification = async (status, reason) => {
+    setModal(null)
+    try { await api.put(`/admin/verifications/${userId}`, { status, reason }); setMsg(`Verificação: ${status}.`); load() } catch (e) { setErr(e.response?.data?.error||'Erro.') }
+  }
   const saveProfile = async (reason, note) => { if (!data?.profile?.id) return; setEditing(null); try { await api.put(`/admin/profiles/${data.profile.id}`, { displayName: form.displayName, bio: form.bio, city: form.city, status: form.profileStatus, reason, internalNote: note }); setMsg('Perfil actualizado.'); load() } catch (e) { setErr(e.response?.data?.error||'Erro.') } }
   const doStatus = async (status, reason) => { setModal(null); try { await api.put(`/admin/users/${userId}/status`, { status, reason }); setMsg(`Estado: ${status}.`); load() } catch (e) { setErr(e.response?.data?.error||'Erro.') } }
   const doDelete = async (reason, note) => { setModal(null); try { await api.delete(`/admin/users/${userId}`, { data: { reason, internalNote: note } }); onBack() } catch (e) { setErr(e.response?.data?.error||'Erro.') } }
@@ -817,6 +834,7 @@ function UserDetail({ userId, onBack }) {
       {modal==='delete'   && <ReasonModal title="⚠️ Eliminar"   onConfirm={(r,n)=>doDelete(r,n)}          onCancel={()=>setModal(null)} hasNote/>}
       {editing==='user'   && <ReasonModal title="Guardar conta"  onConfirm={(r,n)=>saveUser(r,n)}          onCancel={()=>setEditing(null)} hasNote/>}
       {editing==='profile'&& <ReasonModal title="Guardar perfil" onConfirm={(r,n)=>saveProfile(r,n)}       onCancel={()=>setEditing(null)} hasNote/>}
+      {modal==='reject-verification' && <ReasonModal title="Rejeitar verificação" onConfirm={(r)=>reviewVerification('REJECTED', r)} onCancel={()=>setModal(null)}/>}
 
       <button onClick={onBack} style={{ background:'none', border:'none', color:C.muted, fontSize:22, cursor:'pointer', padding:'4px 0', marginBottom:14 }}>←</button>
 
@@ -848,9 +866,9 @@ function UserDetail({ userId, onBack }) {
       {msg && <div style={{ background:C.successDim, border:`1px solid rgba(74,222,128,0.25)`, borderRadius:10, padding:'10px 14px', marginBottom:12, color:C.success, fontSize:13 }}>{msg}</div>}
       {err && <div style={{ background:C.dangerDim,  border:`1px solid rgba(248,113,113,0.25)`, borderRadius:10, padding:'10px 14px', marginBottom:12, color:C.danger,  fontSize:13 }}>{err}</div>}
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6, marginBottom:16 }}>
-        {[['info','📧 Conta'],['profile','👤 Perfil'],['history','📋 Histórico']].map(([k,l]) => (
-          <button key={k} onClick={() => setView(k)} style={{ background:view===k?C.primaryDim:C.surface, border:`1.5px solid ${view===k?C.primary:C.border}`, borderRadius:10, padding:'9px 4px', color:view===k?C.primary:C.muted, fontSize:11, fontWeight:view===k?500:400, cursor:'pointer', minHeight:40 }}>{l}</button>
+      <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:16 }}>
+        {[['info','📧 Conta'],['profile','👤 Perfil'],['subscription','✦ Subscrição'],['invites','🎁 Convites'],['verification','◈ Verificação'],['privacy','🔒 Privacidade'],['history','📋 Histórico']].map(([k,l]) => (
+          <button key={k} onClick={() => setView(k)} style={{ background:view===k?C.primaryDim:C.surface, border:`1.5px solid ${view===k?C.primary:C.border}`, borderRadius:10, padding:'8px 10px', color:view===k?C.primary:C.muted, fontSize:11, fontWeight:view===k?500:400, cursor:'pointer', minHeight:38 }}>{l}</button>
         ))}
       </div>
 
@@ -860,26 +878,61 @@ function UserDetail({ userId, onBack }) {
             <span style={{ fontSize:14, fontWeight:500, color:C.text2 }}>Conta</span>
             <button onClick={() => setEditing('user')} style={{ background:C.primary, border:'none', borderRadius:8, padding:'6px 14px', color:'#0A141A', fontSize:12, fontWeight:600, cursor:'pointer', minHeight:32 }}>Guardar</button>
           </div>
+
+          <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:14 }}>
+            <div style={{ width:48, height:48, borderRadius:'50%', background:C.primaryDim, border:`1px solid ${C.primary}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, fontWeight:600, color:C.primary, overflow:'hidden', flexShrink:0 }}>
+              {u.avatarPath ? <img src={u.avatarPath} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }}/> : (u.accountName||u.email||'?')[0].toUpperCase()}
+            </div>
+            <div style={{ fontSize:11, color:C.muted }}>Avatar de Conta — só o próprio utilizador o pode alterar (em /admin/me para admins, ou na app).</div>
+          </div>
+
           <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>EMAIL</label>
           <input style={INP} value={form.email} onChange={e => setForm(p => ({...p, email:e.target.value}))}/>
+          <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>NOME (accountName)</label>
+          <input style={INP} value={form.accountName} onChange={e => setForm(p => ({...p, accountName:e.target.value}))}/>
+          {canSeeNif ? (
+            <>
+              <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>NIF</label>
+              <input style={INP} value={form.nif} onChange={e => setForm(p => ({...p, nif:e.target.value}))}/>
+            </>
+          ) : (
+            <div style={{ fontSize:11, color:C.muted, marginBottom:10 }}>NIF oculto — o teu role ({me?.adminRole}) não tem permissão para o ver.</div>
+          )}
           <div style={{ fontSize:12, color:C.muted, lineHeight:1.8 }}>
             <div>Email verificado: {u.emailVerifiedAt ? '✅ '+new Date(u.emailVerifiedAt).toLocaleDateString('pt') : '❌ Não'}</div>
+            {u.dateOfBirth && <div>Data de nascimento: {new Date(u.dateOfBirth).toLocaleDateString('pt')}</div>}
             <div>Criado: {new Date(u.createdAt).toLocaleDateString('pt')}</div>
           </div>
           <RoleManager userId={userId} currentRole={u.adminRole} onChanged={load}/>
         </div>
       )}
 
-      {data.referral && (data.referral.invitedBy || data.referral.invited?.length > 0) && (
-        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, marginTop:12 }}>
+      {view==='subscription' && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, fontSize:13, color:C.text2, lineHeight:2 }}>
+          {u.subscription ? (
+            <>
+              <div>Plano: <strong style={{color:C.text}}>{u.subscription.plan}</strong></div>
+              <div>Estado: <strong style={{color:C.text}}>{u.subscription.status}</strong></div>
+              <div>Fornecedor: <strong style={{color:C.text}}>{u.subscription.provider || '—'}</strong></div>
+              {u.subscription.currentPeriodStart && <div>Período desde: <strong style={{color:C.text}}>{new Date(u.subscription.currentPeriodStart).toLocaleDateString('pt')}</strong></div>}
+              {u.subscription.currentPeriodEnd && <div>Período até: <strong style={{color:C.text}}>{new Date(u.subscription.currentPeriodEnd).toLocaleDateString('pt')}</strong></div>}
+              {u.subscription.cancelledAt && <div>Cancelada em: <strong style={{color:C.danger}}>{new Date(u.subscription.cancelledAt).toLocaleDateString('pt')}</strong></div>}
+            </>
+          ) : <div style={{color:C.muted}}>Sem subscrição.</div>}
+        </div>
+      )}
+
+      {view==='invites' && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16 }}>
           <div style={{ fontSize:14, fontWeight:500, color:C.text2, marginBottom:10 }}>🎁 Afiliados (só visível a admins)</div>
-          {data.referral.invitedBy && (
+          {!data.referral?.invitedBy && !(data.referral?.invited?.length > 0) && <div style={{color:C.muted, fontSize:13}}>Sem actividade de afiliados.</div>}
+          {data.referral?.invitedBy && (
             <div style={{ fontSize:12, color:C.muted, marginBottom:10 }}>
               Convidado por <strong style={{color:C.text}}>{data.referral.invitedBy.email}</strong>
               {data.referral.invitedBySubscribed ? ' · já subscreveu ✅' : ' · ainda não subscreveu'}
             </div>
           )}
-          {data.referral.invited?.length > 0 && (
+          {data.referral?.invited?.length > 0 && (
             <>
               <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>
                 Convidou {data.referral.invited.length} pessoa(s)
@@ -894,6 +947,45 @@ function UserDetail({ userId, onBack }) {
               ))}
             </>
           )}
+        </div>
+      )}
+
+      {view==='verification' && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16 }}>
+          <div style={{ fontSize:12, color:C.muted, lineHeight:1.8, marginBottom:14 }}>
+            <div>Tipo: <strong style={{color:C.text}}>{u.verification?.type || '—'}</strong></div>
+            <div>Estado: <strong style={{color:C.text}}>{u.verification?.status || 'NONE'}</strong></div>
+            {u.verification?.reviewedAt && <div>Revisto em: <strong style={{color:C.text}}>{new Date(u.verification.reviewedAt).toLocaleDateString('pt')}</strong></div>}
+            {u.ageVerifiedAt && <div>Idade verificada: <strong style={{color:C.success}}>✅ {new Date(u.ageVerifiedAt).toLocaleDateString('pt')}</strong></div>}
+          </div>
+          {u.verification?.selfieStoragePath && (
+            <a href={u.verification.selfieStoragePath} target="_blank" rel="noopener noreferrer" style={{ display:'block', marginBottom:14 }}>
+              <img src={u.verification.selfieStoragePath} alt="Selfie de verificação" style={{ width:'100%', maxHeight:280, objectFit:'contain', borderRadius:10, border:`1px solid ${C.border}`, background:C.bg }}/>
+            </a>
+          )}
+          {u.verification?.status === 'PENDING' && (
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+              <button onClick={()=>reviewVerification('APPROVED')} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:10, padding:10, color:C.success, fontSize:13, minHeight:42, cursor:'pointer' }}>Aprovar</button>
+              <button onClick={()=>setModal('reject-verification')} style={{ background:C.dangerDim, border:`1px solid ${C.danger}`, borderRadius:10, padding:10, color:C.danger, fontSize:13, minHeight:42, cursor:'pointer' }}>Rejeitar</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {view==='privacy' && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, fontSize:13, color:C.text2, lineHeight:2 }}>
+          {p?.privacySettings ? (
+            <>
+              <div>Visível em Discovery: <strong style={{color:C.text}}>{p.privacySettings.visibleInDiscovery ? 'Sim' : 'Não'}</strong></div>
+              <div>Mostra distância: <strong style={{color:C.text}}>{p.privacySettings.showDistance ? 'Sim' : 'Não'}</strong></div>
+              <div>Mostra estado online: <strong style={{color:C.text}}>{p.privacySettings.showOnlineStatus ? 'Sim' : 'Não'}</strong></div>
+              <div>Permite pedidos de fotos: <strong style={{color:C.text}}>{p.privacySettings.allowPhotoRequests ? 'Sim' : 'Não'}</strong></div>
+              <div>Modo invisível: <strong style={{color:C.text}}>{p.privacySettings.invisibleMode ? 'Sim' : 'Não'}</strong></div>
+              <div>Notificações: <strong style={{color:C.text}}>{p.privacySettings.notificationMode}</strong></div>
+              {p.privacySettings.minDistanceKm != null && <div>Distância mínima: <strong style={{color:C.text}}>{p.privacySettings.minDistanceKm} km</strong></div>}
+              <div style={{ fontSize:11, color:C.muted, marginTop:10 }}>Só de leitura aqui — o utilizador gere estas definições na app.</div>
+            </>
+          ) : <div style={{color:C.muted}}>Sem definições de privacidade (perfil não criado ou nunca configurado).</div>}
         </div>
       )}
 

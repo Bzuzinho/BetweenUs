@@ -148,29 +148,47 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
 // ─── Edit user (customer support) — with full audit trail ────────────────────
 router.put('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
   try {
-    const { email, status, adminRole, reason, internalNote } = req.body
+    const { email, status, adminRole, accountName, nif, reason, internalNote } = req.body
     if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.' })
 
+    const role = (req as any).adminRole
     const prev = await prisma.user.findUnique({
       where: { id: req.params.id },
-      select: { email: true, status: true, adminRole: true }
+      select: { email: true, status: true, adminRole: true, accountName: true, nif: true }
     })
     if (!prev) return res.status(404).json({ error: 'Utilizador não encontrado.' })
 
     // Only SUPER_ADMIN can change adminRole
-    if (adminRole !== undefined && (req as any).adminRole !== 'SUPER_ADMIN') {
+    if (adminRole !== undefined && role !== 'SUPER_ADMIN') {
       return res.status(403).json({ error: 'Apenas SUPER_ADMIN pode alterar roles.' })
     }
 
+    // Sprint 2.5.4: NIF is financially/legally sensitive — restrict editing to
+    // roles that would plausibly need it. Full field-level PermissionService
+    // (2.5.11) is a larger follow-up; this is a minimal, explicit gate.
+    if (nif !== undefined && !['SUPER_ADMIN', 'ADMIN', 'FINANCE'].includes(role)) {
+      return res.status(403).json({ error: 'Sem permissão para editar o NIF.' })
+    }
+
+    // Sprint 2.5.5: this endpoint used to accept `status` with zero validation,
+    // bypassing the transition matrix entirely. No current caller sends it
+    // through here (the dedicated PUT /users/:id/status does), but close the
+    // gap defensively.
+    if (status !== undefined && !canTransitionStatus(prev.status, status)) {
+      return res.status(400).json({ error: `Transição ${prev.status} → ${status} não permitida aqui — usa a acção de estado dedicada.` })
+    }
+
     const updateData: any = {}
-    if (email !== undefined)     updateData.email = email
-    if (status !== undefined)    updateData.status = status
-    if (adminRole !== undefined) updateData.adminRole = adminRole
+    if (email !== undefined)       updateData.email = email
+    if (status !== undefined)      updateData.status = status
+    if (adminRole !== undefined)   updateData.adminRole = adminRole
+    if (accountName !== undefined) updateData.accountName = accountName
+    if (nif !== undefined)         updateData.nif = nif
 
     const updated = await prisma.user.update({
       where: { id: req.params.id },
       data: updateData,
-      select: { id: true, email: true, status: true, adminRole: true }
+      select: { id: true, email: true, status: true, adminRole: true, accountName: true, nif: true, avatarPath: true, dateOfBirth: true }
     })
 
     await logAdminAction(req.userId!, 'EDIT_USER', 'user', req.params.id, {
