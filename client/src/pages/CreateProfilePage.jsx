@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
@@ -18,19 +18,6 @@ const RELATIONSHIP_STATUSES = [
   { value:'COUPLE_CURIOUS',  label:'Casal curioso' },
   { value:'COUPLE_LIBERAL',  label:'Casal liberal' },
   { value:'OTHER',           label:'Outro' },
-]
-
-const INTENTIONS = [
-  { slug:'casual_encounter',    label:'Encontro casual' },
-  { slug:'recurring_connection',label:'Ligação recorrente' },
-  { slug:'trio_experience',     label:'Experiência a três' },
-  { slug:'swing',               label:'Swing' },
-  { slug:'polyamory',           label:'Poliamor' },
-  { slug:'online_only',         label:'Apenas online' },
-  { slug:'friends_with_benefits',label:'Amizade colorida' },
-  { slug:'fetish_exploration',  label:'Explorar fetiches' },
-  { slug:'seek_couple',         label:'Procurar casal' },
-  { slug:'seek_third',          label:'Procurar terceira pessoa' },
 ]
 
 const DISCRETION = [
@@ -58,8 +45,17 @@ export default function CreateProfilePage() {
   })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [catalogIntentions, setCatalogIntentions] = useState([])
+  const [catalogBoundaries, setCatalogBoundaries] = useState([])
+  const [boundaryPrefs, setBoundaryPrefs] = useState({}) // boundaryId -> YES|MAYBE|NO
+
+  useEffect(() => {
+    api.get('/catalog/intentions').then(r => setCatalogIntentions(r.data.intentions || [])).catch(() => {})
+    api.get('/catalog/boundaries').then(r => setCatalogBoundaries(r.data.boundaries || [])).catch(() => {})
+  }, [])
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const setBoundaryPref = (boundaryId, pref) => setBoundaryPrefs(p => ({ ...p, [boundaryId]: pref }))
 
   const toggleIntention = (slug) => setForm(p => ({
     ...p,
@@ -90,6 +86,17 @@ export default function CreateProfilePage() {
       }
 
       await api.post('/profiles', payload)
+
+      // Sprint 2.5.8: Limits Map — optional, non-blocking. A profile without
+      // boundaries filled in is still a valid profile (matches current backend
+      // behaviour), so a failure here must never stop onboarding from finishing.
+      const boundaryEntries = Object.entries(boundaryPrefs)
+      if (boundaryEntries.length > 0) {
+        await api.put('/profiles/me/boundaries', {
+          boundaries: boundaryEntries.map(([boundaryId, preference]) => ({ boundaryId, preference }))
+        }).catch(() => {})
+      }
+
       await refreshUser()
       navigate('/explore', { replace: true })
     } catch (err) {
@@ -129,7 +136,7 @@ export default function CreateProfilePage() {
           }}>
             Criar o teu perfil
           </h1>
-          <p style={{ color: C.muted, fontSize: 13 }}>Passo {step} de 3</p>
+          <p style={{ color: C.muted, fontSize: 13 }}>Passo {step} de 4</p>
         </div>
 
         {/* Progress bar */}
@@ -210,10 +217,10 @@ export default function CreateProfilePage() {
               </p>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 24 }}>
-                {INTENTIONS.map(i => {
+                {catalogIntentions.map(i => {
                   const selected = form.intentions.includes(i.slug)
                   return (
-                    <div key={i.slug} onClick={() => toggleIntention(i.slug)} style={{
+                    <div key={i.id} onClick={() => toggleIntention(i.slug)} style={{
                       background: selected ? 'rgba(201,149,107,0.15)' : C.input,
                       border: `1.5px solid ${selected ? C.accent : C.plum}`,
                       borderRadius: 14, padding: '13px 10px',
@@ -222,7 +229,7 @@ export default function CreateProfilePage() {
                       color: selected ? C.accent : C.lavLight,
                       minHeight: 48, display: 'flex', alignItems: 'center', justifyContent: 'center',
                     }}>
-                      {i.label}
+                      {i.name}
                     </div>
                   )
                 })}
@@ -276,6 +283,59 @@ export default function CreateProfilePage() {
 
               <div style={{ display: 'flex', gap: 10 }}>
                 <button style={{ ...btnSecondary, flex: 1 }} onClick={() => { setError(''); setStep(2) }}>
+                  ← Voltar
+                </button>
+                <button style={{ ...btnPrimary, flex: 2 }} onClick={() => setStep(4)}>
+                  Continuar →
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ── Step 4: Limits Map (Mapa de Limites) — optional ── */}
+          {step === 4 && (
+            <>
+              <h2 style={{ color: C.white, fontFamily: "'Playfair Display',serif", fontSize: 20, marginBottom: 6, marginTop: 0 }}>
+                Mapa de Limites
+              </h2>
+              <p style={{ color: C.muted, fontSize: 13, marginBottom: 18, lineHeight: 1.5 }}>
+                Opcional — podes definir ou ajustar isto mais tarde no teu perfil.
+                Sim / Talvez / Não para cada tópico.
+              </p>
+
+              <div style={{ marginBottom: 24, maxHeight: 360, overflowY: 'auto' }}>
+                {Object.entries(
+                  catalogBoundaries.reduce((acc, b) => { (acc[b.category] = acc[b.category] || []).push(b); return acc }, {})
+                ).map(([category, items]) => (
+                  <div key={category} style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
+                      {category.replace(/_/g, ' ')}
+                    </div>
+                    {items.map(b => (
+                      <div key={b.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${C.plum}` }}>
+                        <span style={{ fontSize: 13, color: C.white }}>{b.name}</span>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          {['NO', 'MAYBE', 'YES'].map(pref => {
+                            const active = boundaryPrefs[b.id] === pref
+                            const label = pref === 'YES' ? 'Sim' : pref === 'MAYBE' ? 'Talvez' : 'Não'
+                            return (
+                              <button key={pref} onClick={() => setBoundaryPref(b.id, pref)} style={{
+                                background: active ? 'rgba(184,167,255,0.15)' : 'transparent',
+                                border: `1px solid ${active ? C.accent : C.plum}`,
+                                borderRadius: 8, padding: '4px 10px', fontSize: 11,
+                                color: active ? C.accent : C.muted, cursor: 'pointer',
+                              }}>{label}</button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button style={{ ...btnSecondary, flex: 1 }} onClick={() => { setError(''); setStep(3) }}>
                   ← Voltar
                 </button>
                 <button

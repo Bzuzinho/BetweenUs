@@ -27,19 +27,6 @@ const RELATIONSHIP_STATUSES = [
   { value:'OTHER',          label:'Outro' },
 ]
 
-const INTENTIONS = [
-  { slug:'casual_encounter',     label:'Encontro casual' },
-  { slug:'recurring_connection', label:'Ligação recorrente' },
-  { slug:'trio_experience',      label:'Experiência a três' },
-  { slug:'swing',                label:'Swing' },
-  { slug:'polyamory',            label:'Poliamor' },
-  { slug:'online_only',          label:'Apenas online' },
-  { slug:'friends_with_benefits',label:'Amizade colorida' },
-  { slug:'fetish_exploration',   label:'Explorar fetiches' },
-  { slug:'seek_couple',          label:'Procurar casal' },
-  { slug:'seek_third',           label:'Procurar terceira pessoa' },
-]
-
 const DISCRETION = [
   { value:'MAXIMUM',   label:'Máxima privacidade',    desc:'Perfil oculto, fotos desfocadas' },
   { value:'SELECTIVE', label:'Visibilidade seletiva', desc:'Apareço apenas a perfis compatíveis' },
@@ -50,12 +37,17 @@ export default function EditProfilePage() {
   const navigate = useNavigate()
   const [form, setForm] = useState(null)
   const [intentionSlugs, setIntentionSlugs] = useState([])
+  const [catalogIntentions, setCatalogIntentions] = useState([])
+  const [catalogBoundaries, setCatalogBoundaries] = useState([])
+  const [boundaryPrefs, setBoundaryPrefs] = useState({}) // boundaryId -> YES|MAYBE|NO
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
 
   useEffect(() => {
+    api.get('/catalog/intentions').then(r => setCatalogIntentions(r.data.intentions || [])).catch(() => {})
+    api.get('/catalog/boundaries').then(r => setCatalogBoundaries(r.data.boundaries || [])).catch(() => {})
     api.get('/profiles/me').then(r => {
       const p = r.data
       setForm({
@@ -69,6 +61,9 @@ export default function EditProfilePage() {
         discretionLevel:    p.discretionLevel || 'SELECTIVE',
       })
       setIntentionSlugs((p.intentions || []).map(pi => pi.intention?.slug || pi.slug).filter(Boolean))
+      const b = {}
+      ;(p.boundaries || []).forEach(pb => { b[pb.boundaryId] = pb.preference })
+      setBoundaryPrefs(b)
     }).catch(() => navigate('/create-profile'))
     .finally(() => setLoading(false))
   }, [])
@@ -78,6 +73,7 @@ export default function EditProfilePage() {
   const toggleIntention = slug => setIntentionSlugs(prev =>
     prev.includes(slug) ? prev.filter(s => s !== slug) : [...prev, slug]
   )
+  const setBoundaryPref = (boundaryId, pref) => setBoundaryPrefs(p => ({ ...p, [boundaryId]: pref }))
 
   const handleSave = async () => {
     if (!form.displayName.trim()) return setError('Nome visível obrigatório.')
@@ -87,6 +83,12 @@ export default function EditProfilePage() {
         ...form,
         intentions: intentionSlugs.map(slug => ({ slug, preference: 'YES' })),
       })
+      const boundaryEntries = Object.entries(boundaryPrefs)
+      if (boundaryEntries.length > 0) {
+        await api.put('/profiles/me/boundaries', {
+          boundaries: boundaryEntries.map(([boundaryId, preference]) => ({ boundaryId, preference }))
+        })
+      }
       setMsg('Perfil actualizado!')
       setTimeout(() => navigate('/profile'), 1200)
     } catch (err) {
@@ -136,10 +138,10 @@ export default function EditProfilePage() {
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:20, marginBottom:14 }}>
           <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:12 }}>O que procuras</div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-            {INTENTIONS.map(i => {
+            {catalogIntentions.map(i => {
               const sel = intentionSlugs.includes(i.slug)
               return (
-                <div key={i.slug} onClick={() => toggleIntention(i.slug)} style={{
+                <div key={i.id} onClick={() => toggleIntention(i.slug)} style={{
                   background: sel ? C.primaryDim : C.elevated,
                   border:`1.5px solid ${sel ? C.primary : C.border}`,
                   borderRadius:12, padding:'11px 10px',
@@ -147,11 +149,43 @@ export default function EditProfilePage() {
                   fontSize:13, color: sel ? C.primary : C.text2,
                   minHeight:44, display:'flex', alignItems:'center', justifyContent:'center',
                 }}>
-                  {i.label}
+                  {i.name}
                 </div>
               )
             })}
           </div>
+        </div>
+
+        {/* Mapa de Limites (Sprint 2.5.8) */}
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:20, marginBottom:14 }}>
+          <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:4 }}>Mapa de Limites</div>
+          <p style={{ color:C.muted, fontSize:12, lineHeight:1.5, marginBottom:14 }}>Sim / Talvez / Não para cada tópico.</p>
+          {Object.entries(
+            catalogBoundaries.reduce((acc, b) => { (acc[b.category] = acc[b.category] || []).push(b); return acc }, {})
+          ).map(([category, items]) => (
+            <div key={category} style={{ marginBottom:14 }}>
+              <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:6 }}>{category.replace(/_/g,' ')}</div>
+              {items.map(b => (
+                <div key={b.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 0', borderBottom:`1px solid ${C.border}` }}>
+                  <span style={{ fontSize:13, color:C.text }}>{b.name}</span>
+                  <div style={{ display:'flex', gap:6 }}>
+                    {['NO','MAYBE','YES'].map(pref => {
+                      const active = boundaryPrefs[b.id] === pref
+                      const label = pref === 'YES' ? 'Sim' : pref === 'MAYBE' ? 'Talvez' : 'Não'
+                      return (
+                        <button key={pref} onClick={() => setBoundaryPref(b.id, pref)} style={{
+                          background: active ? C.primaryDim : 'transparent',
+                          border:`1px solid ${active ? C.primary : C.border}`,
+                          borderRadius:8, padding:'4px 10px', fontSize:11,
+                          color: active ? C.primary : C.muted, cursor:'pointer',
+                        }}>{label}</button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
 
         {/* Discrição */}
