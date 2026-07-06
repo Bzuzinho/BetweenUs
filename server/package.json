@@ -10,7 +10,8 @@
     "test:watch": "dotenv -e .env.test -- jest --watch --runInBand",
     "db:migrate": "npx prisma migrate deploy",
     "db:seed": "ts-node prisma/seed.ts",
-    "db:backfill-members": "ts-node --transpile-only src/scripts/backfillProfileMembers.ts"
+    "db:backfill-members": "ts-node --transpile-only src/scripts/backfillProfileMembers.ts",
+    "reset-password": "ts-node --transpile-only src/scripts/resetPassword.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.540.0",
