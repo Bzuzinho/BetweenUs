@@ -123,6 +123,7 @@ import betaRouter          from './routes/beta'
 import notificationsRouter  from './routes/notifications'
 import catalogRouter         from './routes/catalog'
 import groupsRouter           from './routes/groups'
+import referralsRouter        from './routes/referrals'
 
 app.use('/api/auth',          authRouter)
 app.use('/api/profiles',      profileRouter)
@@ -146,6 +147,7 @@ app.use('/api/beta',          betaRouter)
 app.use('/api/notifications', notificationsRouter)
 app.use('/api/catalog',       catalogRouter)
 app.use('/api/groups',        groupsRouter)
+app.use('/api/referrals',     referralsRouter)
 
 io.on('connection', socket => {
   socket.on('join_conversation',  (id: string) => socket.join('conversation:' + id))
@@ -165,6 +167,7 @@ httpServer.listen(PORT, () => {
   console.log('[SERVER] Between Us API v2.5.0 — port', PORT)
   console.log('[SERVER] Environment:', process.env.NODE_ENV)
   if (isProd && !process.env.SMTP_PASS) console.warn('[WARN] SMTP_PASS not set — emails will not send')
+  import('./lib/safetyAlertCron').then(({ startSafetyAlertCron }) => startSafetyAlertCron())
 })
 
 export default app

@@ -76,6 +76,9 @@ router.post('/stripe', async (req: Request, res: Response) => {
         })
         console.log('[WEBHOOK] Subscription activated:', userId, plan)
 
+        const { processReferralSubscription } = await import('../lib/referralService')
+        processReferralSubscription(userId).catch((e: any) => console.error('[REFERRAL]', e.message))
+
         // COUPLE_PREMIUM: activate partner for free
         if (plan === 'COUPLE_PREMIUM') {
           const couple = await prisma.coupleProfile.findFirst({

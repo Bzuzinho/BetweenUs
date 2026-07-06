@@ -115,6 +115,17 @@ export const sendMatchEmail = async (email: string, matchName: string) => {
   `), 'match')
 }
 
+export const sendSafetyAlertEmail = async (email: string, opts: { scheduledAt: Date, locationHint?: string | null }) => {
+  await send(email, '🚨 Alerta de segurança — Between Us', wrap(`
+    <h2 style="font-size:20px;color:#F87171;margin:0 0 12px">🚨 Alguém que confia em ti não fez check-in</h2>
+    <p style="color:#AAB6C2;line-height:1.6;margin:0 0 16px">
+      Foste indicado/a como contacto de confiança para um encontro agendado para
+      <strong style="color:#F5F7FA">${opts.scheduledAt.toLocaleString('pt-PT')}</strong>${opts.locationHint ? ` em <strong style="color:#F5F7FA">${opts.locationHint}</strong>` : ''}.
+      Essa pessoa ainda não confirmou que está bem. Considera entrar em contacto com ela.
+    </p>
+  `), 'safety-alert')
+}
+
 export const getEmailConfig = () => ({
   host: SMTP_HOST || null,
   port: SMTP_PORT,

@@ -87,12 +87,17 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       excludeIds.add(m.profileOneId === viewerProfile.id ? m.profileTwoId : m.profileOneId)
     })
 
+    // Sprint 4: read the type filter the frontend already sends — was being silently ignored
+    const typeFilter = ['INDIVIDUAL', 'COUPLE', 'GROUP'].includes(String(req.query.type))
+      ? String(req.query.type) : undefined
+
     // Get all active profiles excluding admin roles
     const profiles = await prisma.profile.findMany({
       where: {
         id: { notIn: [...excludeIds] },
         status: 'APPROVED',
-        user: { status: 'ACTIVE', adminRole: null }
+        user: { status: 'ACTIVE', adminRole: null },
+        ...(typeFilter && { type: typeFilter as any }),
       },
       include: {
         user: { select: { id:true, ageVerifiedAt:true } },

@@ -115,6 +115,10 @@ export default function ProfilePage() {
           badge={isPremium ? 'Activo' : undefined} last/>
       </Section>
 
+      <Section label="Convites">
+        <Row to="/referrals" icon="🎁" label="Convidar amigos" desc="Ganha meses premium por cada pessoa que convidares" last/>
+      </Section>
+
       {/* RGPD */}
       <div style={{ marginTop:8, padding:'12px 0', display:'flex', gap:16, justifyContent:'center', flexWrap:'wrap' }}>
         <a href="/api/auth/export" style={{ fontSize:12, color:C.muted, textDecoration:'none' }}>⬇ Exportar dados</a>

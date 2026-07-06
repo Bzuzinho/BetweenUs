@@ -251,6 +251,8 @@ model User {
   messages             Message[]
   coupleApprovals      CoupleMatchApproval[]
   profileMemberships   ProfileMember[]
+  referralCode         ReferralCode?
+  referredAs           ReferralConversion? @relation("ReferredUserConversion")
   privateRoomMembers   PrivateRoomMember[]
   roomMessages         RoomMessage[]       @relation("RoomMessageSender")
   adminActionsPerformed AdminAction[]        @relation("AdminPerformer")
@@ -749,6 +751,43 @@ model ServiceSession {
 }
 
 // ─── Guide Articles (Between Guide) ──────────────────────────────────────────
+// ─── Referrals / Affiliate system ─────────────────────────────────────────────
+model ReferralCode {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code        String   @unique
+  createdAt   DateTime @default(now())
+
+  conversions ReferralConversion[]
+
+  @@map("referral_codes")
+}
+
+model ReferralConversion {
+  id             String       @id @default(uuid())
+  referralCodeId String
+  referralCode   ReferralCode @relation(fields: [referralCodeId], references: [id], onDelete: Cascade)
+  referredUserId String       @unique
+  referredUser   User         @relation("ReferredUserConversion", fields: [referredUserId], references: [id], onDelete: Cascade)
+  subscribedAt   DateTime?
+  creditGranted  Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  @@map("referral_conversions")
+}
+
+// Singleton-style config row — editable in admin, never hardcoded in code.
+model ReferralRule {
+  id                String   @id @default(uuid())
+  referralsRequired Int      @default(2)
+  rewardMonths      Int      @default(2)
+  updatedAt         DateTime @updatedAt
+  updatedByUserId   String?
+
+  @@map("referral_rules")
+}
+
 model GuideArticle {
   id        String   @id @default(uuid())
   title     String

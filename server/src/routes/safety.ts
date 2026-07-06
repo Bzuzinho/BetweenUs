@@ -36,7 +36,7 @@ router.post('/checkin', requireAuth, async (req: AuthRequest, res: Response) => 
       ok: true,
       checkin: { ...checkin, status: toStatus(checkin), safetyEmail: maskEmail(checkin.safetyEmail) },
       message: safetyEmail
-        ? 'Check-in registado. Nota: o envio automático de alerta ainda não está ativo — combina também diretamente com o teu contacto de confiança.'
+        ? 'Check-in registado. O teu contacto recebe um alerta se não confirmares a tempo.'
         : 'Check-in registado.'
     })
   } catch (err: any) {

@@ -118,9 +118,9 @@ export default function CheckInPage() {
           <div style={{ color: C.primary, fontSize: 13, fontWeight: 600, marginBottom: 8 }}>🛡️ Como funciona</div>
           <div style={{ color: C.text2, fontSize: 13, lineHeight: 1.7 }}>
             1. Regista o teu encontro com local e hora.<br/>
-            2. Depois do encontro, confirma aqui que estás bem.<br/>
-            3. O envio automático de alerta a um contacto ainda não está disponível —
-            por agora, combina diretamente com essa pessoa que lhe vais escrever se algo correr mal.
+            2. Define, se quiseres, um contacto de confiança.<br/>
+            3. Depois do encontro, confirma aqui que estás bem.<br/>
+            4. Se não confirmares até algumas horas depois da hora marcada, o teu contacto recebe um alerta por email.
           </div>
         </div>
 
@@ -159,12 +159,12 @@ export default function CheckInPage() {
               onChange={e => setForm(f => ({ ...f, scheduledAt: e.target.value }))} />
 
             <label style={{ color: C.muted, fontSize: 12, display: 'block', marginBottom: 6 }}>
-              Contacto de confiança (opcional — guardado, mas sem alerta automático por agora)
+              Contacto de confiança (opcional)
             </label>
             <input type="email" style={{ ...inputStyle, marginBottom: 6 }} placeholder="amigo@email.com"
               value={form.safetyEmail} onChange={e => setForm(f => ({ ...f, safetyEmail: e.target.value }))} />
             <div style={{ color: C.muted, fontSize: 11, marginBottom: 16, lineHeight: 1.4 }}>
-              Fica só guardado para tua referência — ainda não enviamos alertas automáticos.
+              Recebe um alerta por email se não confirmares a tempo. Não recebe detalhes sobre a tua atividade na app.
             </div>
 
             <div style={{ display: 'flex', gap: 10 }}>

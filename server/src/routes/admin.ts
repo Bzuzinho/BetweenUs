@@ -4,6 +4,8 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { requireAdmin, logAdminAction } from '../middleware/admin'
 import { recalculateRiskScore, recalculateAllRiskScores } from '../lib/riskScore'
 
+const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
+
 const router = Router()
 router.use(requireAuth)
 
@@ -111,13 +113,35 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
   })
   if (!user) return res.status(404).json({ error: 'Utilizador não encontrado.' })
 
+  // Sprint 4: affiliate visibility — admin-only, per business requirement
+  const referredAs = await (prisma as any).referralConversion.findUnique({
+    where: { referredUserId: req.params.id },
+    include: { referralCode: { include: { user: { select: { id: true, email: true } } } } }
+  })
+  const myReferralCode = await (prisma as any).referralCode.findUnique({ where: { userId: req.params.id } })
+  const referredUsers = myReferralCode ? await (prisma as any).referralConversion.findMany({
+    where: { referralCodeId: myReferralCode.id },
+    include: { referredUser: { select: { id: true, email: true, createdAt: true } } },
+    orderBy: { createdAt: 'desc' }
+  }) : []
+
   await logAdminAction(req.userId!, 'VIEW_USER', 'user', req.params.id, {
     targetUserId: req.params.id, ipAddress: req.ip, userAgent: req.headers['user-agent']
   })
 
   // Strip sensitive fields before sending
   const { passwordHash, ...safeUser } = user as any
-  res.json(safeUser)
+  res.json({
+    ...safeUser,
+    referral: {
+      invitedBy: referredAs?.referralCode?.user || null,
+      invitedByAt: referredAs?.createdAt || null,
+      invitedBySubscribed: !!referredAs?.subscribedAt,
+      invited: referredUsers.map((r: any) => ({
+        user: r.referredUser, subscribedAt: r.subscribedAt, creditGranted: r.creditGranted
+      }))
+    }
+  })
 })
 
 // ─── Edit user (customer support) — with full audit trail ────────────────────
@@ -189,6 +213,13 @@ router.put('/profiles/:id', requireAdmin('profiles'), async (req: AuthRequest, r
       where: { id: req.params.id },
       data: updateData
     })
+
+    if (updateData.status === 'APPROVED') {
+      await prisma.user.updateMany({
+        where: { id: updated.userId, status: 'PENDING_VERIFICATION' },
+        data: { status: 'ACTIVE' }
+      })
+    }
 
     await logAdminAction(req.userId!, 'EDIT_PROFILE', 'profile', req.params.id, {
       targetUserId: updated.userId,
@@ -313,6 +344,16 @@ router.put('/profiles/:id/status', requireAdmin('profiles'), async (req: AuthReq
     where: { id: req.params.id },
     data: { status, rejectionReason: reason, moderationNotes: reason }
   })
+
+  // Sprint 4: approving a profile shouldn't require a second manual step in
+  // Users to reactivate the account — do it here if it's still pending.
+  if (status === 'APPROVED') {
+    await prisma.user.updateMany({
+      where: { id: profile.userId, status: 'PENDING_VERIFICATION' },
+      data: { status: 'ACTIVE' }
+    })
+  }
+
   await logAdminAction(req.userId!, `${status}_PROFILE`, 'profile', req.params.id, { reason, ipAddress: req.ip })
   res.json({ ok: true, profile })
 })
@@ -460,7 +501,7 @@ router.post('/beta/invites', requireAdmin('beta'), async (req: AuthRequest, res:
     data: { code, createdById: req.userId!, email, maxUses, expiresAt: expiresAt ? new Date(expiresAt) : null }
   })
   await logAdminAction(req.userId!, 'CREATE_BETA_INVITE', 'beta_invite', invite.id, { ipAddress: req.ip })
-  res.json({ invite, inviteUrl: `${process.env.CLIENT_URL}/join/${code}` })
+  res.json({ invite, inviteUrl: `${CLIENT_URL}/join/${code}` })
 })
 
 router.put('/beta/invites/:id/toggle', requireAdmin('beta'), async (req: AuthRequest, res: Response) => {
@@ -742,6 +783,28 @@ router.get('/email-config', requireAdmin(), async (req: AuthRequest, res: Respon
       ]
     })
   }
+})
+
+// ─── Referral / affiliate rule (Sprint 4) — editable, never hardcoded ─────────
+router.get('/referral-rule', requireAdmin(), async (_req: AuthRequest, res: Response) => {
+  const rule = await (prisma as any).referralRule.findFirst() || await (prisma as any).referralRule.create({ data: {} })
+  res.json({ rule })
+})
+
+router.put('/referral-rule', requireAdmin('configuracoes'), async (req: AuthRequest, res: Response) => {
+  const { referralsRequired, rewardMonths } = req.body
+  if (!Number.isInteger(referralsRequired) || referralsRequired < 1) {
+    return res.status(400).json({ error: 'Número de convites obrigatório deve ser um inteiro ≥ 1.' })
+  }
+  if (!Number.isInteger(rewardMonths) || rewardMonths < 1) {
+    return res.status(400).json({ error: 'Meses de recompensa deve ser um inteiro ≥ 1.' })
+  }
+  const existing = await (prisma as any).referralRule.findFirst()
+  const rule = existing
+    ? await (prisma as any).referralRule.update({ where: { id: existing.id }, data: { referralsRequired, rewardMonths, updatedByUserId: req.userId } })
+    : await (prisma as any).referralRule.create({ data: { referralsRequired, rewardMonths, updatedByUserId: req.userId } })
+  await logAdminAction(req.userId!, 'UPDATE_REFERRAL_RULE', 'referral_rule', rule.id, { newData: { referralsRequired, rewardMonths }, ipAddress: req.ip })
+  res.json({ ok: true, rule })
 })
 
 export default router

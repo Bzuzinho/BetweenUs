@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 
@@ -15,15 +15,28 @@ const BETA_CLOSED = false // toggled by BETA_CLOSED env on backend
 export default function RegisterPage() {
   const { register } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [step, setStep] = useState(1) // 1=account, 2=age+consent
   const [form, setForm] = useState({
-    email:'', password:'', dateOfBirth:'', betaCode:'',
+    email:'', password:'', dateOfBirth:'', betaCode:'', refCode:'',
     termsAccepted: false,
   })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
   const set = (k, v) => setForm(p => ({...p, [k]: v}))
+
+  // Sprint 4: pick up the invite code stored by BetaJoinPage, and a referral
+  // code from the URL (?ref=CODE) if the person arrived via a shared invite link.
+  useEffect(() => {
+    const storedBeta = localStorage.getItem('betaCode')
+    const refFromUrl = searchParams.get('ref')
+    setForm(p => ({
+      ...p,
+      ...(storedBeta && !p.betaCode && { betaCode: storedBeta }),
+      ...(refFromUrl && !p.refCode && { refCode: refFromUrl }),
+    }))
+  }, [])
 
   const handleSubmit = async () => {
     if (!form.dateOfBirth) return setError('Data de nascimento obrigatória.')
@@ -37,6 +50,7 @@ export default function RegisterPage() {
         dateOfBirth: form.dateOfBirth,
         termsAccepted: true,
         betaCode: form.betaCode || undefined,
+        refCode: form.refCode || undefined,
       })
       navigate('/create-profile', { replace: true })
     } catch (err) {

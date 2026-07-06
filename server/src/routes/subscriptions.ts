@@ -4,6 +4,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
+const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
 // T11: validate Stripe config at startup
 const getStripe = () => {
@@ -117,8 +118,8 @@ router.post('/checkout', requireAuth, async (req: AuthRequest, res: Response) =>
       payment_method_types: ['card'],
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${process.env.CLIENT_URL}/premium?success=1`,
-      cancel_url: `${process.env.CLIENT_URL}/premium?cancelled=1`,
+      success_url: `${CLIENT_URL}/premium?success=1`,
+      cancel_url: `${CLIENT_URL}/premium?cancelled=1`,
       metadata: { userId: req.userId!, plan }
     })
 

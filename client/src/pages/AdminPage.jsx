@@ -46,6 +46,7 @@ function NotificationBell() {
   const [open, setOpen] = useState(false)
   const [notifs, setNotifs] = useState([])
   const ref = useRef(null)
+  const navigate = useNavigate()
 
   const load = useCallback(() => {
     api.get('/admin/notifications').then(r => setNotifs(r.data.notifications || [])).catch(() => {})
@@ -1047,6 +1048,13 @@ function VerificationsTab() {
         <div key={v.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:14, marginBottom:8 }}>
           <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:3 }}>{v.user?.profile?.displayName}</div>
           <div style={{ fontSize:12, color:C.muted, marginBottom:10 }}>{v.user?.email}</div>
+          {v.selfieStoragePath ? (
+            <a href={v.selfieStoragePath} target="_blank" rel="noopener noreferrer" style={{ display:'block', marginBottom:10 }}>
+              <img src={v.selfieStoragePath} alt="Selfie de verificação" style={{ width:'100%', maxHeight:280, objectFit:'contain', borderRadius:10, border:`1px solid ${C.border}`, background:C.bg }} />
+            </a>
+          ) : (
+            <div style={{ fontSize:12, color:C.muted, marginBottom:10, fontStyle:'italic' }}>Sem imagem associada.</div>
+          )}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
             <button onClick={()=>review(v.userId,'APPROVED')} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:10, padding:10, color:C.success, fontSize:13, minHeight:42, cursor:'pointer' }}>Aprovar</button>
             <button onClick={()=>review(v.userId,'REJECTED')} style={{ background:C.dangerDim,  border:`1px solid ${C.danger}`,  borderRadius:10, padding:10, color:C.danger,  fontSize:13, minHeight:42, cursor:'pointer' }}>Rejeitar</button>

@@ -7,6 +7,8 @@ import prisma from '../lib/prisma'
 import { generateTokens, verifyRefreshToken, verifyAccessToken } from '../utils/jwt'
 import { notifyAdmins } from '../lib/notify'
 
+const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
+
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
 const BETA_CLOSED = process.env.BETA_CLOSED === 'true'
@@ -26,6 +28,7 @@ const registerSchema = z.object({
   }, 'Tens de ter pelo menos 18 anos para te registar'),
   termsAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar os Termos de Utilização'),
   betaCode: z.string().optional(),
+  refCode: z.string().optional(),
   ageConfirmed: z.boolean().optional(),
   privacyAccepted: z.boolean().optional(),
   sensitiveDataAccepted: z.boolean().optional(),
@@ -101,6 +104,10 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
         usedAt:   inv.maxUses===1 ? new Date() : undefined,
         active:   newUseCount >= inv.maxUses ? false : inv.active
       }})
+    }
+    if (data.refCode) {
+      const { recordReferral } = await import('../lib/referralService')
+      recordReferral(user.id, data.refCode).catch(() => {})
     }
     // Send verification email async — never block the response
     if (isProd) {
@@ -423,7 +430,7 @@ router.post('/otp', async (req: Request, res: Response) => {
     // Store OTP with 15 minute TTL, one-time use
     await redis.setEx(`otp:${otp}`, 900, target.id)
 
-    const loginUrl = `${process.env.CLIENT_URL}/otp-login?token=${otp}`
+    const loginUrl = `${CLIENT_URL}/otp-login?token=${otp}`
     res.json({ ok: true, loginUrl, expiresIn: '15 minutes',
       warning: 'Este link faz login automático. Partilha APENAS com o utilizador em causa.' })
   } catch { res.status(401).json({ error: 'Token inválido.' }) }

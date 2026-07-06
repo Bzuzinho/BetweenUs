@@ -58,7 +58,7 @@ export default function UserNotificationBell() {
   const onClickNotif = n => {
     markRead(n.id)
     const data = parseData(n)
-    if (n.type === 'match') { setOpen(false); navigate('/matches') }
+    if (data.tab) { setOpen(false); navigate(`/${data.tab}`) }
   }
 
   return (
