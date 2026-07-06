@@ -21,11 +21,11 @@ async function main() {
     { slug: 'still_exploring',      name: 'Ainda a descobrir',          description: 'Sem certeza do que procuro' },
   ]
 
-  for (const intention of intentions) {
+  for (const [index, intention] of intentions.entries()) {
     await prisma.intention.upsert({
       where: { slug: intention.slug },
       update: { name: intention.name, description: intention.description },
-      create: { slug: intention.slug, name: intention.name, description: intention.description, active: true },
+      create: { slug: intention.slug, name: intention.name, description: intention.description, sortOrder: index, active: true },
     })
   }
   console.log(`Seeded ${intentions.length} intentions`)
@@ -34,33 +34,45 @@ async function main() {
 
   const boundaries = [
     // relationship_type
-    { slug: 'no_emotional_involvement', name: 'Sem envolvimento emocional', category: 'relationship_type' },
-    { slug: 'open_to_emotional',        name: 'Aberto a envolvimento emocional', category: 'relationship_type' },
-    { slug: 'no_couples',               name: 'Não quero casais',          category: 'relationship_type' },
-    { slug: 'couples_only',             name: 'Apenas casais',             category: 'relationship_type' },
-    { slug: 'singles_only',             name: 'Apenas solteiros',          category: 'relationship_type' },
+    { slug: 'no_emotional_involvement',      name: 'Sem envolvimento emocional',       category: 'relationship_type' },
+    { slug: 'open_to_emotional',             name: 'Aberto a envolvimento emocional',  category: 'relationship_type' },
+    { slug: 'recurring_emotional_connection',name: 'Envolvimento emocional recorrente',category: 'relationship_type' },
+    { slug: 'no_couples',                    name: 'Não quero casais',                 category: 'relationship_type', isHardBoundary: true },
+    { slug: 'couples_only',                  name: 'Apenas casais',                    category: 'relationship_type', isHardBoundary: true },
+    { slug: 'singles_only',                  name: 'Apenas solteiros',                 category: 'relationship_type', isHardBoundary: true },
     // meeting_type
-    { slug: 'online_only',              name: 'Apenas online',             category: 'meeting_type' },
-    { slug: 'open_to_meeting',          name: 'Aberto a encontro presencial', category: 'meeting_type' },
-    { slug: 'one_time_only',            name: 'Apenas uma vez',            category: 'meeting_type' },
-    { slug: 'recurring_ok',             name: 'Aberto a encontros recorrentes', category: 'meeting_type' },
+    { slug: 'online_only',              name: 'Apenas online',                    category: 'meeting_type' },
+    { slug: 'open_to_meeting',          name: 'Aberto a encontro presencial',     category: 'meeting_type' },
+    { slug: 'one_time_only',            name: 'Apenas uma vez',                   category: 'meeting_type' },
+    { slug: 'recurring_ok',             name: 'Aberto a encontros recorrentes',   category: 'meeting_type' },
+    { slug: 'meet_after_conversation',  name: 'Só encontro depois de conversar',  category: 'meeting_type' },
+    { slug: 'spontaneous_meeting',      name: 'Encontro espontâneo',              category: 'meeting_type' },
     // privacy
-    { slug: 'no_face_photos',           name: 'Sem fotos de rosto',        category: 'privacy' },
-    { slug: 'no_known_contacts',        name: 'Sem pessoas conhecidas',    category: 'privacy' },
-    { slug: 'verified_only',            name: 'Apenas perfis verificados', category: 'privacy' },
-    { slug: 'discretion_required',      name: 'Discrição obrigatória',     category: 'privacy' },
+    { slug: 'no_face_photos',            name: 'Sem fotos de rosto',                category: 'privacy', sensitive: true },
+    { slug: 'face_visible_before_match', name: 'Rosto visível antes do match',      category: 'privacy', sensitive: true },
+    { slug: 'face_visible_after_match',  name: 'Rosto visível depois do match',     category: 'privacy', sensitive: true },
+    { slug: 'private_gallery_requests',  name: 'Aceito pedidos de galeria privada', category: 'privacy', sensitive: true },
+    { slug: 'no_known_contacts',         name: 'Sem pessoas conhecidas',            category: 'privacy', sensitive: true },
+    { slug: 'verified_only',             name: 'Apenas perfis verificados',         category: 'privacy' },
+    { slug: 'discretion_required',       name: 'Discrição obrigatória',             category: 'privacy' },
     // conversation_style
     { slug: 'talk_first',               name: 'Conversar primeiro',        category: 'conversation_style' },
+    { slug: 'talk_online_first',        name: 'Falar online antes de marcar', category: 'conversation_style' },
     { slug: 'direct_approach',          name: 'Abordagem directa',         category: 'conversation_style' },
     { slug: 'slow_pace',                name: 'Ritmo lento',               category: 'conversation_style' },
     { slug: 'fast_pace',                name: 'Ritmo rápido',              category: 'conversation_style' },
   ]
 
-  for (const boundary of boundaries) {
+  for (const [index, boundary] of boundaries.entries()) {
     await prisma.boundary.upsert({
       where: { slug: boundary.slug },
       update: { name: boundary.name, category: boundary.category },
-      create: { slug: boundary.slug, name: boundary.name, category: boundary.category, active: true },
+      create: {
+        slug: boundary.slug, name: boundary.name, category: boundary.category,
+        isHardBoundary: (boundary as any).isHardBoundary || false,
+        sensitive: (boundary as any).sensitive || false,
+        sortOrder: index, active: true,
+      },
     })
   }
   console.log(`Seeded ${boundaries.length} boundaries`)

@@ -7,7 +7,7 @@ export type AdminRole =
 
 const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   SUPER_ADMIN:      ['*'],
-  ADMIN:            ['users','profiles','photos','reports','subscriptions','metrics','audit','beta','conversations','guide'],
+  ADMIN:            ['users','profiles','photos','reports','subscriptions','metrics','audit','beta','conversations','guide','catalog'],
   MODERATOR:        ['profiles','photos','reports','conversations'],
   SUPPORT:          ['users','reports'],
   FINANCE:          ['subscriptions','metrics'],

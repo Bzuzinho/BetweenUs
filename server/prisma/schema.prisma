@@ -366,6 +366,8 @@ model Intention {
   name        String
   slug        String             @unique
   description String?
+  category    String?            // Sprint 2.5.7 — optional grouping for admin catalog UI
+  sortOrder   Int                @default(0)
   active      Boolean            @default(true)
   profiles    ProfileIntention[]
 
@@ -385,13 +387,16 @@ model ProfileIntention {
 }
 
 model Boundary {
-  id          String            @id @default(uuid())
-  name        String
-  slug        String            @unique
-  category    String
-  description String?
-  active      Boolean           @default(true)
-  profiles    ProfileBoundary[]
+  id             String            @id @default(uuid())
+  name           String
+  slug           String            @unique
+  category       String
+  description    String?
+  isHardBoundary Boolean           @default(false) // Sprint 2.5.8 — hard conflicts should exclude from discovery
+  sensitive      Boolean           @default(false) // Sprint 2.5.8 — not exposed directly in UI
+  sortOrder      Int               @default(0)
+  active         Boolean           @default(true)
+  profiles       ProfileBoundary[]
 
   @@map("boundaries")
 }

@@ -1925,6 +1925,195 @@ function AdminAccountTab({ changeTab }) {
   )
 }
 
+/* ─── Intentions catalog manager (Sprint 2.5.7) ──────────────────────────────── */
+function IntentionsManager() {
+  const [items, setItems] = useState([])
+  const [editing, setEditing] = useState(null) // null | 'new' | item
+  const [form, setForm] = useState({ name:'', slug:'', description:'', category:'', active:true })
+  const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(() => { api.get('/catalog/admin/intentions').then(r => setItems(r.data.intentions||[])) }, [])
+  useEffect(() => { load() }, [load])
+
+  const openNew = () => { setForm({ name:'', slug:'', description:'', category:'', active:true }); setEditing('new'); setMsg(''); setErr('') }
+  const openEdit = (i) => { setForm({ name:i.name, slug:i.slug, description:i.description||'', category:i.category||'', active:i.active }); setEditing(i); setMsg(''); setErr('') }
+
+  const save = async () => {
+    if (!form.name.trim() || !form.slug.trim()) return setErr('Nome e slug obrigatórios.')
+    setSaving(true); setErr(''); setMsg('')
+    try {
+      if (editing === 'new') await api.post('/catalog/admin/intentions', form)
+      else await api.put(`/catalog/admin/intentions/${editing.id}`, form)
+      setEditing(null); load()
+    } catch (e) { setErr(e.response?.data?.error || 'Erro ao guardar.') } finally { setSaving(false) }
+  }
+
+  const toggleActive = async (i) => { await api.put(`/catalog/admin/intentions/${i.id}`, { active: !i.active }).catch(()=>{}); load() }
+
+  const del = async (i) => {
+    if (i.usageCount > 0) {
+      if (!confirm(`Esta intenção está em uso por ${i.usageCount} perfil(is). Desactivar em vez de apagar?`)) return
+      return toggleActive({ ...i, active: true })
+    }
+    if (!confirm('Apagar esta intenção?')) return
+    await api.delete(`/catalog/admin/intentions/${i.id}`).catch(e => setErr(e.response?.data?.error || 'Erro ao apagar.'))
+    load()
+  }
+
+  if (editing !== null) return (
+    <div>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
+        <button onClick={()=>setEditing(null)} style={{ background:'none', border:'none', color:C.muted, fontSize:20, cursor:'pointer' }}>←</button>
+        <h3 style={{ color:C.text, fontSize:16, fontWeight:500, margin:0, flex:1 }}>{editing==='new' ? 'Nova intenção' : 'Editar intenção'}</h3>
+        <button onClick={save} disabled={saving} style={{ background:C.primary, border:'none', borderRadius:8, padding:'8px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>{saving?'…':'Guardar'}</button>
+      </div>
+      {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>NOME *</label>
+      <input style={INP} value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>SLUG * (minúsculas, underscore)</label>
+      <input style={INP} value={form.slug} onChange={e=>setForm(p=>({...p,slug:e.target.value}))} disabled={editing!=='new'}/>
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>DESCRIÇÃO</label>
+      <textarea style={{...INP, resize:'vertical'}} rows={2} value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))}/>
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>CATEGORIA (opcional)</label>
+      <input style={INP} value={form.category} onChange={e=>setForm(p=>({...p,category:e.target.value}))}/>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:C.elevated, borderRadius:10, padding:'12px 14px' }}>
+        <div style={{ fontSize:14, color:C.text }}>Activa</div>
+        <div onClick={()=>setForm(p=>({...p,active:!p.active}))} style={{ width:44, height:24, borderRadius:12, cursor:'pointer', background:form.active?C.primary:C.input, position:'relative', border:`1px solid ${form.active?C.primary:C.border}` }}>
+          <div style={{ position:'absolute', top:3, width:16, height:16, borderRadius:'50%', background:'white', left:form.active?23:3, transition:'left 0.2s' }}/>
+        </div>
+      </div>
+    </div>
+  )
+
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+        <div style={{ fontSize:15, fontWeight:500, color:C.text }}>{items.length} intenções · {items.filter(i=>i.active).length} activas</div>
+        <button onClick={openNew} style={{ background:C.primary, border:'none', borderRadius:10, padding:'9px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>+ Nova</button>
+      </div>
+      {msg && <div style={{ color:C.success, fontSize:13, marginBottom:10 }}>{msg}</div>}
+      {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+      {items.map(i => (
+        <div key={i.id} style={{ background:C.surface, border:`1px solid ${i.active?C.border:'rgba(248,113,113,0.2)'}`, borderRadius:14, padding:'12px 14px', marginBottom:8 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+            <div>
+              <div style={{ fontSize:14, fontWeight:500, color:C.text }}>{i.name} {!i.active && <span style={{color:C.muted, fontSize:11}}>(inactiva)</span>}</div>
+              <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{i.slug} {i.category && `· ${i.category}`} · usada por {i.usageCount} perfil(is)</div>
+              {i.description && <div style={{ fontSize:12, color:C.text2, marginTop:4 }}>{i.description}</div>}
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>
+            <button onClick={()=>openEdit(i)} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.text2, fontSize:12, cursor:'pointer' }}>✏️ Editar</button>
+            <button onClick={()=>toggleActive(i)} style={{ background:i.active?C.dangerDim:C.successDim, border:`1px solid ${i.active?C.danger:C.success}`, borderRadius:6, padding:'5px 12px', color:i.active?C.danger:C.success, fontSize:12, cursor:'pointer' }}>{i.active?'Desactivar':'Activar'}</button>
+            <button onClick={()=>del(i)} style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.muted, fontSize:12, cursor:'pointer' }}>🗑</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/* ─── Boundaries catalog manager (Sprint 2.5.8) ──────────────────────────────── */
+const BOUNDARY_CATEGORIES = ['relationship_type','meeting_type','privacy','conversation_style']
+
+function BoundariesManager() {
+  const [items, setItems] = useState([])
+  const [editing, setEditing] = useState(null)
+  const [form, setForm] = useState({ name:'', slug:'', category:BOUNDARY_CATEGORIES[0], description:'', isHardBoundary:false, sensitive:false, active:true })
+  const [err, setErr] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(() => { api.get('/catalog/admin/boundaries').then(r => setItems(r.data.boundaries||[])) }, [])
+  useEffect(() => { load() }, [load])
+
+  const openNew = () => { setForm({ name:'', slug:'', category:BOUNDARY_CATEGORIES[0], description:'', isHardBoundary:false, sensitive:false, active:true }); setEditing('new'); setErr('') }
+  const openEdit = (b) => { setForm({ name:b.name, slug:b.slug, category:b.category, description:b.description||'', isHardBoundary:b.isHardBoundary, sensitive:b.sensitive, active:b.active }); setEditing(b); setErr('') }
+
+  const save = async () => {
+    if (!form.name.trim() || !form.slug.trim() || !form.category.trim()) return setErr('Nome, slug e categoria obrigatórios.')
+    setSaving(true); setErr('')
+    try {
+      if (editing === 'new') await api.post('/catalog/admin/boundaries', form)
+      else await api.put(`/catalog/admin/boundaries/${editing.id}`, form)
+      setEditing(null); load()
+    } catch (e) { setErr(e.response?.data?.error || 'Erro ao guardar.') } finally { setSaving(false) }
+  }
+
+  const toggleActive = async (b) => { await api.put(`/catalog/admin/boundaries/${b.id}`, { active: !b.active }).catch(()=>{}); load() }
+
+  const del = async (b) => {
+    if (b.usageCount > 0) {
+      if (!confirm(`Este limite está em uso por ${b.usageCount} perfil(is). Desactivar em vez de apagar?`)) return
+      return toggleActive({ ...b, active: true })
+    }
+    if (!confirm('Apagar este limite?')) return
+    await api.delete(`/catalog/admin/boundaries/${b.id}`).catch(e => setErr(e.response?.data?.error || 'Erro ao apagar.'))
+    load()
+  }
+
+  const grouped = BOUNDARY_CATEGORIES.reduce((acc, c) => { acc[c] = items.filter(i => i.category === c); return acc }, {})
+  const otherCategories = [...new Set(items.map(i => i.category).filter(c => !BOUNDARY_CATEGORIES.includes(c)))]
+
+  if (editing !== null) return (
+    <div>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
+        <button onClick={()=>setEditing(null)} style={{ background:'none', border:'none', color:C.muted, fontSize:20, cursor:'pointer' }}>←</button>
+        <h3 style={{ color:C.text, fontSize:16, fontWeight:500, margin:0, flex:1 }}>{editing==='new' ? 'Novo limite' : 'Editar limite'}</h3>
+        <button onClick={save} disabled={saving} style={{ background:C.primary, border:'none', borderRadius:8, padding:'8px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>{saving?'…':'Guardar'}</button>
+      </div>
+      {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>NOME *</label>
+      <input style={INP} value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>SLUG *</label>
+      <input style={INP} value={form.slug} onChange={e=>setForm(p=>({...p,slug:e.target.value}))} disabled={editing!=='new'}/>
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>CATEGORIA *</label>
+      <input style={INP} list="boundary-categories" value={form.category} onChange={e=>setForm(p=>({...p,category:e.target.value}))}/>
+      <datalist id="boundary-categories">{BOUNDARY_CATEGORIES.map(c => <option key={c} value={c}/>)}</datalist>
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>DESCRIÇÃO</label>
+      <textarea style={{...INP, resize:'vertical'}} rows={2} value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))}/>
+      {[['isHardBoundary','Limite rígido (exclui de discovery em conflito)'],['sensitive','Sensível (não expor directamente)'],['active','Activo']].map(([key,label]) => (
+        <div key={key} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:C.elevated, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
+          <div style={{ fontSize:14, color:C.text }}>{label}</div>
+          <div onClick={()=>setForm(p=>({...p,[key]:!p[key]}))} style={{ width:44, height:24, borderRadius:12, cursor:'pointer', background:form[key]?C.primary:C.input, position:'relative', border:`1px solid ${form[key]?C.primary:C.border}` }}>
+            <div style={{ position:'absolute', top:3, width:16, height:16, borderRadius:'50%', background:'white', left:form[key]?23:3, transition:'left 0.2s' }}/>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+        <div style={{ fontSize:15, fontWeight:500, color:C.text }}>{items.length} limites · {items.filter(i=>i.active).length} activos</div>
+        <button onClick={openNew} style={{ background:C.primary, border:'none', borderRadius:10, padding:'9px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>+ Novo</button>
+      </div>
+      {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+      {[...BOUNDARY_CATEGORIES, ...otherCategories].map(cat => (grouped[cat] || items.filter(i=>i.category===cat)).length > 0 && (
+        <div key={cat} style={{ marginBottom:18 }}>
+          <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:8 }}>{cat}</div>
+          {(grouped[cat] || items.filter(i=>i.category===cat)).map(b => (
+            <div key={b.id} style={{ background:C.surface, border:`1px solid ${b.active?C.border:'rgba(248,113,113,0.2)'}`, borderRadius:14, padding:'12px 14px', marginBottom:8 }}>
+              <div style={{ fontSize:14, fontWeight:500, color:C.text }}>
+                {b.name} {!b.active && <span style={{color:C.muted, fontSize:11}}>(inactivo)</span>}
+                {b.isHardBoundary && <span style={{color:C.danger, fontSize:11, marginLeft:6}}>● rígido</span>}
+                {b.sensitive && <span style={{color:C.warning, fontSize:11, marginLeft:6}}>● sensível</span>}
+              </div>
+              <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{b.slug} · usado por {b.usageCount} perfil(is)</div>
+              <div style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>
+                <button onClick={()=>openEdit(b)} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.text2, fontSize:12, cursor:'pointer' }}>✏️ Editar</button>
+                <button onClick={()=>toggleActive(b)} style={{ background:b.active?C.dangerDim:C.successDim, border:`1px solid ${b.active?C.danger:C.success}`, borderRadius:6, padding:'5px 12px', color:b.active?C.danger:C.success, fontSize:12, cursor:'pointer' }}>{b.active?'Desactivar':'Activar'}</button>
+                <button onClick={()=>del(b)} style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.muted, fontSize:12, cursor:'pointer' }}>🗑</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function ConfiguracoesTab() {
   const [subTab, setSubTab] = useState('perfis')
   const [plans, setPlans] = useState([])
@@ -1940,7 +2129,7 @@ function ConfiguracoesTab() {
     <div>
       {/* Subtab bar */}
       <div style={{ display:'flex', gap:6, marginBottom:20 }}>
-        {[['perfis','◎ Perfis'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
+        {[['perfis','◎ Perfis'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
           <button key={k} onClick={()=>setSubTab(k)} style={{
             background:subTab===k?C.primaryDim:C.surface,
             border:`1.5px solid ${subTab===k?C.primary:C.border}`,
@@ -1982,6 +2171,12 @@ function ConfiguracoesTab() {
           ))}
         </div>
       )}
+
+      {/* ── Intenções subtab ── */}
+      {subTab==='intencoes' && <IntentionsManager />}
+
+      {/* ── Limites subtab ── */}
+      {subTab==='limites' && <BoundariesManager />}
 
       {/* ── Email subtab ── */}
       {subTab==='email' && <EmailDiagnosticPanel />}
