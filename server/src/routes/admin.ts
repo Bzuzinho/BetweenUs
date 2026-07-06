@@ -3,6 +3,7 @@ import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { requireAdmin, logAdminAction } from '../middleware/admin'
 import { recalculateRiskScore, recalculateAllRiskScores } from '../lib/riskScore'
+import { evaluateAndActivateUser, canTransitionStatus } from '../lib/userActivationService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -299,19 +300,53 @@ router.get('/users/:id/history', requireAdmin('users'), async (req: AuthRequest,
 })
 
 // ─── User status ──────────────────────────────────────────────────────────────
+// Sprint 2.5.5: manual transitions now go through an explicit state machine.
+// PENDING_VERIFICATION → ACTIVE is intentionally not allowed here — "Reactivar"
+// is for SUSPENDED → ACTIVE. Activating a still-pending user must go through
+// POST /users/:id/evaluate-activation, which actually checks requirements.
 router.put('/users/:id/status', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
   const { status, reason } = req.body
   if (!['ACTIVE', 'SUSPENDED', 'BANNED'].includes(status)) return res.status(400).json({ error: 'Status inválido.' })
   if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.' })
 
   const prev = await prisma.user.findUnique({ where: { id: req.params.id }, select: { status: true } })
+  if (!prev) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+  if (!canTransitionStatus(prev.status, status)) {
+    const hint = prev.status === 'PENDING_VERIFICATION' && status === 'ACTIVE'
+      ? ' Usa "Avaliar activação" — este utilizador ainda não cumpre os requisitos ou precisa de passar pelo fluxo automático.'
+      : ''
+    return res.status(400).json({ error: `Transição ${prev.status} → ${status} não permitida.${hint}` })
+  }
+
   const user = await prisma.user.update({ where: { id: req.params.id }, data: { status } })
 
   await logAdminAction(req.userId!, `${status}_USER`, 'user', req.params.id, {
     targetUserId: req.params.id, reason,
-    previousData: { status: prev?.status }, newData: { status }, ipAddress: req.ip
+    previousData: { status: prev.status }, newData: { status }, ipAddress: req.ip
   })
   res.json({ ok: true, user })
+})
+
+// ─── Evaluate / trigger activation for a PENDING_VERIFICATION user ───────────
+// Read-only-safe: only moves status if requirements are met (email verified,
+// OR identity verification approved, OR profile approved). Lets support/admin
+// manually re-trigger evaluation instead of force-activating with "Reactivar".
+router.post('/users/:id/evaluate-activation', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  const prev = await prisma.user.findUnique({ where: { id: req.params.id }, select: { status: true } })
+  if (!prev) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+  const result = await evaluateAndActivateUser(req.params.id)
+
+  if (result.activated) {
+    await logAdminAction(req.userId!, 'ACTIVE_USER', 'user', req.params.id, {
+      targetUserId: req.params.id,
+      reason: 'Requisitos de activação cumpridos: ' + result.evaluation.satisfiedBy.join(', '),
+      previousData: { status: prev.status }, newData: { status: 'ACTIVE' }, ipAddress: req.ip
+    })
+  }
+
+  res.json({ ok: true, ...result })
 })
 
 // ─── Profiles ─────────────────────────────────────────────────────────────────
@@ -346,16 +381,23 @@ router.put('/profiles/:id/status', requireAdmin('profiles'), async (req: AuthReq
   })
 
   // Sprint 4: approving a profile shouldn't require a second manual step in
-  // Users to reactivate the account — do it here if it's still pending.
+  // Users to reactivate the account. Sprint 2.5.5: routed through the central
+  // activation rule instead of an unconditional updateMany, so it's consistent
+  // with email confirmation / identity verification approval.
+  let activation = null
   if (status === 'APPROVED') {
-    await prisma.user.updateMany({
-      where: { id: profile.userId, status: 'PENDING_VERIFICATION' },
-      data: { status: 'ACTIVE' }
-    })
+    activation = await evaluateAndActivateUser(profile.userId)
+    if (activation.activated) {
+      await logAdminAction(req.userId!, 'ACTIVE_USER', 'user', profile.userId, {
+        targetUserId: profile.userId,
+        reason: 'Activação automática após aprovação de perfil.',
+        newData: { status: 'ACTIVE' }, ipAddress: req.ip
+      })
+    }
   }
 
   await logAdminAction(req.userId!, `${status}_PROFILE`, 'profile', req.params.id, { reason, ipAddress: req.ip })
-  res.json({ ok: true, profile })
+  res.json({ ok: true, profile, activation })
 })
 
 // ─── Photos ───────────────────────────────────────────────────────────────────
@@ -422,11 +464,29 @@ router.get('/verifications', requireAdmin('profiles'), async (req: AuthRequest, 
 })
 
 router.put('/verifications/:userId', requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
-  const { status } = req.body
+  const { status, reason } = req.body
+  if (!['APPROVED', 'REJECTED'].includes(status)) return res.status(400).json({ error: 'Status inválido.' })
+  if (status === 'REJECTED' && !reason) return res.status(400).json({ error: 'Motivo obrigatório para rejeitar uma verificação.' })
+
+  const prev = await prisma.verification.findUnique({ where: { userId: req.params.userId }, select: { status: true } })
   await prisma.verification.update({ where: { userId: req.params.userId }, data: { status, reviewedAt: new Date() } })
-  if (status === 'APPROVED') await recalculateRiskScore(req.params.userId)
-  await logAdminAction(req.userId!, `${status}_VERIFICATION`, 'user', req.params.userId, { targetUserId: req.params.userId, ipAddress: req.ip })
-  res.json({ ok: true })
+
+  let activation = null
+  if (status === 'APPROVED') {
+    await prisma.user.update({ where: { id: req.params.userId }, data: { ageVerifiedAt: new Date() } })
+    await recalculateRiskScore(req.params.userId)
+    // Sprint 2.5.5: this used to only touch Verification/ageVerifiedAt and never
+    // reactivated a still-PENDING_VERIFICATION account — now routed through the
+    // same central rule as email confirmation / profile approval.
+    activation = await evaluateAndActivateUser(req.params.userId)
+  }
+
+  await logAdminAction(req.userId!, `${status}_VERIFICATION`, 'user', req.params.userId, {
+    targetUserId: req.params.userId, reason,
+    previousData: { status: prev?.status }, newData: { status },
+    ipAddress: req.ip
+  })
+  res.json({ ok: true, activation })
 })
 
 // ─── Conversations ────────────────────────────────────────────────────────────

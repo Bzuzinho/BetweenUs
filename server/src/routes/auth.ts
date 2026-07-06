@@ -6,6 +6,7 @@ import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
 import { generateTokens, verifyRefreshToken, verifyAccessToken } from '../utils/jwt'
 import { notifyAdmins } from '../lib/notify'
+import { evaluateAndActivateUser } from '../lib/userActivationService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -258,9 +259,13 @@ router.post('/email/confirm', async (req: Request, res: Response) => {
       if (!stored || stored !== hashToken(token)) return res.status(400).json({ error: 'Token inválido ou expirado.' })
       await redis.del(`email_verify:${userId}`)
     }
-    const user = await prisma.user.update({ where: { id:userId }, data: { emailVerifiedAt:new Date(), status:'ACTIVE' } })
+    // Sprint 2.5.5: no longer forces status='ACTIVE' unconditionally — see
+    // lib/userActivationService.ts. A stale confirm link must not be able to
+    // undo a BANNED/SUSPENDED action.
+    const user = await prisma.user.update({ where: { id:userId }, data: { emailVerifiedAt:new Date() } })
+    const activation = await evaluateAndActivateUser(userId)
     import('../lib/email').then(({ sendWelcomeEmail }) => sendWelcomeEmail(user.email).catch(()=>{}))
-    res.json({ ok:true, message:'Email verificado! A tua conta está activa.' })
+    res.json({ ok:true, message: activation.activated ? 'Email verificado! A tua conta está activa.' : 'Email verificado.', activation })
   } catch { res.status(500).json({ error: 'Erro interno.' }) }
 })
 

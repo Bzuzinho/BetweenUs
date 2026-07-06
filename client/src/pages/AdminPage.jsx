@@ -796,6 +796,15 @@ function UserDetail({ userId, onBack }) {
   const doStatus = async (status, reason) => { setModal(null); try { await api.put(`/admin/users/${userId}/status`, { status, reason }); setMsg(`Estado: ${status}.`); load() } catch (e) { setErr(e.response?.data?.error||'Erro.') } }
   const doDelete = async (reason, note) => { setModal(null); try { await api.delete(`/admin/users/${userId}`, { data: { reason, internalNote: note } }); onBack() } catch (e) { setErr(e.response?.data?.error||'Erro.') } }
   const resetPwd = async () => { try { await api.post(`/admin/users/${userId}/reset-password`); setMsg('Email de reset enviado.') } catch (e) { setErr('Erro.') } }
+  const evaluateActivation = async () => {
+    setMsg(''); setErr('')
+    try {
+      const r = await api.post(`/admin/users/${userId}/evaluate-activation`)
+      if (r.data.activated) setMsg('Utilizador activado — requisitos cumpridos: ' + r.data.evaluation.satisfiedBy.join(', '))
+      else setErr('Ainda não cumpre nenhum requisito de activação (email verificado, verificação de identidade aprovada, ou perfil aprovado).')
+      load()
+    } catch (e) { setErr(e.response?.data?.error||'Erro.') }
+  }
 
   if (!data) return <div style={{ color:C.muted, padding:20 }}>A carregar...</div>
   const u = data; const p = data.profile
@@ -804,7 +813,7 @@ function UserDetail({ userId, onBack }) {
     <>
       {modal==='suspend'  && <ReasonModal title="Suspender"      onConfirm={(r)=>doStatus('SUSPENDED',r)}  onCancel={()=>setModal(null)} hasNote/>}
       {modal==='ban'      && <ReasonModal title="Banir"          onConfirm={(r)=>doStatus('BANNED',r)}     onCancel={()=>setModal(null)} hasNote/>}
-      {modal==='activate' && <ReasonModal title="Reactivar"      onConfirm={(r)=>doStatus('ACTIVE',r)}     onCancel={()=>setModal(null)}/>}
+      {modal==='activate' && <ReasonModal title="Reactivar (de Suspenso)" onConfirm={(r)=>doStatus('ACTIVE',r)} onCancel={()=>setModal(null)}/>}
       {modal==='delete'   && <ReasonModal title="⚠️ Eliminar"   onConfirm={(r,n)=>doDelete(r,n)}          onCancel={()=>setModal(null)} hasNote/>}
       {editing==='user'   && <ReasonModal title="Guardar conta"  onConfirm={(r,n)=>saveUser(r,n)}          onCancel={()=>setEditing(null)} hasNote/>}
       {editing==='profile'&& <ReasonModal title="Guardar perfil" onConfirm={(r,n)=>saveProfile(r,n)}       onCancel={()=>setEditing(null)} hasNote/>}
@@ -826,8 +835,11 @@ function UserDetail({ userId, onBack }) {
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14 }}>
-        {u.status!=='ACTIVE'    && <button onClick={()=>setModal('activate')} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:12, padding:11, color:C.success, fontSize:13, minHeight:44, cursor:'pointer' }}>✓ Reactivar</button>}
-        {u.status!=='SUSPENDED' && <button onClick={()=>setModal('suspend')}  style={{ background:C.elevated,   border:`1px solid ${C.border}`,  borderRadius:12, padding:11, color:C.text2,  fontSize:13, minHeight:44, cursor:'pointer' }}>⏸ Suspender</button>}
+        {/* Sprint 2.5.5: "Reactivar" só faz SUSPENDED→ACTIVE (transição manual explícita).
+            PENDING_VERIFICATION→ACTIVE só acontece via avaliação de requisitos. */}
+        {u.status==='SUSPENDED' && <button onClick={()=>setModal('activate')} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:12, padding:11, color:C.success, fontSize:13, minHeight:44, cursor:'pointer' }}>✓ Reactivar</button>}
+        {u.status==='PENDING_VERIFICATION' && <button onClick={evaluateActivation} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:12, padding:11, color:C.success, fontSize:13, minHeight:44, cursor:'pointer' }}>⟳ Avaliar activação</button>}
+        {u.status==='ACTIVE' && <button onClick={()=>setModal('suspend')}  style={{ background:C.elevated,   border:`1px solid ${C.border}`,  borderRadius:12, padding:11, color:C.text2,  fontSize:13, minHeight:44, cursor:'pointer' }}>⏸ Suspender</button>}
         {u.status!=='BANNED'    && <button onClick={()=>setModal('ban')}      style={{ background:C.dangerDim,  border:`1px solid ${C.danger}`,  borderRadius:12, padding:11, color:C.danger,  fontSize:13, minHeight:44, cursor:'pointer' }}>🚫 Banir</button>}
         <button onClick={resetPwd} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:12, padding:11, color:C.text2, fontSize:13, minHeight:44, cursor:'pointer' }}>🔑 Reset password</button>
         <button onClick={()=>setModal('delete')} style={{ background:C.dangerDim, border:`1px solid rgba(248,113,113,0.3)`, borderRadius:12, padding:11, color:C.danger, fontSize:13, minHeight:44, cursor:'pointer' }}>🗑 Eliminar</button>
@@ -1067,16 +1079,43 @@ function UsersTab() {
 /* ─── Verifications ──────────────────────────────────────────────────────────── */
 function VerificationsTab() {
   const [list, setList] = useState([])
+  const [selectedUserId, setSelectedUserId] = useState(null)
+  const [rejecting, setRejecting] = useState(null) // userId currently being rejected
+  const [msg, setMsg] = useState('')
   const load = useCallback(() => { api.get('/admin/verifications').then(r => setList(r.data.verifications||[])) }, [])
   useEffect(() => { load() }, [load])
-  const review = async (userId, s) => { await api.put(`/admin/verifications/${userId}`, { status: s }); setList(p => p.filter(v => v.userId !== userId)) }
+
+  // Sprint 2.5.9: clicar no cartão abre o detalhe administrativo do utilizador,
+  // sem sair do AdminLayout.
+  if (selectedUserId) return <UserDetail userId={selectedUserId} onBack={() => { setSelectedUserId(null); load() }}/>
+
+  const approve = async (userId) => {
+    if (!confirm('Aprovar esta verificação de identidade?')) return
+    setMsg('')
+    const r = await api.put(`/admin/verifications/${userId}`, { status: 'APPROVED' })
+    setList(p => p.filter(v => v.userId !== userId))
+    if (r.data?.activation?.activated) setMsg('Verificação aprovada — conta activada automaticamente.')
+  }
+  const reject = async (userId, reason) => {
+    setRejecting(null)
+    await api.put(`/admin/verifications/${userId}`, { status: 'REJECTED', reason })
+    setList(p => p.filter(v => v.userId !== userId))
+  }
+
   return (
     <div>
+      {rejecting && <ReasonModal title="Rejeitar verificação" onConfirm={(r)=>reject(rejecting, r)} onCancel={()=>setRejecting(null)}/>}
+      {msg && <div style={{ background:C.successDim, border:`1px solid rgba(74,222,128,0.25)`, borderRadius:10, padding:'10px 14px', marginBottom:12, color:C.success, fontSize:13 }}>{msg}</div>}
       {list.length===0 && <p style={{color:C.muted}}>Sem verificações pendentes.</p>}
       {list.map(v => (
         <div key={v.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:14, marginBottom:8 }}>
-          <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:3 }}>{v.user?.profile?.displayName}</div>
-          <div style={{ fontSize:12, color:C.muted, marginBottom:10 }}>{v.user?.email}</div>
+          <div onClick={() => setSelectedUserId(v.userId)} style={{ cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
+            <div>
+              <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:3 }}>{v.user?.profile?.displayName || 'Sem perfil'}</div>
+              <div style={{ fontSize:12, color:C.muted }}>{v.user?.email}</div>
+            </div>
+            <span style={{ color:C.muted, fontSize:18 }}>›</span>
+          </div>
           {v.selfieStoragePath ? (
             <a href={v.selfieStoragePath} target="_blank" rel="noopener noreferrer" style={{ display:'block', marginBottom:10 }}>
               <img src={v.selfieStoragePath} alt="Selfie de verificação" style={{ width:'100%', maxHeight:280, objectFit:'contain', borderRadius:10, border:`1px solid ${C.border}`, background:C.bg }} />
@@ -1085,8 +1124,8 @@ function VerificationsTab() {
             <div style={{ fontSize:12, color:C.muted, marginBottom:10, fontStyle:'italic' }}>Sem imagem associada.</div>
           )}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-            <button onClick={()=>review(v.userId,'APPROVED')} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:10, padding:10, color:C.success, fontSize:13, minHeight:42, cursor:'pointer' }}>Aprovar</button>
-            <button onClick={()=>review(v.userId,'REJECTED')} style={{ background:C.dangerDim,  border:`1px solid ${C.danger}`,  borderRadius:10, padding:10, color:C.danger,  fontSize:13, minHeight:42, cursor:'pointer' }}>Rejeitar</button>
+            <button onClick={()=>approve(v.userId)} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:10, padding:10, color:C.success, fontSize:13, minHeight:42, cursor:'pointer' }}>Aprovar</button>
+            <button onClick={()=>setRejecting(v.userId)} style={{ background:C.dangerDim,  border:`1px solid ${C.danger}`,  borderRadius:10, padding:10, color:C.danger,  fontSize:13, minHeight:42, cursor:'pointer' }}>Rejeitar</button>
           </div>
         </div>
       ))}

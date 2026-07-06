@@ -6,6 +6,7 @@ import prisma from '../lib/prisma'
 import { uploadFile, deleteFile } from '../lib/storage'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { requireAdmin, logAdminAction } from '../middleware/admin'
+import { evaluateAndActivateUser } from '../lib/userActivationService'
 import { notifyAdmins } from '../lib/notify'
 
 const router = Router()
@@ -131,11 +132,21 @@ router.post('/email/confirm', async (req: Request, res: Response) => {
       if (!stored || stored !== hash) return res.status(400).json({ error: 'Token inválido ou expirado.' })
       await redis.del(`email_verify:${userId}`)
     }
-    const user = await prisma.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date(), status: 'ACTIVE' } })
+    // Sprint 2.5.5: this used to force status='ACTIVE' unconditionally — a stale
+    // (but still valid/unused) confirmation token clicked after a BANNED/SUSPENDED
+    // action would silently reactivate the account. Now only emailVerifiedAt is
+    // stamped unconditionally; the status change goes through the central
+    // activation rule, which no-ops unless the user is still PENDING_VERIFICATION.
+    const user = await prisma.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date() } })
+    const activation = await evaluateAndActivateUser(userId)
     import('../lib/email').then(({ sendWelcomeEmail }) => {
       sendWelcomeEmail(user.email).catch(e => console.error('[EMAIL WELCOME]', e.message))
     })
-    res.json({ ok: true, message: 'Email verificado! A tua conta está activa.' })
+    res.json({
+      ok: true,
+      message: activation.activated ? 'Email verificado! A tua conta está activa.' : 'Email verificado.',
+      activation
+    })
   } catch { res.status(500).json({ error: 'Erro interno.' }) }
 })
 
@@ -154,6 +165,7 @@ router.put('/admin/:userId', requireAuth, requireAdmin('profiles'), async (req: 
       where: { userId: req.params.userId },
       data: { status, reviewedAt: new Date() }
     })
+    let activation = null
     if (status === 'APPROVED') {
       await prisma.user.update({ where: { id: req.params.userId }, data: { ageVerifiedAt: new Date() } })
       if (verification.selfieStoragePath) {
@@ -161,6 +173,7 @@ router.put('/admin/:userId', requireAuth, requireAdmin('profiles'), async (req: 
         await deleteFile(key).catch(e => console.error('[SELFIE DELETE]', e.message))
         await prisma.verification.update({ where: { userId: req.params.userId }, data: { selfieStoragePath: null } })
       }
+      activation = await evaluateAndActivateUser(req.params.userId)
     }
     await logAdminAction(req.userId!, `${status}_VERIFICATION`, 'user', req.params.userId, {
       targetUserId: req.params.userId,
@@ -168,7 +181,7 @@ router.put('/admin/:userId', requireAuth, requireAdmin('profiles'), async (req: 
       newData: { status },
       ipAddress: req.ip
     })
-    res.json({ ok: true, status })
+    res.json({ ok: true, status, activation })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
 })
 
