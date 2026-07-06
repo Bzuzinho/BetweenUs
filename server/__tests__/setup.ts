@@ -22,6 +22,8 @@ afterEach(async () => {
     'profile_intentions', 'privacy_settings',
     'blocked_contact_hashes', 'travel_modes', 'verifications',
     'reports', 'couple_profiles', 'profiles',
+    // 3.9: new Sprint 3 tables — must be cleaned between test suites too
+    'legal_documents',
     'subscriptions', 'user_consents', 'users',
   ]
   for (const t of tables) {
