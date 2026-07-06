@@ -2,6 +2,7 @@ import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { notifyUser, notifyAdmins } from '../lib/notify'
+import { signMediaUrl } from '../lib/mediaAccessService'
 
 const router = Router()
 
@@ -149,20 +150,28 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     // Mark which ones viewer has liked (pending connection)
     const likedIds = new Set(myActions.filter(a => a.action === 'LIKE').map(a => a.targetProfileId))
 
-    const result = scored.map(p => ({
-      id:                 p.id,
-      displayName:        p.displayName,
-      city:               p.city,
-      country:            p.country,
-      bio:                p.bio,
-      type:               p.type,
-      relationshipStatus: p.relationshipStatus,
-      discretionLevel:    p.discretionLevel,
-      score:              p.score,
-      verified:           !!p.user?.ageVerifiedAt,
-      hasPhotos:          p.photos.length > 0,
-      primaryPhoto:       p.photos.find(ph => ph.isPrimary)?.blurredPath || p.photos[0]?.blurredPath || null,
-      liked:              likedIds.has(p.id),
+    // 3.1: discovery always shows the blurred teaser regardless of a
+    // photo's visibilityLevel (that's the point of a discovery grid) — but
+    // since new uploads store an R2 key, not a public URL, it now has to be
+    // signed before it reaches the client.
+    const result = await Promise.all(scored.map(async p => {
+      const teaserSource = p.photos.find(ph => ph.isPrimary)?.blurredPath || p.photos[0]?.blurredPath || null
+      const primaryPhoto = await signMediaUrl(teaserSource)
+      return {
+        id:                 p.id,
+        displayName:        p.displayName,
+        city:               p.city,
+        country:            p.country,
+        bio:                p.bio,
+        type:               p.type,
+        relationshipStatus: p.relationshipStatus,
+        discretionLevel:    p.discretionLevel,
+        score:              p.score,
+        verified:           !!p.user?.ageVerifiedAt,
+        hasPhotos:          p.photos.length > 0,
+        primaryPhoto,
+        liked:              likedIds.has(p.id),
+      }
     }))
 
     res.json({ profiles: result })

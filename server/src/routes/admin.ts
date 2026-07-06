@@ -5,6 +5,7 @@ import { requireAdmin, logAdminAction } from '../middleware/admin'
 import { recalculateRiskScore, recalculateAllRiskScores } from '../lib/riskScore'
 import { evaluateAndActivateUser, canTransitionStatus } from '../lib/userActivationService'
 import { forUser as getEligibility } from '../lib/eligibilityService'
+import { mergePhotosForViewer, signMediaUrl } from '../lib/mediaAccessService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -133,6 +134,19 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
 
   // Strip sensitive fields before sending
   const { passwordHash, ...safeUser } = user as any
+  // 3.1: admin support view is a moderation context — always resolve CLEAN,
+  // signed fresh, regardless of the photo's own visibility tier.
+  if (safeUser.profile?.photos?.length) {
+    safeUser.profile = {
+      ...safeUser.profile,
+      photos: await mergePhotosForViewer(safeUser.profile.photos, {
+        ownerUserId: req.params.id,
+        viewerUserId: null,
+        viewerProfileId: null,
+        isAdminModeration: true
+      })
+    }
+  }
   res.json({
     ...safeUser,
     referral: {
@@ -395,7 +409,17 @@ router.get('/profiles', requireAdmin('profiles'), async (req: AuthRequest, res: 
     }),
     prisma.profile.count({ where })
   ])
-  res.json({ profiles, total })
+  // 3.1: thumbnail per row — admin list view, moderation context (CLEAN)
+  const profilesWithPhotos = await Promise.all(profiles.map(async p => ({
+    ...p,
+    photos: await mergePhotosForViewer(p.photos, {
+      ownerUserId: (p as any).userId,
+      viewerUserId: null,
+      viewerProfileId: null,
+      isAdminModeration: true
+    })
+  })))
+  res.json({ profiles: profilesWithPhotos, total })
 })
 
 router.put('/profiles/:id/status', requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
@@ -438,7 +462,14 @@ router.get('/photos', requireAdmin('photos'), async (req: AuthRequest, res: Resp
     include: { profile: { select: { displayName: true, userId: true, user: { select: { email: true } } } } }
   })
   const total = await prisma.profilePhoto.count({ where: { moderationStatus: status as any } })
-  res.json({ photos, total })
+  // 3.1: moderators must see the actual (unblurred) photo regardless of its
+  // moderationStatus/visibilityLevel — that's the whole point of review.
+  const resolvedPhotos = await Promise.all(photos.map(async p => ({
+    ...p,
+    storagePath: (await signMediaUrl(p.storagePath)) || p.storagePath,
+    blurredPath: undefined
+  })))
+  res.json({ photos: resolvedPhotos, total })
 })
 
 router.put('/photos/:id', requireAdmin('photos'), async (req: AuthRequest, res: Response) => {

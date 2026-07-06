@@ -765,6 +765,30 @@ function RoleManager({ userId, currentRole, onChanged }) {
   )
 }
 
+// 3.1: verification selfies are now private storage — selfieStoragePath is
+// an R2 key, not a public URL. Fetches a short-lived signed URL on demand
+// instead of rendering the stored path directly.
+function AdminSelfieImage({ userId }) {
+  const [url, setUrl] = useState(null)
+  const [err, setErr] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    setUrl(null); setErr(false)
+    api.get(`/verifications/admin/${userId}/selfie-url`)
+      .then(r => { if (!cancelled) setUrl(r.data.url) })
+      .catch(() => { if (!cancelled) setErr(true) })
+    return () => { cancelled = true }
+  }, [userId])
+
+  if (err) return <div style={{ fontSize:12, color:C.muted, marginBottom:10, fontStyle:'italic' }}>Não foi possível carregar a imagem (pode já ter sido eliminada após revisão).</div>
+  if (!url) return <div style={{ fontSize:12, color:C.muted, marginBottom:10 }}>A carregar imagem…</div>
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" style={{ display:'block', marginBottom:10 }}>
+      <img src={url} alt="Selfie de verificação" style={{ width:'100%', maxHeight:280, objectFit:'contain', borderRadius:10, border:`1px solid ${C.border}`, background:C.bg }} />
+    </a>
+  )
+}
+
 function UserDetail({ userId, onBack }) {
   const { user: me } = useAuth()
   const [data, setData] = useState(null)
@@ -976,9 +1000,7 @@ function UserDetail({ userId, onBack }) {
             {u.ageVerifiedAt && <div>Idade verificada: <strong style={{color:C.success}}>✅ {new Date(u.ageVerifiedAt).toLocaleDateString('pt')}</strong></div>}
           </div>
           {u.verification?.selfieStoragePath && (
-            <a href={u.verification.selfieStoragePath} target="_blank" rel="noopener noreferrer" style={{ display:'block', marginBottom:14 }}>
-              <img src={u.verification.selfieStoragePath} alt="Selfie de verificação" style={{ width:'100%', maxHeight:280, objectFit:'contain', borderRadius:10, border:`1px solid ${C.border}`, background:C.bg }}/>
-            </a>
+            <AdminSelfieImage userId={userId} />
           )}
           {u.verification?.status === 'PENDING' && (
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
@@ -1226,9 +1248,7 @@ function VerificationsTab() {
             <span style={{ color:C.muted, fontSize:18 }}>›</span>
           </div>
           {v.selfieStoragePath ? (
-            <a href={v.selfieStoragePath} target="_blank" rel="noopener noreferrer" style={{ display:'block', marginBottom:10 }}>
-              <img src={v.selfieStoragePath} alt="Selfie de verificação" style={{ width:'100%', maxHeight:280, objectFit:'contain', borderRadius:10, border:`1px solid ${C.border}`, background:C.bg }} />
-            </a>
+            <AdminSelfieImage userId={v.userId} />
           ) : (
             <div style={{ fontSize:12, color:C.muted, marginBottom:10, fontStyle:'italic' }}>Sem imagem associada.</div>
           )}

@@ -3,7 +3,8 @@ import multer from 'multer'
 import { createHash, randomBytes } from 'crypto'
 import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
-import { uploadFile, deleteFile } from '../lib/storage'
+import { uploadPrivateFile, deleteFile } from '../lib/storage'
+import { resolveVerificationSelfieUrl, isStorageKey } from '../lib/mediaAccessService'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { requireAdmin, logAdminAction } from '../middleware/admin'
 import { evaluateAndActivateUser } from '../lib/userActivationService'
@@ -43,16 +44,19 @@ router.post('/submit', requireAuth, upload.single('selfie'), async (req: AuthReq
     const existing = await prisma.verification.findUnique({ where: { userId: req.userId! } })
     if (existing?.status === 'APPROVED') return res.status(409).json({ error: 'Perfil já verificado.' })
     if (existing?.status === 'PENDING')  return res.status(409).json({ error: 'Verificação já em curso.' })
-    let selfieUrl: string | undefined
+    // 3.1: verification selfies are the most sensitive asset in the app —
+    // always private, never a public ACL. Only reachable via the admin
+    // signed-url endpoint below, and deleted immediately after review.
+    let selfieKey: string | undefined
     if (isProd && process.env.STORAGE_ENDPOINT) {
       const filename = `verify-${req.userId}-${Date.now()}.jpg`
-      const result = await uploadFile(req.file.buffer, `verifications/${filename}`, req.file.mimetype)
-      selfieUrl = result.url
+      const result = await uploadPrivateFile(req.file.buffer, `verifications/${filename}`, req.file.mimetype)
+      selfieKey = result.key
     }
     await prisma.verification.upsert({
       where: { userId: req.userId! },
-      update: { status: 'PENDING', selfieStoragePath: selfieUrl || null, reviewedAt: null, expiresAt: new Date(Date.now() + 30*24*60*60*1000) },
-      create: { userId: req.userId!, type: 'selfie', status: isProd ? 'PENDING' : 'APPROVED', selfieStoragePath: selfieUrl || null, expiresAt: new Date(Date.now() + 30*24*60*60*1000) }
+      update: { status: 'PENDING', selfieStoragePath: selfieKey || null, reviewedAt: null, expiresAt: new Date(Date.now() + 30*24*60*60*1000) },
+      create: { userId: req.userId!, type: 'selfie', status: isProd ? 'PENDING' : 'APPROVED', selfieStoragePath: selfieKey || null, expiresAt: new Date(Date.now() + 30*24*60*60*1000) }
     })
     if (!isProd) {
       await prisma.user.update({ where: { id: req.userId! }, data: { ageVerifiedAt: new Date() } })
@@ -169,7 +173,10 @@ router.put('/admin/:userId', requireAuth, requireAdmin('profiles'), async (req: 
     if (status === 'APPROVED') {
       await prisma.user.update({ where: { id: req.params.userId }, data: { ageVerifiedAt: new Date() } })
       if (verification.selfieStoragePath) {
-        const key = new URL(verification.selfieStoragePath).pathname.replace(/^\//, '')
+        // 3.1: handle both a raw R2 key (new uploads) and a legacy full URL
+        // (selfies uploaded before this sprint) the same way delete does in photos.ts
+        const path = verification.selfieStoragePath
+        const key = isStorageKey(path) ? path : new URL(path).pathname.replace(/^\//, '')
         await deleteFile(key).catch(e => console.error('[SELFIE DELETE]', e.message))
         await prisma.verification.update({ where: { userId: req.params.userId }, data: { selfieStoragePath: null } })
       }
@@ -183,6 +190,21 @@ router.put('/admin/:userId', requireAuth, requireAdmin('profiles'), async (req: 
     })
     res.json({ ok: true, status, activation })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
+})
+
+// GET /api/verifications/admin/:userId/selfie-url — signed, short-TTL URL for
+// the pending selfie. Replaces exposing selfieStoragePath directly to the
+// admin client (which no longer resolves to anything publicly reachable).
+router.get('/admin/:userId/selfie-url', requireAuth, requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
+  try {
+    const verification = await prisma.verification.findUnique({ where: { userId: req.params.userId } })
+    if (!verification || !verification.selfieStoragePath) return res.status(404).json({ error: 'Sem selfie disponível.' })
+    const url = await resolveVerificationSelfieUrl(verification.selfieStoragePath, { isOwner: false, isAdminModeration: true })
+    if (!url) return res.status(404).json({ error: 'Sem selfie disponível.' })
+    res.json({ url, expiresIn: 120 })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
 })
 
 export default router

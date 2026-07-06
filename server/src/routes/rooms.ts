@@ -3,6 +3,7 @@ import { z } from 'zod'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { notifyAdmins } from '../lib/notify'
+import { signMediaUrl } from '../lib/mediaAccessService'
 
 const router = Router()
 
@@ -24,6 +25,21 @@ const roomSelect = {
   }
 }
 
+// 3.1: member thumbnails now store an R2 key (private uploads) rather than a
+// public URL. Room members are an existing trust boundary (you're already in
+// a private room together), so this signs whatever primary photo is present
+// rather than re-deriving match/approval state per member.
+const signRoomPhotos = async (room: any) => {
+  if (!room?.members) return room
+  const members = await Promise.all(room.members.map(async (m: any) => {
+    const photo = m.user?.profile?.photos?.[0]
+    if (!photo) return m
+    const signed = await signMediaUrl(photo.storagePath)
+    return { ...m, user: { ...m.user, profile: { ...m.user.profile, photos: [{ ...photo, storagePath: signed }] } } }
+  }))
+  return { ...room, members }
+}
+
 // GET /api/rooms
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
@@ -32,7 +48,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       include: { privateRoom: { select: roomSelect } },
       orderBy: { joinedAt: 'desc' }
     })
-    res.json({ rooms: memberships.map(m => m.privateRoom) })
+    res.json({ rooms: await Promise.all(memberships.map(m => signRoomPhotos(m.privateRoom))) })
   } catch (err: any) {
     console.error('[ROOMS GET]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
@@ -75,7 +91,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
       }
     }
 
-    res.status(201).json(room)
+    res.status(201).json(await signRoomPhotos(room))
   } catch (err: any) {
     console.error('[ROOMS CREATE]', err.message)
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
@@ -93,7 +109,7 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
 
     const room = await prisma.privateRoom.findUnique({ where: { id: req.params.id }, select: roomSelect })
     if (!room || room.status === 'CLOSED') return res.status(404).json({ error: 'Sala não encontrada.' })
-    res.json(room)
+    res.json(await signRoomPhotos(room))
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
   }

@@ -2,7 +2,8 @@ import { Router, Response } from 'express'
 import multer from 'multer'
 import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
-import { uploadFile, deleteFile } from '../lib/storage'
+import { uploadPrivateFile, deleteFile } from '../lib/storage'
+import { resolvePhotoForViewer, isStorageKey } from '../lib/mediaAccessService'
 import { processImage, detectRealImageType } from '../lib/imageProcessing'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { notifyAdmins } from '../lib/notify'
@@ -28,9 +29,15 @@ const upload = multer({
   }
 })
 
-const extractKey = (url: string): string | null => {
+// 3.1: pre-Sprint-3 photos store a public URL in storagePath/blurredPath
+// (needs pathname extraction); photos uploaded through uploadPrivateFile()
+// store the raw R2 key directly. Handle both so deletes work for old and
+// new records without a backfill migration.
+const extractKey = (value: string): string | null => {
+  if (!value) return null
+  if (isStorageKey(value)) return value
   try {
-    return new URL(url).pathname.replace(/^\//, '') || null
+    return new URL(value).pathname.replace(/^\//, '') || null
   } catch {
     return null
   }
@@ -62,9 +69,13 @@ router.post('/', requireAuth, uploadLimiter, upload.single('photo'), async (req:
     const isPrimary = profile.photos.length === 0
     const baseFilename = `${profile.id}-${Date.now()}`
 
+    // 3.1: both variants go through the private upload path — storagePath/
+    // blurredPath now hold R2 object keys, not public URLs. They're only
+    // ever exposed to callers as short-lived signed URLs (see GET /me and
+    // the resolvePhotoForViewer usage in profiles.ts/discovery.ts).
     const [cleanResult, blurredResult] = await Promise.all([
-      uploadFile(processed.clean, `${baseFilename}.jpg`, 'image/jpeg'),
-      uploadFile(processed.blurred, `${baseFilename}-blurred.jpg`, 'image/jpeg')
+      uploadPrivateFile(processed.clean, `${baseFilename}.jpg`, 'image/jpeg'),
+      uploadPrivateFile(processed.blurred, `${baseFilename}-blurred.jpg`, 'image/jpeg')
     ])
 
     const moderationStatus = isProd ? 'PENDING' : 'APPROVED'
@@ -72,8 +83,8 @@ router.post('/', requireAuth, uploadLimiter, upload.single('photo'), async (req:
     const photo = await prisma.profilePhoto.create({
       data: {
         profileId: profile.id,
-        storagePath: cleanResult.url,
-        blurredPath: blurredResult.url,
+        storagePath: cleanResult.key,
+        blurredPath: blurredResult.key,
         visibilityLevel: visibilityLevel as any,
         moderationStatus: moderationStatus as any,
         isPrimary,
@@ -100,7 +111,20 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       include: { photos: { orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }] } }
     })
     if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-    res.json({ photos: profile.photos })
+
+    // 3.1: owner always gets CLEAN — sign storagePath fresh on every read
+    // instead of exposing the permanent (pre-Sprint-3) or private (post-
+    // Sprint-3) storage value directly.
+    const photos = await Promise.all(profile.photos.map(async photo => {
+      const resolved = await resolvePhotoForViewer(photo, {
+        ownerUserId: req.userId!,
+        viewerUserId: req.userId!,
+        viewerProfileId: profile.id
+      })
+      return { ...photo, storagePath: resolved?.url || photo.storagePath, blurredPath: undefined }
+    }))
+
+    res.json({ photos })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
   }

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { coarsenCoordinate } from '../utils/location'
+import { mergePhotosForViewer } from '../lib/mediaAccessService'
 
 const router = Router()
 
@@ -102,8 +103,14 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     }
   })
   if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-  const { locationLat, locationLng, ...safeProfile } = profile as any
-  res.json(safeProfile)
+  const { locationLat, locationLng, photos, ...safeProfile } = profile as any
+  // 3.1: sign photo URLs fresh on every read instead of exposing storage keys/permanent URLs
+  const resolvedPhotos = await mergePhotosForViewer(photos, {
+    ownerUserId: req.userId!,
+    viewerUserId: req.userId!,
+    viewerProfileId: profile.id
+  })
+  res.json({ ...safeProfile, photos: resolvedPhotos })
 })
 
 // PUT /api/profiles/me  ← new: edit own profile
@@ -247,11 +254,22 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
 router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const profile = await prisma.profile.findUnique({
     where: { id: req.params.id },
-    include: { photos: { where: { moderationStatus: 'APPROVED', visibilityLevel: 'PUBLIC' }, orderBy: [{ isPrimary: 'desc' }] }, intentions: { include: { intention: true } }, privacySettings: true }
+    // 3.1/3.2 fix: this used to hard-filter to visibilityLevel:'PUBLIC', which
+    // meant BLURRED/PRIVATE_AFTER_MATCH/PRIVATE_AFTER_APPROVAL photos never
+    // reached the client at all — not even blurred. Access is now decided
+    // per-viewer below via mergePhotosForViewer instead of at the query level.
+    include: { photos: { where: { moderationStatus: 'APPROVED' }, orderBy: [{ isPrimary: 'desc' }] }, intentions: { include: { intention: true } }, privacySettings: true }
   })
   if (!profile || profile.status !== 'APPROVED') return res.status(404).json({ error: 'Perfil não encontrado.' })
-  const { userId, locationLat, locationLng, ...pub } = profile as any
-  res.json(pub)
+  const { userId, locationLat, locationLng, photos, ...pub } = profile as any
+
+  const viewerProfileId = await resolveMyProfileId(req.userId!)
+  const resolvedPhotos = await mergePhotosForViewer(photos, {
+    ownerUserId: userId,
+    viewerUserId: req.userId!,
+    viewerProfileId
+  })
+  res.json({ ...pub, photos: resolvedPhotos })
 })
 
 router.put('/me/boundaries', requireAuth, async (req: AuthRequest, res: Response) => {

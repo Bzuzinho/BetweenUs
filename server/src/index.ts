@@ -24,9 +24,25 @@ export const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, methods: ['GET','POST'], credentials: true }
 })
 
+// 3.8: real CSP + hardened headers. API is JSON-only (no HTML views), so we
+// lock content sources down hard; CSP_REPORT_ONLY lets ops flip to audit mode
+// without a redeploy if something unexpected breaks in production.
+const cspReportOnly = process.env.CSP_REPORT_ONLY === 'true'
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
-  contentSecurityPolicy: false
+  contentSecurityPolicy: {
+    reportOnly: cspReportOnly,
+    directives: {
+      defaultSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      objectSrc: ["'none'"],
+      baseUri: ["'none'"],
+      formAction: ["'none'"]
+    }
+  },
+  hsts: isProd ? { maxAge: 15552000, includeSubDomains: true } : false,
+  referrerPolicy: { policy: 'no-referrer' },
+  crossOriginOpenerPolicy: { policy: 'same-origin' }
 }))
 app.use(compression())
 app.use(cors({
@@ -155,6 +171,11 @@ io.on('connection', socket => {
   socket.on('typing', (data: any) => socket.to('conversation:' + data.conversationId).emit('typing', data))
   socket.on('join_room',  (id: string) => socket.join('room:' + id))
   socket.on('leave_room', (id: string) => socket.leave('room:' + id))
+})
+
+// 3.8: explicit JSON 404 instead of Express's default text/html fallback
+app.use((req: express.Request, res: express.Response) => {
+  res.status(404).json({ error: 'Rota não encontrada.' })
 })
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
