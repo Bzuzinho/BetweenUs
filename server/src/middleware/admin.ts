@@ -7,11 +7,11 @@ export type AdminRole =
 
 const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   SUPER_ADMIN:      ['*'],
-  ADMIN:            ['users','profiles','photos','reports','subscriptions','metrics','audit','beta','conversations'],
+  ADMIN:            ['users','profiles','photos','reports','subscriptions','metrics','audit','beta','conversations','guide'],
   MODERATOR:        ['profiles','photos','reports','conversations'],
   SUPPORT:          ['users','reports'],
   FINANCE:          ['subscriptions','metrics'],
-  CONTENT_REVIEWER: ['photos','profiles'],
+  CONTENT_REVIEWER: ['photos','profiles','guide'],
 }
 
 export const requireAdmin = (permission?: string) => {
@@ -67,15 +67,16 @@ export const logAdminAction = async (
   try {
     await prisma.adminAction.create({
       data: {
-        adminUserId,
+        adminId: adminUserId,
         action,
         targetType,
         targetId,
         targetUserId: meta.targetUserId,
         reason:       meta.reason,
         internalNote: meta.internalNote,
-        previousData: meta.previousData ? JSON.stringify(meta.previousData) : undefined,
-        newData:      meta.newData      ? JSON.stringify(meta.newData)      : undefined,
+        // Json columns — store the object directly, don't double-encode as a string
+        previousData: meta.previousData ?? undefined,
+        newData:      meta.newData      ?? undefined,
         ipAddress:    meta.ipAddress,
         userAgent:    meta.userAgent,
       }

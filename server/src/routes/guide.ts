@@ -2,6 +2,7 @@ import { Router, Response, Request } from 'express'
 import { z } from 'zod'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { requireAdmin, logAdminAction } from '../middleware/admin'
 
 const router = Router()
 
@@ -37,7 +38,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 
 // Admin CRUD — requires auth
 // GET /api/guide/admin/all
-router.get('/admin/all', requireAuth, async (req: AuthRequest, res: Response) => {
+router.get('/admin/all', requireAuth, requireAdmin('guide'), async (req: AuthRequest, res: Response) => {
   try {
     const articles = await (prisma as any).guideArticle.findMany({
       orderBy: { sortOrder: 'asc' }
@@ -49,7 +50,7 @@ router.get('/admin/all', requireAuth, async (req: AuthRequest, res: Response) =>
 })
 
 // POST /api/guide/admin — create article
-router.post('/admin', requireAuth, async (req: AuthRequest, res: Response) => {
+router.post('/admin', requireAuth, requireAdmin('guide'), async (req: AuthRequest, res: Response) => {
   try {
     const data = z.object({
       title:     z.string().min(2).max(120),
@@ -62,6 +63,7 @@ router.post('/admin', requireAuth, async (req: AuthRequest, res: Response) => {
     }).parse(req.body)
 
     const article = await (prisma as any).guideArticle.create({ data })
+    await logAdminAction(req.userId!, 'CREATE_GUIDE_ARTICLE', 'guide_article', article.id, { newData: data, ipAddress: req.ip })
     res.status(201).json(article)
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
@@ -70,7 +72,7 @@ router.post('/admin', requireAuth, async (req: AuthRequest, res: Response) => {
 })
 
 // PUT /api/guide/admin/:id — update article
-router.put('/admin/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+router.put('/admin/:id', requireAuth, requireAdmin('guide'), async (req: AuthRequest, res: Response) => {
   try {
     const data = z.object({
       title:     z.string().min(2).max(120).optional(),
@@ -82,9 +84,14 @@ router.put('/admin/:id', requireAuth, async (req: AuthRequest, res: Response) =>
       sortOrder: z.number().optional(),
     }).parse(req.body)
 
+    const prev = await (prisma as any).guideArticle.findUnique({ where: { id: req.params.id } })
     const article = await (prisma as any).guideArticle.update({
       where: { id: req.params.id },
       data
+    })
+    await logAdminAction(req.userId!, 'UPDATE_GUIDE_ARTICLE', 'guide_article', article.id, {
+      previousData: prev ? { title: prev.title, published: prev.published } : undefined,
+      newData: data, ipAddress: req.ip
     })
     res.json(article)
   } catch (err: any) {
@@ -94,9 +101,13 @@ router.put('/admin/:id', requireAuth, async (req: AuthRequest, res: Response) =>
 })
 
 // DELETE /api/guide/admin/:id
-router.delete('/admin/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+router.delete('/admin/:id', requireAuth, requireAdmin('guide'), async (req: AuthRequest, res: Response) => {
   try {
+    const article = await (prisma as any).guideArticle.findUnique({ where: { id: req.params.id } })
     await (prisma as any).guideArticle.delete({ where: { id: req.params.id } })
+    await logAdminAction(req.userId!, 'DELETE_GUIDE_ARTICLE', 'guide_article', req.params.id, {
+      previousData: article ? { title: article.title } : undefined, ipAddress: req.ip
+    })
     res.json({ ok: true })
   } catch {
     res.status(500).json({ error: 'Erro interno.' })

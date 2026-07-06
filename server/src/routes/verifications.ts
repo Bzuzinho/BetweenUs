@@ -5,6 +5,7 @@ import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
 import { uploadFile, deleteFile } from '../lib/storage'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { requireAdmin, logAdminAction } from '../middleware/admin'
 import { notifyAdmins } from '../lib/notify'
 
 const router = Router()
@@ -139,10 +140,16 @@ router.post('/email/confirm', async (req: Request, res: Response) => {
 })
 
 // PUT /api/verifications/admin/:userId — admin approve/reject
-router.put('/admin/:userId', async (req: Request, res: Response) => {
+// Sprint 2.5.4: was completely unauthenticated (no requireAuth/requireAdmin) —
+// anyone could approve/reject any user's identity verification. Locked down.
+// Note: this duplicates part of PUT /api/admin/verifications/:userId (routes/admin.ts).
+// Kept for now because it's the only path that sets ageVerifiedAt + cleans up the
+// selfie file; full consolidation into UserActivationService is tracked separately.
+router.put('/admin/:userId', requireAuth, requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
   try {
     const { status } = req.body
     if (!['APPROVED','REJECTED'].includes(status)) return res.status(400).json({ error: 'Status inválido.' })
+    const prev = await prisma.verification.findUnique({ where: { userId: req.params.userId }, select: { status: true } })
     const verification = await prisma.verification.update({
       where: { userId: req.params.userId },
       data: { status, reviewedAt: new Date() }
@@ -155,6 +162,12 @@ router.put('/admin/:userId', async (req: Request, res: Response) => {
         await prisma.verification.update({ where: { userId: req.params.userId }, data: { selfieStoragePath: null } })
       }
     }
+    await logAdminAction(req.userId!, `${status}_VERIFICATION`, 'user', req.params.userId, {
+      targetUserId: req.params.userId,
+      previousData: { status: prev?.status },
+      newData: { status },
+      ipAddress: req.ip
+    })
     res.json({ ok: true, status })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
 })

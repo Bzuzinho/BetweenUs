@@ -197,6 +197,7 @@ router.get('/me', async (req: Request, res: Response) => {
       where: { id: userId },
       select: {
         id:true, email:true, status:true, adminRole:true, emailVerifiedAt:true, createdAt:true, ageVerifiedAt:true,
+        accountName:true, nif:true, avatarPath:true, dateOfBirth:true,
         profile: { select:{ id:true, displayName:true, type:true, status:true, city:true } },
         subscription: { select:{ plan:true, status:true, currentPeriodEnd:true } }
       }
@@ -359,15 +360,34 @@ router.delete('/sessions', async (req: Request, res: Response) => {
 })
 
 
-// ─── PUT /api/auth/account — placeholder until schema migration adds nif/accountName
+// ─── PUT /api/auth/account — account-level data (accountName/NIF), distinct from Profile
+const accountUpdateSchema = z.object({
+  accountName: z.string().trim().min(2).max(80).optional().nullable(),
+  nif:         z.string().trim().regex(/^\d{9}$/, 'NIF deve ter 9 dígitos.').optional().nullable(),
+})
+
 router.put('/account', async (req: Request, res: Response) => {
   const token = req.headers.authorization?.split(' ')[1] || (req as any).cookies?.accessToken
   if (!token) return res.status(401).json({ error: 'Não autenticado.' })
   try {
-    verifyAccessToken(token)
-    // Fields nif/accountName not yet in schema — pending migration
-    res.json({ ok: true, message: 'Dados de conta guardados.' })
-  } catch { res.status(401).json({ error: 'Token inválido.' }) }
+    const { userId } = verifyAccessToken(token)
+    const data = accountUpdateSchema.parse(req.body)
+
+    const updateData: any = {}
+    if (data.accountName !== undefined) updateData.accountName = data.accountName || null
+    if (data.nif !== undefined)         updateData.nif = data.nif || null
+
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+      select: { id:true, email:true, accountName:true, nif:true, avatarPath:true }
+    })
+
+    res.json({ ok: true, message: 'Dados de conta guardados.', user })
+  } catch (err: any) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
+    res.status(401).json({ error: 'Token inválido.' })
+  }
 })
 
 // ─── POST /api/auth/avatar — upload account avatar ───────────────────────────
@@ -393,8 +413,7 @@ router.post('/avatar', avatarUpload.single('avatar'), async (req: Request, res: 
       avatarUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
     }
 
-    // avatarPath not yet in schema — store in profile photos instead
-    console.log('[AVATAR] Upload received but avatarPath not in schema yet')
+    await prisma.user.update({ where: { id: userId }, data: { avatarPath: avatarUrl } })
     res.json({ ok:true, avatarPath: avatarUrl })
   } catch (err: any) {
     console.error('[AVATAR]', err.message)

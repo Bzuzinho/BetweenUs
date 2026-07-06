@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
+import { getUserDisplayName } from '../lib/userDisplay'
 
 /* ─── Design tokens ──────────────────────────────────────────────────────────── */
 const C = {
@@ -230,7 +231,7 @@ function AdminHeader({ user, onLogout }) {
     return () => document.removeEventListener('mousedown', h)
   }, [])
 
-  const initials = (user?.email || '?')[0].toUpperCase()
+  const initials = (getUserDisplayName(user) || '?')[0].toUpperCase()
 
   return (
     <div style={{
@@ -264,7 +265,7 @@ function AdminHeader({ user, onLogout }) {
         {/* Name + role — desktop only */}
         <div onClick={() => setShowMenu(o => !o)} style={{ cursor:'pointer', textAlign:'right' }} className="admin-name-block">
           <div style={{ fontSize:13, fontWeight:500, color:C.text, lineHeight:1.2, whiteSpace:'nowrap' }}>
-            {user?.accountName || user?.email?.split('@')[0] || 'Admin'}
+            {getUserDisplayName(user) || 'Admin'}
           </div>
           <div style={{ fontSize:11, color:C.primary, lineHeight:1.2 }}>{user?.adminRole}</div>
         </div>
@@ -290,11 +291,12 @@ function AdminHeader({ user, onLogout }) {
             borderRadius:14, boxShadow:'0 8px 32px rgba(0,0,0,0.4)', zIndex:200, overflow:'hidden',
           }}>
             <div style={{ padding:'12px 14px', borderBottom:`1px solid ${C.border}` }}>
-              <div style={{ fontSize:13, fontWeight:500, color:C.text, marginBottom:2 }}>{user?.email}</div>
-              <div style={{ fontSize:11, color:C.primary }}>{user?.adminRole}</div>
+              <div style={{ fontSize:13, fontWeight:500, color:C.text, marginBottom:2 }}>{getUserDisplayName(user)}</div>
+              <div style={{ fontSize:11, color:C.primary, marginBottom:2 }}>{user?.adminRole}</div>
+              <div style={{ fontSize:11, color:C.muted }}>{user?.email}</div>
             </div>
             {[
-              { label:'O meu perfil', action: () => { navigate('/profile'); setShowMenu(false) } },
+              { label:'Conta (Admin)', action: () => { navigate('/admin/me'); setShowMenu(false) } },
               { label:'Alterar password', action: () => { navigate('/forgot-password'); setShowMenu(false) } },
               { label:'Sair', action: onLogout, danger: true },
             ].map(item => (
@@ -1656,6 +1658,234 @@ const ROLES_CONFIG = [
   { value:'SUPER_ADMIN',      label:'Super Admin',         desc:'Acesso total incluindo roles e configurações', perms:['*'] },
 ]
 
+/* ─── Admin Account Area (Conta / Perfil Público / Subscrição / Segurança) ────
+   Reached only via o badge/menu "Conta (Admin)" — nunca pelas tabs normais.
+   Mantém o admin dentro do AdminLayout em vez de o mandar para o AppShell
+   mobile do utilizador comum (Sprint 2.5.2). ────────────────────────────── */
+const RELATIONSHIP_STATUSES = ['SINGLE','COMMITTED','MARRIED','OPEN','POLYAMOROUS','COUPLE_CURIOUS','COUPLE_LIBERAL','OTHER']
+const DISCRETION_LEVELS = ['MAXIMUM','SELECTIVE','OPEN']
+
+function AdminAccountTab({ changeTab }) {
+  const { user, refreshUser } = useAuth()
+  const [subTab, setSubTab] = useState('conta')
+  const [profile, setProfile] = useState(null)
+  const [subscription, setSubscription] = useState(null)
+  const [verification, setVerification] = useState(null)
+  const [accountForm, setAccountForm] = useState({ accountName:'', nif:'' })
+  const [profileForm, setProfileForm] = useState(null)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  const [saving, setSaving] = useState(false)
+  const fileRef = useRef(null)
+
+  useEffect(() => {
+    if (user) setAccountForm({ accountName: user.accountName || '', nif: user.nif || '' })
+  }, [user])
+
+  useEffect(() => {
+    api.get('/profiles/me').then(r => {
+      setProfile(r.data)
+      setProfileForm({
+        displayName: r.data?.displayName || '', bio: r.data?.bio || '',
+        gender: r.data?.gender || '', orientation: r.data?.orientation || '',
+        relationshipStatus: r.data?.relationshipStatus || 'SINGLE',
+        city: r.data?.city || '', country: r.data?.country || '',
+        discretionLevel: r.data?.discretionLevel || 'SELECTIVE',
+      })
+    }).catch(() => {})
+    api.get('/subscriptions/me').then(r => setSubscription(r.data)).catch(() => {})
+    api.get('/verifications/me').then(r => setVerification(r.data)).catch(() => {})
+  }, [])
+
+  const saveAccount = async () => {
+    setSaving(true); setMsg(''); setErr('')
+    try {
+      await api.put('/auth/account', accountForm)
+      await refreshUser()
+      setMsg('Dados de conta guardados.')
+    } catch (e) { setErr(e.response?.data?.error || 'Erro ao guardar.') } finally { setSaving(false) }
+  }
+
+  const saveProfile = async () => {
+    setSaving(true); setMsg(''); setErr('')
+    try {
+      await api.put('/profiles/me', profileForm)
+      setMsg('Perfil público guardado.')
+    } catch (e) { setErr(e.response?.data?.error || 'Erro ao guardar.') } finally { setSaving(false) }
+  }
+
+  const uploadAvatar = async (file) => {
+    if (!file) return
+    const fd = new FormData(); fd.append('avatar', file)
+    setSaving(true); setMsg(''); setErr('')
+    try {
+      await api.post('/auth/avatar', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      await refreshUser()
+      setMsg('Avatar actualizado.')
+    } catch (e) { setErr(e.response?.data?.error || 'Erro ao enviar avatar.') } finally { setSaving(false) }
+  }
+
+  const terminateSessions = async () => {
+    if (!confirm('Terminar todas as sessões (incluindo esta)?')) return
+    try { await api.delete('/auth/sessions') } catch {}
+  }
+
+  if (!user) return <div style={{ color:C.muted, padding:20 }}>A carregar...</div>
+
+  return (
+    <div>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
+        <button onClick={() => changeTab('dashboard')} style={{ background:'none', border:'none', color:C.muted, fontSize:20, cursor:'pointer', padding:0 }}>←</button>
+        <div>
+          <div style={{ fontSize:16, fontWeight:600, color:C.text }}>Conta de Administrador</div>
+          <div style={{ fontSize:12, color:C.muted }}>Voltar ao <span style={{color:C.primary, cursor:'pointer'}} onClick={() => changeTab('dashboard')}>Dashboard</span></div>
+        </div>
+      </div>
+
+      <div style={{ display:'flex', gap:6, marginBottom:16, flexWrap:'wrap' }}>
+        {[['conta','Conta'],['perfil','Perfil Público'],['subscricao','Subscrição'],['seguranca','Segurança']].map(([k,l]) => (
+          <button key={k} onClick={() => setSubTab(k)} style={{
+            background:subTab===k?C.primaryDim:C.surface, border:`1.5px solid ${subTab===k?C.primary:C.border}`,
+            borderRadius:10, padding:'8px 14px', color:subTab===k?C.primary:'#C8D4DC', fontSize:13, cursor:'pointer'
+          }}>{l}</button>
+        ))}
+      </div>
+
+      {msg && <div style={{ background:C.successDim, border:`1px solid rgba(74,222,128,0.25)`, borderRadius:10, padding:'10px 14px', marginBottom:12, color:C.success, fontSize:13 }}>{msg}</div>}
+      {err && <div style={{ background:C.dangerDim, border:`1px solid rgba(248,113,113,0.25)`, borderRadius:10, padding:'10px 14px', marginBottom:12, color:C.danger, fontSize:13 }}>{err}</div>}
+
+      {subTab === 'conta' && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:16 }}>
+            <div onClick={() => fileRef.current?.click()} style={{
+              width:64, height:64, borderRadius:'50%', background:C.primaryDim, border:`1.5px solid ${C.primary}`,
+              display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, fontWeight:600, color:C.primary,
+              cursor:'pointer', overflow:'hidden', flexShrink:0,
+            }}>
+              {user.avatarPath ? <img src={user.avatarPath} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }}/> : (getUserDisplayName(user)||'?')[0].toUpperCase()}
+            </div>
+            <div>
+              <button onClick={() => fileRef.current?.click()} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:8, padding:'7px 14px', color:C.text2, fontSize:12, cursor:'pointer' }}>Alterar avatar</button>
+              <input ref={fileRef} type="file" accept="image/*" hidden onChange={e => uploadAvatar(e.target.files?.[0])}/>
+              <div style={{ fontSize:11, color:C.muted, marginTop:6 }}>Avatar da Conta — diferente das fotos do Perfil Público.</div>
+            </div>
+          </div>
+
+          <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>NOME (accountName)</label>
+          <input style={INP} value={accountForm.accountName} onChange={e => setAccountForm(p => ({...p, accountName:e.target.value}))} placeholder="Nome real"/>
+
+          <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>NIF</label>
+          <input style={INP} value={accountForm.nif} onChange={e => setAccountForm(p => ({...p, nif:e.target.value}))} placeholder="123456789"/>
+
+          <div style={{ fontSize:12, color:C.muted, lineHeight:1.9, marginBottom:12 }}>
+            <div>Email: <span style={{color:C.text}}>{user.email}</span></div>
+            <div>Role: <span style={{color:C.primary}}>{user.adminRole || '—'}</span></div>
+            <div>Estado da conta: <span style={{color:C.text}}>{user.status}</span></div>
+            {user.dateOfBirth && <div>Data de nascimento: <span style={{color:C.text}}>{new Date(user.dateOfBirth).toLocaleDateString('pt')}</span></div>}
+          </div>
+
+          <button onClick={saveAccount} disabled={saving} style={{ background:C.primary, border:'none', borderRadius:10, padding:'10px 18px', color:'#0A141A', fontWeight:700, fontSize:14, cursor:'pointer' }}>
+            {saving ? 'A guardar...' : 'Guardar Conta'}
+          </button>
+        </div>
+      )}
+
+      {subTab === 'perfil' && profileForm && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16 }}>
+          <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>NOME VISÍVEL</label>
+          <input style={INP} value={profileForm.displayName} onChange={e => setProfileForm(p => ({...p, displayName:e.target.value}))}/>
+
+          <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>BIO</label>
+          <textarea style={{ ...INP, resize:'vertical' }} rows={3} value={profileForm.bio} onChange={e => setProfileForm(p => ({...p, bio:e.target.value}))}/>
+
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+            <div>
+              <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>GÉNERO</label>
+              <input style={INP} value={profileForm.gender} onChange={e => setProfileForm(p => ({...p, gender:e.target.value}))}/>
+            </div>
+            <div>
+              <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>ORIENTAÇÃO</label>
+              <input style={INP} value={profileForm.orientation} onChange={e => setProfileForm(p => ({...p, orientation:e.target.value}))}/>
+            </div>
+          </div>
+
+          <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>ESTADO RELACIONAL</label>
+          <select style={INP} value={profileForm.relationshipStatus} onChange={e => setProfileForm(p => ({...p, relationshipStatus:e.target.value}))}>
+            {RELATIONSHIP_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+            <div>
+              <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>CIDADE</label>
+              <input style={INP} value={profileForm.city} onChange={e => setProfileForm(p => ({...p, city:e.target.value}))}/>
+            </div>
+            <div>
+              <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>PAÍS</label>
+              <input style={INP} value={profileForm.country} onChange={e => setProfileForm(p => ({...p, country:e.target.value}))}/>
+            </div>
+          </div>
+
+          <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>DISCRIÇÃO</label>
+          <select style={INP} value={profileForm.discretionLevel} onChange={e => setProfileForm(p => ({...p, discretionLevel:e.target.value}))}>
+            {DISCRETION_LEVELS.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+
+          <div style={{ fontSize:12, color:C.muted, marginBottom:12 }}>
+            Visibilidade: <strong style={{color:C.text}}>{profile?.visibilityMode || 'PUBLIC'}</strong> — controlado pelo Modo Invisível em Privacidade, não editável aqui.
+          </div>
+
+          {profile?.intentions?.length > 0 && (
+            <div style={{ marginTop:6, marginBottom:12 }}>
+              <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', marginBottom:6 }}>Intenções</div>
+              <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+                {profile.intentions.map(pi => (
+                  <span key={pi.intention?.id || pi.id} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'3px 10px', fontSize:12, color:C.text2 }}>
+                    {pi.intention?.name || pi.intention?.slug}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {profile?.photos?.length > 0 && (
+            <div style={{ fontSize:12, color:C.muted, marginBottom:12 }}>{profile.photos.length} foto(s) de perfil — gestão em Fotos (tab Admin).</div>
+          )}
+
+          <button onClick={saveProfile} disabled={saving} style={{ background:C.primary, border:'none', borderRadius:10, padding:'10px 18px', color:'#0A141A', fontWeight:700, fontSize:14, cursor:'pointer' }}>
+            {saving ? 'A guardar...' : 'Guardar Perfil Público'}
+          </button>
+        </div>
+      )}
+
+      {subTab === 'subscricao' && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, fontSize:13, color:C.text2, lineHeight:2 }}>
+          {subscription ? (
+            <>
+              <div>Plano: <strong style={{color:C.text}}>{subscription.plan}</strong></div>
+              <div>Estado: <strong style={{color:C.text}}>{subscription.status}</strong></div>
+              <div>Fornecedor: <strong style={{color:C.text}}>{subscription.provider || '—'}</strong></div>
+              {subscription.currentPeriodEnd && <div>Período até: <strong style={{color:C.text}}>{new Date(subscription.currentPeriodEnd).toLocaleDateString('pt')}</strong></div>}
+              {subscription.cancelledAt && <div>Cancelada em: <strong style={{color:C.danger}}>{new Date(subscription.cancelledAt).toLocaleDateString('pt')}</strong></div>}
+            </>
+          ) : <div style={{color:C.muted}}>Sem subscrição.</div>}
+        </div>
+      )}
+
+      {subTab === 'seguranca' && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, fontSize:13, color:C.text2, lineHeight:2 }}>
+          <div>Email verificado: {user.emailVerifiedAt ? <span style={{color:C.success}}>✅ {new Date(user.emailVerifiedAt).toLocaleDateString('pt')}</span> : <span style={{color:C.danger}}>❌ Não</span>}</div>
+          <div>Idade verificada: {user.ageVerifiedAt ? <span style={{color:C.success}}>✅ {new Date(user.ageVerifiedAt).toLocaleDateString('pt')}</span> : <span style={{color:C.danger}}>❌ Não</span>}</div>
+          <div>Verificação de identidade: <strong style={{color:C.text}}>{verification?.status || 'NONE'}</strong></div>
+          <div style={{ marginTop:14, display:'flex', gap:8, flexWrap:'wrap' }}>
+            <button onClick={() => (window.location.href = '/forgot-password')} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:10, padding:'10px 16px', color:C.text2, fontSize:13, cursor:'pointer' }}>Alterar password</button>
+            <button onClick={terminateSessions} style={{ background:C.dangerDim, border:`1px solid ${C.danger}`, borderRadius:10, padding:'10px 16px', color:C.danger, fontSize:13, cursor:'pointer' }}>Terminar todas as sessões</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ConfiguracoesTab() {
   const [subTab, setSubTab] = useState('perfis')
   const [plans, setPlans] = useState([])
@@ -1775,6 +2005,7 @@ const TAB_CONTENT = {
   audit:         () => <AuditTab/>,
   beta:          () => <BetaTab/>,
   configuracoes: () => <ConfiguracoesTab/>,
+  me:            ({ changeTab }) => <AdminAccountTab changeTab={changeTab}/>,
 }
 
 /* ─── Main AdminPage ─────────────────────────────────────────────────────────── */
@@ -1783,6 +2014,11 @@ export default function AdminPage() {
   const navigate = useNavigate()
   const { tab: urlTab } = useParams()
   const [tab, setTab] = useState(urlTab || 'dashboard')
+
+  // Keep in sync when navigation happens outside changeTab() — e.g. the
+  // "Conta (Admin)" menu item does navigate('/admin/me') directly so it
+  // works from any tab without needing 'me' in ROLE_TABS/TabBar.
+  useEffect(() => { setTab(urlTab || 'dashboard') }, [urlTab])
 
   const role = user?.adminRole || 'SUPPORT'
   const allowedTabs = ROLE_TABS[role] || ['dashboard']
