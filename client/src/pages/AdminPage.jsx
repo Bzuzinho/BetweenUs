@@ -768,6 +768,7 @@ function RoleManager({ userId, currentRole, onChanged }) {
 function UserDetail({ userId, onBack }) {
   const { user: me } = useAuth()
   const [data, setData] = useState(null)
+  const [eligibility, setEligibility] = useState(null)
   const [history, setHistory] = useState([])
   const [view, setView] = useState('info')
   const [editing, setEditing] = useState(null)
@@ -795,6 +796,7 @@ function UserDetail({ userId, onBack }) {
       })
     })
     api.get(`/admin/users/${userId}/history`).then(r => setHistory(r.data.history||[]))
+    api.get(`/admin/users/${userId}/eligibility`).then(r => setEligibility(r.data.eligibility)).catch(() => {})
   }, [userId])
 
   useEffect(() => { load() }, [load])
@@ -849,6 +851,21 @@ function UserDetail({ userId, onBack }) {
             {u.subscription.plan} · {u.subscription.status}
             {u.subscription.currentPeriodEnd && ` · até ${new Date(u.subscription.currentPeriodEnd).toLocaleDateString('pt')}`}
           </div>
+        )}
+        {eligibility && (
+          <div style={{ display:'flex', flexWrap:'wrap', gap:5, marginTop:8 }}>
+            {[['canAppearInDiscovery','Discovery'],['canLike','Like'],['canMatch','Match'],['canChat','Chat']].map(([k,l]) => (
+              <span key={k} style={{
+                fontSize:10, padding:'2px 8px', borderRadius:6,
+                background: eligibility[k] ? C.successDim : C.dangerDim,
+                color: eligibility[k] ? C.success : C.danger,
+                border:`1px solid ${eligibility[k] ? C.success : C.danger}`,
+              }}>{eligibility[k] ? '✓' : '✕'} {l}</span>
+            ))}
+          </div>
+        )}
+        {eligibility?.reasons?.length > 0 && (
+          <div style={{ fontSize:10, color:C.muted, marginTop:6 }}>Motivo: {eligibility.reasons.join(', ')}</div>
         )}
       </div>
 

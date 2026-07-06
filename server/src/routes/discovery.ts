@@ -16,8 +16,14 @@ const calcScore = (viewer: any, target: any): number => {
   if (overlap > 0) score += Math.min(30, overlap * 10)
 
   // No hard boundary conflict (25%)
-  const vNos = new Set(viewer.boundaries?.filter((b: any) => b.preference === 'no').map((b: any) => b.boundary?.slug))
-  const tYes = new Set(target.boundaries?.filter((b: any) => b.preference === 'yes').map((b: any) => b.boundary?.slug))
+  // Sprint 2.5 audit: this compared lowercase 'no'/'yes' against the actual
+  // enum values ('NO'/'YES'/'MAYBE') — always empty sets, so this 25% bonus
+  // was unconditionally awarded to every pair regardless of real conflicts.
+  // Same class of bug as the ActionType 'like' vs 'LIKE' casing fix noted in
+  // the project history. Fixed casing here; see hasHardBoundaryConflict()
+  // below for the isHardBoundary exclusion (separate from scoring).
+  const vNos = new Set(viewer.boundaries?.filter((b: any) => b.preference === 'NO').map((b: any) => b.boundary?.slug))
+  const tYes = new Set(target.boundaries?.filter((b: any) => b.preference === 'YES').map((b: any) => b.boundary?.slug))
   const conflicts = [...tYes].filter(s => vNos.has(s)).length
   if (conflicts === 0) score += 25
 
@@ -47,6 +53,20 @@ const calcScore = (viewer: any, target: any): number => {
   if (viewer.city && target.city && viewer.city.toLowerCase() === target.city.toLowerCase()) score += 5
 
   return Math.min(100, score)
+}
+
+// A hard boundary conflict (same slug, viewer=NO / target=YES, AND that
+// boundary is flagged isHardBoundary) should exclude the profile from
+// discovery entirely — not just lower its score. Matches the original product
+// spec example: couple seeking a third person + single person marked
+// 'no_couples' → the couple must not appear to them at all.
+const hasHardBoundaryConflict = (viewer: any, target: any): boolean => {
+  const vNos = new Set(
+    (viewer.boundaries || []).filter((b: any) => b.preference === 'NO').map((b: any) => b.boundary?.slug)
+  )
+  return (target.boundaries || []).some((b: any) =>
+    b.preference === 'YES' && b.boundary?.isHardBoundary && vNos.has(b.boundary?.slug)
+  )
 }
 
 // GET /api/discovery — all profiles ordered by score
@@ -109,8 +129,19 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       take: 100,
     })
 
+    // Sprint 2.5 audit: privacySettings was already fetched here but never
+    // actually used to filter — a profile with invisibleMode/visibleInDiscovery
+    // off (Premium 'Modo Invisível') still appeared in everyone's discovery.
+    // Also excludes real hard-boundary conflicts (see hasHardBoundaryConflict).
+    const eligible = profiles.filter(p => {
+      if (p.privacySettings && p.privacySettings.visibleInDiscovery === false) return false
+      if (p.privacySettings?.invisibleMode) return false
+      if (hasHardBoundaryConflict(viewerProfile, p)) return false
+      return true
+    })
+
     // Calculate scores and sort
-    const scored = profiles.map(p => ({
+    const scored = eligible.map(p => ({
       ...p,
       score: calcScore(viewerProfile, p)
     })).sort((a, b) => b.score - a.score)

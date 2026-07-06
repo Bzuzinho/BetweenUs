@@ -4,6 +4,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { requireAdmin, logAdminAction } from '../middleware/admin'
 import { recalculateRiskScore, recalculateAllRiskScores } from '../lib/riskScore'
 import { evaluateAndActivateUser, canTransitionStatus } from '../lib/userActivationService'
+import { forUser as getEligibility } from '../lib/eligibilityService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -315,6 +316,15 @@ router.get('/users/:id/history', requireAdmin('users'), async (req: AuthRequest,
   })
 
   res.json({ history })
+})
+
+// ─── Eligibility report (Sprint 2.5 audit) ────────────────────────────────────
+// Read-only diagnostic — lets an admin see *why* a user isn't appearing in
+// discovery etc, instead of having to reconstruct it by hand from status +
+// profile + privacy settings.
+router.get('/users/:id/eligibility', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  const eligibility = await getEligibility(req.params.id)
+  res.json({ eligibility })
 })
 
 // ─── User status ──────────────────────────────────────────────────────────────
