@@ -35,6 +35,7 @@
 import prisma from './prisma'
 import { deleteFile } from './storage'
 import { extractStorageKey } from './mediaAccessService'
+import { captureError } from './sentry'
 
 const GRACE_DAYS = Number(process.env.HARD_DELETE_GRACE_DAYS || 30)
 
@@ -124,13 +125,21 @@ const hardDeleteOne = async (
 
   // Order matters: clear/delete everything that would block the FK cascade
   // BEFORE the final user delete, so a crash mid-way is safely re-runnable.
-  await Promise.all(mediaKeys.map(key => deleteFile(key).catch(() => {})))
-  await prisma.roomMessage.deleteMany({ where: { senderUserId: user.id } })
-  await prisma.report.updateMany({ where: { reportedUserId: user.id }, data: { reportedUserId: null } })
-  await prisma.adminAction.updateMany({ where: { targetUserId: user.id }, data: { targetUserId: null } })
-  await prisma.betaInvite.updateMany({ where: { usedById: user.id }, data: { usedById: null } })
+  try {
+    await Promise.all(mediaKeys.map(key => deleteFile(key).catch(() => {})))
+    await prisma.roomMessage.deleteMany({ where: { senderUserId: user.id } })
+    await prisma.report.updateMany({ where: { reportedUserId: user.id }, data: { reportedUserId: null } })
+    await prisma.adminAction.updateMany({ where: { targetUserId: user.id }, data: { targetUserId: null } })
+    await prisma.betaInvite.updateMany({ where: { usedById: user.id }, data: { usedById: null } })
 
-  await prisma.user.delete({ where: { id: user.id } })
+    await prisma.user.delete({ where: { id: user.id } })
+  } catch (err) {
+    // A partial failure here is exactly the case this job needs to be loud
+    // about — silently leaving a user half-deleted is worse than the
+    // original soft-delete-forever bug this sprint is fixing.
+    captureError(err, { job: 'hardDeleteJob', userId: user.id })
+    throw err
+  }
 
   return {
     userId: user.id, email: user.email, skipped: false, dryRun: false,

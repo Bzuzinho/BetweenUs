@@ -7,11 +7,16 @@ import { createServer } from 'http'
 import { Server } from 'socket.io'
 import { rateLimit } from 'express-rate-limit'
 import dotenv from 'dotenv'
+import { initSentry, Sentry } from './lib/sentry'
 
 dotenv.config()
 
 const app = express()
 const httpServer = createServer(app)
+
+// 3.7 — init before any other middleware so it can capture as much as possible
+initSentry(app)
+app.use(Sentry.Handlers.requestHandler())
 
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000'
 const isProd = process.env.NODE_ENV === 'production'
@@ -75,7 +80,8 @@ app.use('/api/auth/password', strictLimiter)
 
 app.get('/health', (_, res) => res.json({
   status: 'ok', app: 'Between Us API', version: '2.5.1',
-  environment: process.env.NODE_ENV, timestamp: new Date().toISOString()
+  environment: process.env.NODE_ENV, timestamp: new Date().toISOString(),
+  sentry: !!process.env.SENTRY_DSN, // 3.7 — cheap visibility into whether error monitoring is actually wired up
 }))
 
 // Email diagnostic endpoint — for debugging SMTP config
@@ -179,6 +185,10 @@ io.on('connection', socket => {
 app.use((req: express.Request, res: express.Response) => {
   res.status(404).json({ error: 'Rota não encontrada.' })
 })
+
+// 3.7 — reports uncaught route errors to Sentry (no-op if SENTRY_DSN unset).
+// Must come after routes/404, before our own JSON error handler below.
+app.use(Sentry.Handlers.errorHandler())
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[ERROR]', err.message)

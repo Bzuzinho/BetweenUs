@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express'
 import prisma from '../lib/prisma'
+import { captureError } from '../lib/sentry'
 
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
@@ -32,7 +33,7 @@ router.post('/stripe', async (req: Request, res: Response) => {
     try {
       event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret)
     } catch (err: any) {
-      console.error('[WEBHOOK] Signature verification failed:', err.message)
+      captureError(err, { job: 'stripeWebhook', stage: 'signature_verification' })
       return res.status(400).json({ error: `Webhook error: ${err.message}` })
     }
   } else {
@@ -158,7 +159,7 @@ router.post('/stripe', async (req: Request, res: Response) => {
         console.log('[WEBHOOK] Unhandled event type:', event.type)
     }
   } catch (err: any) {
-    console.error('[WEBHOOK HANDLER ERROR]', err.message)
+    captureError(err, { job: 'stripeWebhook', stage: 'handler' })
     return res.status(500).json({ error: 'Webhook processing failed.' })
   }
 

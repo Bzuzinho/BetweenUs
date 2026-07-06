@@ -1,3 +1,4 @@
+import { captureError } from './sentry'
 import prisma from './prisma'
 import { sendSafetyAlertEmail } from './email'
 
@@ -30,11 +31,11 @@ async function checkOverdueSafetyCheckins() {
         })
         console.log(`[SAFETY CRON] Alert sent for checkin ${checkin.id}`)
       } catch (err: any) {
-        console.error(`[SAFETY CRON] Failed to alert for checkin ${checkin.id}:`, err.message)
+        captureError(err, { job: 'safetyAlertCron', checkinId: checkin.id })
       }
     }
   } catch (err: any) {
-    console.error('[SAFETY CRON] Query failed:', err.message)
+    captureError(err, { job: 'safetyAlertCron', stage: 'query' })
   }
 }
 
