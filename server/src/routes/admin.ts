@@ -744,24 +744,24 @@ router.get('/email-config', requireAdmin(), async (req: AuthRequest, res: Respon
   const { getEmailConfig } = await import('../lib/email')
   const config = getEmailConfig()
   const missing = Object.entries(config)
-    .filter(([k,v]) => !v && !['SMTP_PORT','SMTP_USER','configured'].includes(k))
+    .filter(([k, v]) => !v && !['port', 'configured'].includes(k))
     .map(([k]) => k)
 
   if (!config.configured) {
     return res.json({
       status: 'misconfigured', missing, config,
-      fix: 'No Railway → fearless-stillness → Variables, define: SMTP_HOST=smtp.resend.com, SMTP_PORT=465, SMTP_USER=resend, SMTP_PASS=re_XXXXX, EMAIL_FROM=Between Us <noreply@seudominio.com>'
+      fix: 'No Railway → serviço backend → Variables, define: SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, SMTP_USER=emailtemp02@gmail.com, SMTP_PASS=<Gmail App Password de 16 caracteres>, EMAIL_FROM=Between Us <emailtemp02@gmail.com>. A App Password gera-se em myaccount.google.com/apppasswords (precisa de 2FA ativa nessa conta Gmail).'
     })
   }
 
-  // Test actual send connection
+  // Test actual send connection — Gmail SMTP on 587 uses STARTTLS, not implicit SSL
   try {
     const nodemailer = require('nodemailer')
     const t = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT || 465),
-      secure: Number(process.env.SMTP_PORT || 465) === 465,
-      auth: { user: process.env.SMTP_USER || 'resend', pass: process.env.SMTP_PASS },
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: false,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
       tls: { rejectUnauthorized: false },
       connectionTimeout: 8000,
     })
@@ -774,13 +774,14 @@ router.get('/email-config', requireAdmin(), async (req: AuthRequest, res: Respon
       code: err.code,
       config,
       hints: [
-        'SMTP_HOST deve ser smtp.resend.com',
-        'SMTP_PASS deve ser a API key do Resend (começa com re_)',
-        'SMTP_PORT deve ser 465',
-        'EMAIL_FROM deve usar domínio verificado no Resend (ou onboarding@resend.dev para testes)',
-        'Verifica em resend.com/api-keys se a chave está activa',
-        'Verifica em resend.com/domains se o domínio está verificado'
-      ]
+        'SMTP_HOST deve ser smtp.gmail.com',
+        'SMTP_USER deve ser o email completo (emailtemp02@gmail.com)',
+        'SMTP_PASS deve ser uma Gmail App Password de 16 caracteres, não a password normal da conta',
+        'A conta Gmail precisa de verificação em 2 passos ativa para gerar App Passwords',
+        'Gera a App Password em myaccount.google.com/apppasswords',
+        'SMTP_PORT deve ser 587 (STARTTLS), não 465',
+        err.code === 'EAUTH' ? '⚠️ Erro de autenticação — a App Password está errada, expirou, ou foi revogada' : null,
+      ].filter(Boolean)
     })
   }
 })
