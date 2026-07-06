@@ -763,8 +763,9 @@ router.get('/email-config', requireAdmin(), async (req: AuthRequest, res: Respon
       secure: false,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 8000,
-    })
+      family: 4,
+      connectionTimeout: 15000,
+    } as any)
     await t.verify()
     res.json({ status: 'ok', message: '✅ SMTP ligado e pronto', config })
   } catch (err: any) {
@@ -781,6 +782,7 @@ router.get('/email-config', requireAdmin(), async (req: AuthRequest, res: Respon
         'Gera a App Password em myaccount.google.com/apppasswords',
         'SMTP_PORT deve ser 587 (STARTTLS), não 465',
         err.code === 'EAUTH' ? '⚠️ Erro de autenticação — a App Password está errada, expirou, ou foi revogada' : null,
+        (err.code === 'ETIMEDOUT' || /timeout/i.test(err.message)) ? '⚠️ Timeout de ligação — se persistir depois de forçar IPv4, o Railway pode estar a bloquear a porta 587 de saída; tenta mudar SMTP_PORT para 465 no Railway, ou considera um provedor por API HTTP (Resend, SendGrid) que não depende de portas SMTP' : null,
       ].filter(Boolean)
     })
   }

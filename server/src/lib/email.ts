@@ -29,7 +29,9 @@ const getTransporter = () => {
     secure: false,       // Gmail port 587 uses STARTTLS, not SSL
     auth: { user: SMTP_USER, pass: SMTP_PASS },
     tls: { rejectUnauthorized: false },
-  })
+    family: 4,           // force IPv4 — Railway often can't route IPv6 to Gmail, causing ETIMEDOUT
+    connectionTimeout: 15000,
+  } as any)
 }
 
 const send = async (to: string, subject: string, html: string, label: string) => {
