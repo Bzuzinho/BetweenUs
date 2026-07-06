@@ -19,6 +19,19 @@ router.get('/intentions', requireAuth, async (_req: AuthRequest, res: Response) 
   }
 })
 
+// GET /api/catalog/genders — active only
+router.get('/genders', requireAuth, async (_req: AuthRequest, res: Response) => {
+  try {
+    const genders = await (prisma as any).genderOption.findMany({
+      where: { active: true },
+      orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }]
+    })
+    res.json({ genders })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 // GET /api/catalog/boundaries — active only, grouped by category
 router.get('/boundaries', requireAuth, async (_req: AuthRequest, res: Response) => {
   try {
@@ -161,6 +174,69 @@ router.delete('/admin/boundaries/:id', requireAdmin('catalog'), async (req: Auth
   await (prisma as any).boundary.delete({ where: { id: req.params.id } })
   await logAdminAction(req.userId!, 'DELETE_BOUNDARY', 'boundary', req.params.id, {
     previousData: boundary ? { name: boundary.name, slug: boundary.slug } : undefined, ipAddress: req.ip
+  })
+  res.json({ ok: true })
+})
+
+const genderSchema = z.object({
+  slug:        z.string().min(2).max(60).regex(/^[a-z0-9_]+$/, 'Slug deve usar apenas minúsculas, números e underscore.'),
+  label:       z.string().min(2).max(60),
+  description: z.string().max(300).optional().nullable(),
+  sortOrder:   z.number().int().optional(),
+  active:      z.boolean().optional(),
+})
+
+// ── Genders ──
+router.get('/admin/genders', requireAdmin('catalog'), async (_req: AuthRequest, res: Response) => {
+  const genders = await (prisma as any).genderOption.findMany({ orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }] })
+  const withUsage = await Promise.all(genders.map(async (g: any) => ({
+    ...g, usageCount: await prisma.profile.count({ where: { gender: g.slug } })
+  })))
+  res.json({ genders: withUsage })
+})
+
+router.post('/admin/genders', requireAdmin('catalog'), async (req: AuthRequest, res: Response) => {
+  try {
+    const data = genderSchema.parse(req.body)
+    const gender = await (prisma as any).genderOption.create({ data })
+    await logAdminAction(req.userId!, 'CREATE_GENDER_OPTION', 'gender_option', gender.id, { newData: data, ipAddress: req.ip })
+    res.status(201).json(gender)
+  } catch (err: any) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Já existe uma opção com este slug.' })
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+router.put('/admin/genders/:id', requireAdmin('catalog'), async (req: AuthRequest, res: Response) => {
+  try {
+    const data = genderSchema.partial().parse(req.body)
+    const prev = await (prisma as any).genderOption.findUnique({ where: { id: req.params.id } })
+    const gender = await (prisma as any).genderOption.update({ where: { id: req.params.id }, data })
+    await logAdminAction(req.userId!, 'UPDATE_GENDER_OPTION', 'gender_option', gender.id, {
+      previousData: prev ? { label: prev.label, active: prev.active } : undefined, newData: data, ipAddress: req.ip
+    })
+    res.json(gender)
+  } catch (err: any) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Já existe uma opção com este slug.' })
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+router.delete('/admin/genders/:id', requireAdmin('catalog'), async (req: AuthRequest, res: Response) => {
+  const opt = await (prisma as any).genderOption.findUnique({ where: { id: req.params.id } })
+  if (!opt) return res.status(404).json({ error: 'Não encontrado.' })
+  const usageCount = await prisma.profile.count({ where: { gender: opt.slug } })
+  if (usageCount > 0 && req.query.force !== 'true') {
+    return res.status(409).json({
+      error: `Esta opção está em uso por ${usageCount} perfil(is). Desactiva-a em vez de apagar.`,
+      code: 'IN_USE', usageCount
+    })
+  }
+  await (prisma as any).genderOption.delete({ where: { id: req.params.id } })
+  await logAdminAction(req.userId!, 'DELETE_GENDER_OPTION', 'gender_option', req.params.id, {
+    previousData: { label: opt.label, slug: opt.slug }, ipAddress: req.ip
   })
   res.json({ ok: true })
 })

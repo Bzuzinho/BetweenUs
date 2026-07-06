@@ -77,6 +77,30 @@ async function main() {
   }
   console.log(`Seeded ${boundaries.length} boundaries`)
 
+  console.log('Seeding gender options...')
+
+  const genders = [
+    { slug: 'man',                label: 'Homem' },
+    { slug: 'woman',              label: 'Mulher' },
+    { slug: 'non_binary',         label: 'Não-binário' },
+    { slug: 'transgender_man',    label: 'Homem trans' },
+    { slug: 'transgender_woman',  label: 'Mulher trans' },
+    { slug: 'gender_fluid',       label: 'Género fluido' },
+    { slug: 'agender',            label: 'Agénero' },
+    { slug: 'questioning',        label: 'Em descoberta' },
+    { slug: 'other',              label: 'Outra identidade' },
+    { slug: 'prefer_not_to_say',  label: 'Prefiro não dizer' },
+  ]
+
+  for (const [index, gender] of genders.entries()) {
+    await prisma.genderOption.upsert({
+      where: { slug: gender.slug },
+      update: { label: gender.label },
+      create: { slug: gender.slug, label: gender.label, sortOrder: index, active: true },
+    })
+  }
+  console.log(`Seeded ${genders.length} gender options`)
+
   console.log('✅ Seed complete')
 }
 

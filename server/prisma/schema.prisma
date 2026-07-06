@@ -793,6 +793,23 @@ model ReferralRule {
   @@map("referral_rules")
 }
 
+// ─── Gender catalog (Sprint 2.5.6) ────────────────────────────────────────────
+// Profile.gender stays a free String (not a FK) to avoid a hard migration risk
+// on existing data/custom values already stored — this is the admin-managed
+// catalog of *suggested* options; the slug is what gets stored in Profile.gender.
+model GenderOption {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  label       String
+  description String?
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("gender_options")
+}
+
 model GuideArticle {
   id        String   @id @default(uuid())
   title     String

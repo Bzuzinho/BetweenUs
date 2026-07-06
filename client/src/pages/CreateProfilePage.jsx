@@ -47,11 +47,13 @@ export default function CreateProfilePage() {
   const [loading, setLoading] = useState(false)
   const [catalogIntentions, setCatalogIntentions] = useState([])
   const [catalogBoundaries, setCatalogBoundaries] = useState([])
+  const [catalogGenders, setCatalogGenders] = useState([])
   const [boundaryPrefs, setBoundaryPrefs] = useState({}) // boundaryId -> YES|MAYBE|NO
 
   useEffect(() => {
     api.get('/catalog/intentions').then(r => setCatalogIntentions(r.data.intentions || [])).catch(() => {})
     api.get('/catalog/boundaries').then(r => setCatalogBoundaries(r.data.boundaries || [])).catch(() => {})
+    api.get('/catalog/genders').then(r => setCatalogGenders(r.data.genders || [])).catch(() => {})
   }, [])
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
@@ -187,6 +189,15 @@ export default function CreateProfilePage() {
                 {RELATIONSHIP_STATUSES.map(s => (
                   <option key={s.value} value={s.value}
                     style={{ background: C.card }}>{s.label}</option>
+                ))}
+              </select>
+
+              <select style={{ ...inp, cursor: 'pointer' }}
+                value={form.gender}
+                onChange={e => set('gender', e.target.value)}>
+                <option value="" style={{ background: C.card }}>Género (opcional)</option>
+                {catalogGenders.map(g => (
+                  <option key={g.id} value={g.slug} style={{ background: C.card }}>{g.label}</option>
                 ))}
               </select>
 

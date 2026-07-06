@@ -39,6 +39,7 @@ export default function EditProfilePage() {
   const [intentionSlugs, setIntentionSlugs] = useState([])
   const [catalogIntentions, setCatalogIntentions] = useState([])
   const [catalogBoundaries, setCatalogBoundaries] = useState([])
+  const [catalogGenders, setCatalogGenders] = useState([])
   const [boundaryPrefs, setBoundaryPrefs] = useState({}) // boundaryId -> YES|MAYBE|NO
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -48,6 +49,7 @@ export default function EditProfilePage() {
   useEffect(() => {
     api.get('/catalog/intentions').then(r => setCatalogIntentions(r.data.intentions || [])).catch(() => {})
     api.get('/catalog/boundaries').then(r => setCatalogBoundaries(r.data.boundaries || [])).catch(() => {})
+    api.get('/catalog/genders').then(r => setCatalogGenders(r.data.genders || [])).catch(() => {})
     api.get('/profiles/me').then(r => {
       const p = r.data
       setForm({
@@ -128,6 +130,11 @@ export default function EditProfilePage() {
           <textarea style={{ ...INP, minHeight:80, resize:'none' }} placeholder="Breve descrição (opcional)" value={form.bio} onChange={e => set('bio', e.target.value)} />
           <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Cidade</label>
           <input style={INP} placeholder="Ex: Lisboa" value={form.city} onChange={e => set('city', e.target.value)} />
+          <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Género</label>
+          <select style={{ ...INP, cursor:'pointer' }} value={form.gender} onChange={e => set('gender', e.target.value)}>
+            <option value="" style={{ background:C.surface }}>Preferir não dizer / não definido</option>
+            {catalogGenders.map(g => <option key={g.id} value={g.slug} style={{ background:C.surface }}>{g.label}</option>)}
+          </select>
           <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Estado relacional</label>
           <select style={{ ...INP, cursor:'pointer' }} value={form.relationshipStatus} onChange={e => set('relationshipStatus', e.target.value)}>
             {RELATIONSHIP_STATUSES.map(s => <option key={s.value} value={s.value} style={{ background:C.surface }}>{s.label}</option>)}

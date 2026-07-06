@@ -1712,6 +1712,7 @@ function AdminAccountTab({ changeTab }) {
   const [verification, setVerification] = useState(null)
   const [accountForm, setAccountForm] = useState({ accountName:'', nif:'' })
   const [profileForm, setProfileForm] = useState(null)
+  const [catalogGenders, setCatalogGenders] = useState([])
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
@@ -1734,6 +1735,7 @@ function AdminAccountTab({ changeTab }) {
     }).catch(() => {})
     api.get('/subscriptions/me').then(r => setSubscription(r.data)).catch(() => {})
     api.get('/verifications/me').then(r => setVerification(r.data)).catch(() => {})
+    api.get('/catalog/genders').then(r => setCatalogGenders(r.data.genders || [])).catch(() => {})
   }, [])
 
   const saveAccount = async () => {
@@ -1840,7 +1842,10 @@ function AdminAccountTab({ changeTab }) {
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
             <div>
               <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>GÉNERO</label>
-              <input style={INP} value={profileForm.gender} onChange={e => setProfileForm(p => ({...p, gender:e.target.value}))}/>
+              <select style={INP} value={profileForm.gender} onChange={e => setProfileForm(p => ({...p, gender:e.target.value}))}>
+                <option value="">Preferir não dizer / não definido</option>
+                {catalogGenders.map(g => <option key={g.id} value={g.slug}>{g.label}</option>)}
+              </select>
             </div>
             <div>
               <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>ORIENTAÇÃO</label>
@@ -2014,6 +2019,87 @@ function IntentionsManager() {
   )
 }
 
+/* ─── Gender options manager (Sprint 2.5.6) ──────────────────────────────────── */
+function GenderOptionsManager() {
+  const [items, setItems] = useState([])
+  const [editing, setEditing] = useState(null)
+  const [form, setForm] = useState({ label:'', slug:'', description:'', active:true })
+  const [err, setErr] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(() => { api.get('/catalog/admin/genders').then(r => setItems(r.data.genders||[])) }, [])
+  useEffect(() => { load() }, [load])
+
+  const openNew = () => { setForm({ label:'', slug:'', description:'', active:true }); setEditing('new'); setErr('') }
+  const openEdit = (g) => { setForm({ label:g.label, slug:g.slug, description:g.description||'', active:g.active }); setEditing(g); setErr('') }
+
+  const save = async () => {
+    if (!form.label.trim() || !form.slug.trim()) return setErr('Nome e slug obrigatórios.')
+    setSaving(true); setErr('')
+    try {
+      if (editing === 'new') await api.post('/catalog/admin/genders', form)
+      else await api.put(`/catalog/admin/genders/${editing.id}`, form)
+      setEditing(null); load()
+    } catch (e) { setErr(e.response?.data?.error || 'Erro ao guardar.') } finally { setSaving(false) }
+  }
+
+  const toggleActive = async (g) => { await api.put(`/catalog/admin/genders/${g.id}`, { active: !g.active }).catch(()=>{}); load() }
+
+  const del = async (g) => {
+    if (g.usageCount > 0) {
+      if (!confirm(`Esta opção está em uso por ${g.usageCount} perfil(is). Desactivar em vez de apagar?`)) return
+      return toggleActive({ ...g, active: true })
+    }
+    if (!confirm('Apagar esta opção de género?')) return
+    await api.delete(`/catalog/admin/genders/${g.id}`).catch(e => setErr(e.response?.data?.error || 'Erro ao apagar.'))
+    load()
+  }
+
+  if (editing !== null) return (
+    <div>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
+        <button onClick={()=>setEditing(null)} style={{ background:'none', border:'none', color:C.muted, fontSize:20, cursor:'pointer' }}>←</button>
+        <h3 style={{ color:C.text, fontSize:16, fontWeight:500, margin:0, flex:1 }}>{editing==='new' ? 'Nova opção de género' : 'Editar opção'}</h3>
+        <button onClick={save} disabled={saving} style={{ background:C.primary, border:'none', borderRadius:8, padding:'8px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>{saving?'…':'Guardar'}</button>
+      </div>
+      {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>NOME (label) *</label>
+      <input style={INP} value={form.label} onChange={e=>setForm(p=>({...p,label:e.target.value}))}/>
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>SLUG *</label>
+      <input style={INP} value={form.slug} onChange={e=>setForm(p=>({...p,slug:e.target.value}))} disabled={editing!=='new'}/>
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>DESCRIÇÃO</label>
+      <textarea style={{...INP, resize:'vertical'}} rows={2} value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))}/>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:C.elevated, borderRadius:10, padding:'12px 14px' }}>
+        <div style={{ fontSize:14, color:C.text }}>Activa</div>
+        <div onClick={()=>setForm(p=>({...p,active:!p.active}))} style={{ width:44, height:24, borderRadius:12, cursor:'pointer', background:form.active?C.primary:C.input, position:'relative', border:`1px solid ${form.active?C.primary:C.border}` }}>
+          <div style={{ position:'absolute', top:3, width:16, height:16, borderRadius:'50%', background:'white', left:form.active?23:3, transition:'left 0.2s' }}/>
+        </div>
+      </div>
+    </div>
+  )
+
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+        <div style={{ fontSize:15, fontWeight:500, color:C.text }}>{items.length} opções · {items.filter(i=>i.active).length} activas</div>
+        <button onClick={openNew} style={{ background:C.primary, border:'none', borderRadius:10, padding:'9px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>+ Nova</button>
+      </div>
+      {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+      {items.map(g => (
+        <div key={g.id} style={{ background:C.surface, border:`1px solid ${g.active?C.border:'rgba(248,113,113,0.2)'}`, borderRadius:14, padding:'12px 14px', marginBottom:8 }}>
+          <div style={{ fontSize:14, fontWeight:500, color:C.text }}>{g.label} {!g.active && <span style={{color:C.muted, fontSize:11}}>(inactiva)</span>}</div>
+          <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{g.slug} · usada por {g.usageCount} perfil(is)</div>
+          <div style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>
+            <button onClick={()=>openEdit(g)} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.text2, fontSize:12, cursor:'pointer' }}>✏️ Editar</button>
+            <button onClick={()=>toggleActive(g)} style={{ background:g.active?C.dangerDim:C.successDim, border:`1px solid ${g.active?C.danger:C.success}`, borderRadius:6, padding:'5px 12px', color:g.active?C.danger:C.success, fontSize:12, cursor:'pointer' }}>{g.active?'Desactivar':'Activar'}</button>
+            <button onClick={()=>del(g)} style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.muted, fontSize:12, cursor:'pointer' }}>🗑</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /* ─── Boundaries catalog manager (Sprint 2.5.8) ──────────────────────────────── */
 const BOUNDARY_CATEGORIES = ['relationship_type','meeting_type','privacy','conversation_style']
 
@@ -2129,7 +2215,7 @@ function ConfiguracoesTab() {
     <div>
       {/* Subtab bar */}
       <div style={{ display:'flex', gap:6, marginBottom:20 }}>
-        {[['perfis','◎ Perfis'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
+        {[['perfis','◎ Perfis'],['generos','⚧ Géneros'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
           <button key={k} onClick={()=>setSubTab(k)} style={{
             background:subTab===k?C.primaryDim:C.surface,
             border:`1.5px solid ${subTab===k?C.primary:C.border}`,
@@ -2171,6 +2257,9 @@ function ConfiguracoesTab() {
           ))}
         </div>
       )}
+
+      {/* ── Géneros subtab ── */}
+      {subTab==='generos' && <GenderOptionsManager />}
 
       {/* ── Intenções subtab ── */}
       {subTab==='intencoes' && <IntentionsManager />}
