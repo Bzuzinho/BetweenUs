@@ -856,6 +856,33 @@ function UserDetail({ userId, onBack }) {
         </div>
       )}
 
+      {data.referral && (data.referral.invitedBy || data.referral.invited?.length > 0) && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, marginTop:12 }}>
+          <div style={{ fontSize:14, fontWeight:500, color:C.text2, marginBottom:10 }}>🎁 Afiliados (só visível a admins)</div>
+          {data.referral.invitedBy && (
+            <div style={{ fontSize:12, color:C.muted, marginBottom:10 }}>
+              Convidado por <strong style={{color:C.text}}>{data.referral.invitedBy.email}</strong>
+              {data.referral.invitedBySubscribed ? ' · já subscreveu ✅' : ' · ainda não subscreveu'}
+            </div>
+          )}
+          {data.referral.invited?.length > 0 && (
+            <>
+              <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>
+                Convidou {data.referral.invited.length} pessoa(s)
+              </div>
+              {data.referral.invited.map((r, i) => (
+                <div key={i} style={{ display:'flex', justifyContent:'space-between', padding:'6px 0', borderBottom:`1px solid ${C.border}`, fontSize:12 }}>
+                  <span style={{ color:C.text }}>{r.user.email}</span>
+                  <span style={{ color: r.creditGranted ? C.success : r.subscribedAt ? C.primary : C.muted }}>
+                    {r.creditGranted ? '✓ Creditado' : r.subscribedAt ? 'Subscreveu' : 'Registado'}
+                  </span>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
       {view==='profile' && !p && <div style={{ color:C.muted, textAlign:'center', padding:20 }}>Sem perfil criado.</div>}
       {view==='profile' && p && (
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16 }}>
@@ -1352,6 +1379,80 @@ function EmailDiagnosticPanel() {
 const GUIDE_CATS = ['Casais','Comunicação','Privacidade','Consentimento','Relações','Segurança','Perfil','Outro']
 const GUIDE_ICONS = ['○','◎','◉','◌','◑','◈','⊙','∞','✓','⚑']
 
+function AffiliateRuleManager() {
+  const [rule, setRule] = useState(null)
+  const [form, setForm] = useState({ referralsRequired: 2, rewardMonths: 2 })
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+
+  const load = () => {
+    api.get('/admin/referral-rule').then(r => {
+      setRule(r.data.rule)
+      setForm({ referralsRequired: r.data.rule.referralsRequired, rewardMonths: r.data.rule.rewardMonths })
+    }).catch(() => {})
+  }
+  useEffect(load, [])
+
+  const save = async () => {
+    setSaving(true); setErr(''); setMsg('')
+    try {
+      const r = await api.put('/admin/referral-rule', {
+        referralsRequired: Number(form.referralsRequired),
+        rewardMonths: Number(form.rewardMonths),
+      })
+      setRule(r.data.rule)
+      setMsg('Regra actualizada.')
+      setTimeout(() => setMsg(''), 3000)
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Erro ao guardar.')
+    } finally { setSaving(false) }
+  }
+
+  if (!rule) return <div style={{ color:C.muted, fontSize:13 }}>A carregar...</div>
+
+  return (
+    <div>
+      <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.2)`, borderRadius:12, padding:'12px 16px', marginBottom:20, fontSize:13, color:C.primary, lineHeight:1.5 }}>
+        Regra de recompensa por convites. Editável aqui — nunca fixa no código.
+        Quando um utilizador atinge o número de convites subscritos definido abaixo, ganha os meses de prémio automaticamente.
+      </div>
+
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:20, maxWidth:420 }}>
+        <label style={{ fontSize:12, color:C.text2, fontWeight:600, display:'block', marginBottom:6 }}>
+          Convites subscritos necessários
+        </label>
+        <input type="number" min="1" value={form.referralsRequired}
+          onChange={e => setForm(f => ({ ...f, referralsRequired: e.target.value }))}
+          style={{ width:'100%', background:C.elevated, border:`1.5px solid ${C.border}`, borderRadius:10,
+            padding:'10px 14px', color:C.text, fontSize:14, marginBottom:16, boxSizing:'border-box' }} />
+
+        <label style={{ fontSize:12, color:C.text2, fontWeight:600, display:'block', marginBottom:6 }}>
+          Meses de prémio oferecidos
+        </label>
+        <input type="number" min="1" value={form.rewardMonths}
+          onChange={e => setForm(f => ({ ...f, rewardMonths: e.target.value }))}
+          style={{ width:'100%', background:C.elevated, border:`1.5px solid ${C.border}`, borderRadius:10,
+            padding:'10px 14px', color:C.text, fontSize:14, marginBottom:18, boxSizing:'border-box' }} />
+
+        {err && <div style={{ color:C.danger, fontSize:13, marginBottom:12 }}>{err}</div>}
+        {msg && <div style={{ color:C.success, fontSize:13, marginBottom:12 }}>{msg}</div>}
+
+        <button onClick={save} disabled={saving} style={{
+          background:C.primary, border:'none', borderRadius:10, padding:'11px 20px',
+          color:'#0A141A', fontWeight:700, fontSize:14, cursor:'pointer' }}>
+          {saving ? 'A guardar...' : 'Guardar regra'}
+        </button>
+
+        <div style={{ marginTop:16, fontSize:12, color:C.muted, lineHeight:1.5 }}>
+          Regra atual: cada <strong style={{color:C.text}}>{rule.referralsRequired}</strong> pessoas convidadas que subscrevam
+          dão <strong style={{color:C.text}}>{rule.rewardMonths}</strong> meses de prémio ao convidador.
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function GuideManager() {
   const [articles, setArticles] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1570,7 +1671,7 @@ function ConfiguracoesTab() {
     <div>
       {/* Subtab bar */}
       <div style={{ display:'flex', gap:6, marginBottom:20 }}>
-        {[['perfis','◎ Perfis'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia']].map(([k,l]) => (
+        {[['perfis','◎ Perfis'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
           <button key={k} onClick={()=>setSubTab(k)} style={{
             background:subTab===k?C.primaryDim:C.surface,
             border:`1.5px solid ${subTab===k?C.primary:C.border}`,
@@ -1618,6 +1719,9 @@ function ConfiguracoesTab() {
 
       {/* ── Guia subtab ── */}
       {subTab==='guia' && <GuideManager />}
+
+      {/* ── Afiliados subtab ── */}
+      {subTab==='afiliados' && <AffiliateRuleManager />}
 
       {/* ── Subscrições subtab ── */}
       {subTab==='subscricoes' && (
