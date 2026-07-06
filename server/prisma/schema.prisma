@@ -688,6 +688,13 @@ model BlockedContactHash {
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   contactHash String
   type        String
+  // 3.5 — which HMAC secret produced this hash. Rotating
+  // CONTACT_HASH_SECRET orphans every hash computed under the old key
+  // (HMAC is one-way — there's no way to "re-encrypt" without the original
+  // plaintext, which we never store on purpose). keyVersion lets
+  // ContactHashService know which secret to use when re-verifying an old
+  // row, and lets admins see migration progress after a rotation.
+  keyVersion  Int      @default(1)
   createdAt   DateTime @default(now())
 
   @@unique([userId, contactHash])

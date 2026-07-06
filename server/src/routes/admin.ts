@@ -6,6 +6,7 @@ import { recalculateRiskScore, recalculateAllRiskScores } from '../lib/riskScore
 import { evaluateAndActivateUser, canTransitionStatus } from '../lib/userActivationService'
 import { forUser as getEligibility } from '../lib/eligibilityService'
 import { mergePhotosForViewer, signMediaUrl } from '../lib/mediaAccessService'
+import { getKeyVersionStats, getActiveKeyVersion } from '../lib/contactHashService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -13,6 +14,14 @@ const router = Router()
 router.use(requireAuth)
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
+// 3.5 — rotation progress: how many BlockedContactHash rows are on each
+// HMAC key version. Migration after a rotation is "done" once only the
+// active version has rows left.
+router.get('/contacts/key-version-stats', requireAdmin('metrics'), async (req: AuthRequest, res: Response) => {
+  const stats = await getKeyVersionStats()
+  res.json({ activeVersion: getActiveKeyVersion(), stats })
+})
+
 router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: Response) => {
   try {
     const today = new Date(); today.setHours(0,0,0,0)

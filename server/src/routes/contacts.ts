@@ -1,24 +1,9 @@
 import { Router, Response } from 'express'
-import { createHmac } from 'crypto'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { hashContact } from '../lib/contactHashService'
 
 const router = Router()
-const isProd = process.env.NODE_ENV === 'production'
-
-// T10: fail hard in production if secret not set
-const getContactHashSecret = (): string => {
-  const secret = process.env.CONTACT_HASH_SECRET
-  if (isProd && !secret) {
-    throw new Error('CONTACT_HASH_SECRET is required in production')
-  }
-  return secret || 'dev-only-insecure-fallback-do-not-use-in-prod'
-}
-
-const hashContact = (value: string): string =>
-  createHmac('sha256', getContactHashSecret())
-    .update(value.toLowerCase().trim())
-    .digest('hex')
 
 // T10: verify CONTACT_HASHING consent before accepting uploads
 const hasContactHashingConsent = async (userId: string): Promise<boolean> => {
@@ -48,9 +33,14 @@ router.post('/block', requireAuth, async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Máximo de 500 contactos por pedido.' })
     }
 
+    // 3.5: each row records the key version that produced it, so a future
+    // secret rotation doesn't silently orphan hashes written today.
     const hashed = contacts
       .filter(c => c.value && ['email', 'phone'].includes(c.type))
-      .map(c => ({ userId: req.userId!, contactHash: hashContact(c.value), type: c.type }))
+      .map(c => {
+        const { hash, keyVersion } = hashContact(c.value)
+        return { userId: req.userId!, contactHash: hash, keyVersion, type: c.type }
+      })
 
     await prisma.blockedContactHash.createMany({ data: hashed, skipDuplicates: true })
 
@@ -61,8 +51,8 @@ router.post('/block', requireAuth, async (req: AuthRequest, res: Response) => {
     })
   } catch (err: any) {
     console.error('[CONTACTS BLOCK]', err.message)
-    const status = err.message.includes('CONTACT_HASH_SECRET') ? 503 : 500
-    res.status(status).json({ error: isProd ? 'Serviço temporariamente indisponível.' : err.message })
+    const status = err.message.includes('CONTACT_HASH') ? 503 : 500
+    res.status(status).json({ error: process.env.NODE_ENV === 'production' ? 'Serviço temporariamente indisponível.' : err.message })
   }
 })
 
