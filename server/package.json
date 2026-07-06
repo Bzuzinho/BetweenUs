@@ -11,7 +11,8 @@
     "db:migrate": "npx prisma migrate deploy",
     "db:seed": "ts-node prisma/seed.ts",
     "db:backfill-members": "ts-node --transpile-only src/scripts/backfillProfileMembers.ts",
-    "reset-password": "ts-node --transpile-only src/scripts/resetPassword.ts"
+    "reset-password": "ts-node --transpile-only src/scripts/resetPassword.ts",
+    "hard-delete": "ts-node --transpile-only src/scripts/hardDelete.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.540.0",

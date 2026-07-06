@@ -22,6 +22,20 @@ const DEFAULT_TTL_SECONDS = 300 // 5 minutes — long enough to load a page, sho
 export const isStorageKey = (value?: string | null): boolean =>
   !!value && !/^https?:\/\//i.test(value)
 
+// 3.6 — shared with the hard-delete job: turns any stored photo/selfie
+// value (legacy public URL OR post-Sprint-3 private key) into the plain R2
+// object key deleteFile() expects. Mirrors the same dual-mode extraction
+// already inlined in photos.ts/verifications.ts deletes.
+export const extractStorageKey = (value?: string | null): string | null => {
+  if (!value) return null
+  if (isStorageKey(value)) return value
+  try {
+    return new URL(value).pathname.replace(/^\//, '') || null
+  } catch {
+    return null
+  }
+}
+
 let s3Client: any = null
 const getClient = async () => {
   if (s3Client) return s3Client

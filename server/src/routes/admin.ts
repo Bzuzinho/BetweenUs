@@ -7,6 +7,7 @@ import { evaluateAndActivateUser, canTransitionStatus } from '../lib/userActivat
 import { forUser as getEligibility } from '../lib/eligibilityService'
 import { mergePhotosForViewer, signMediaUrl } from '../lib/mediaAccessService'
 import { getKeyVersionStats, getActiveKeyVersion } from '../lib/contactHashService'
+import { runHardDeleteJob, findEligibleUsers } from '../lib/hardDeleteJob'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -20,6 +21,31 @@ router.use(requireAuth)
 router.get('/contacts/key-version-stats', requireAdmin('metrics'), async (req: AuthRequest, res: Response) => {
   const stats = await getKeyVersionStats()
   res.json({ activeVersion: getActiveKeyVersion(), stats })
+})
+
+// 3.6 — hard delete job, reachable from the admin UI as an alternative to
+// the CLI script (npm run hard-delete). SUPER_ADMIN only: this is
+// irreversible and the reachable-from-a-browser-button version of it
+// deserves a narrower blast radius than the rest of the 'users' bucket.
+router.get('/gdpr/hard-delete/preview', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  if ((req as any).adminRole !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Apenas SUPER_ADMIN.' })
+  const eligible = await findEligibleUsers()
+  const preview = await runHardDeleteJob(true)
+  res.json({ eligibleCount: eligible.length, preview })
+})
+
+router.post('/gdpr/hard-delete/run', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  if ((req as any).adminRole !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Apenas SUPER_ADMIN.' })
+  if (req.body.confirm !== 'HARD_DELETE') {
+    return res.status(400).json({ error: 'Confirmação obrigatória: envia { "confirm": "HARD_DELETE" } no corpo do pedido.' })
+  }
+  const results = await runHardDeleteJob(false)
+  const deleted = results.filter(r => !r.skipped)
+  await logAdminAction(req.userId!, 'HARD_DELETE_USERS', 'gdpr', `batch-${Date.now()}`, {
+    newData: { deletedCount: deleted.length, skippedCount: results.length - deleted.length, userIds: deleted.map(r => r.userId) },
+    ipAddress: req.ip
+  })
+  res.json({ ok: true, results })
 })
 
 router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: Response) => {
