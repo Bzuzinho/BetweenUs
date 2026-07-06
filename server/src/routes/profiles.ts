@@ -4,6 +4,7 @@ import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { coarsenCoordinate } from '../utils/location'
 import { mergePhotosForViewer } from '../lib/mediaAccessService'
+import { getVerificationBadges } from '../lib/verificationBadges'
 
 const router = Router()
 
@@ -100,17 +101,19 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       boundaries:      { include: { boundary: true } },
       privacySettings: true,
       coupleProfile:   true,
+      user:            { select: { verification: { select: { type: true, status: true } } } },
     }
   })
   if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-  const { locationLat, locationLng, photos, ...safeProfile } = profile as any
+  const { locationLat, locationLng, photos, user, ...safeProfile } = profile as any
   // 3.1: sign photo URLs fresh on every read instead of exposing storage keys/permanent URLs
   const resolvedPhotos = await mergePhotosForViewer(photos, {
     ownerUserId: req.userId!,
     viewerUserId: req.userId!,
     viewerProfileId: profile.id
   })
-  res.json({ ...safeProfile, photos: resolvedPhotos })
+  // 3.4: public verification badge, derived from Verification.status, not exposed elsewhere
+  res.json({ ...safeProfile, photos: resolvedPhotos, verificationBadges: getVerificationBadges(user?.verification) })
 })
 
 // PUT /api/profiles/me  ← new: edit own profile
@@ -258,10 +261,15 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     // meant BLURRED/PRIVATE_AFTER_MATCH/PRIVATE_AFTER_APPROVAL photos never
     // reached the client at all — not even blurred. Access is now decided
     // per-viewer below via mergePhotosForViewer instead of at the query level.
-    include: { photos: { where: { moderationStatus: 'APPROVED' }, orderBy: [{ isPrimary: 'desc' }] }, intentions: { include: { intention: true } }, privacySettings: true }
+    include: {
+      photos: { where: { moderationStatus: 'APPROVED' }, orderBy: [{ isPrimary: 'desc' }] },
+      intentions: { include: { intention: true } },
+      privacySettings: true,
+      user: { select: { verification: { select: { type: true, status: true } } } },
+    }
   })
   if (!profile || profile.status !== 'APPROVED') return res.status(404).json({ error: 'Perfil não encontrado.' })
-  const { userId, locationLat, locationLng, photos, ...pub } = profile as any
+  const { userId, locationLat, locationLng, photos, user, ...pub } = profile as any
 
   const viewerProfileId = await resolveMyProfileId(req.userId!)
   const resolvedPhotos = await mergePhotosForViewer(photos, {
@@ -269,7 +277,7 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     viewerUserId: req.userId!,
     viewerProfileId
   })
-  res.json({ ...pub, photos: resolvedPhotos })
+  res.json({ ...pub, photos: resolvedPhotos, verificationBadges: getVerificationBadges(user?.verification) })
 })
 
 router.put('/me/boundaries', requireAuth, async (req: AuthRequest, res: Response) => {

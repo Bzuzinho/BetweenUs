@@ -37,10 +37,15 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json(v || { status: 'NONE' })
 })
 
-// POST /api/verifications/submit — selfie upload
+const VERIFICATION_TYPES = ['SELFIE', 'ID_DOCUMENT', 'VIDEO'] as const
+
+// POST /api/verifications/submit — selfie (or, going forward, other
+// verification-type) upload. 3.4: type is now a validated enum instead of
+// always being the hardcoded string "selfie".
 router.post('/submit', requireAuth, upload.single('selfie'), async (req: AuthRequest, res: Response) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Selfie obrigatória.' })
+    const requestedType = VERIFICATION_TYPES.includes(req.body.type) ? req.body.type : 'SELFIE'
     const existing = await prisma.verification.findUnique({ where: { userId: req.userId! } })
     if (existing?.status === 'APPROVED') return res.status(409).json({ error: 'Perfil já verificado.' })
     if (existing?.status === 'PENDING')  return res.status(409).json({ error: 'Verificação já em curso.' })
@@ -55,8 +60,8 @@ router.post('/submit', requireAuth, upload.single('selfie'), async (req: AuthReq
     }
     await prisma.verification.upsert({
       where: { userId: req.userId! },
-      update: { status: 'PENDING', selfieStoragePath: selfieKey || null, reviewedAt: null, expiresAt: new Date(Date.now() + 30*24*60*60*1000) },
-      create: { userId: req.userId!, type: 'selfie', status: isProd ? 'PENDING' : 'APPROVED', selfieStoragePath: selfieKey || null, expiresAt: new Date(Date.now() + 30*24*60*60*1000) }
+      update: { type: requestedType, status: 'PENDING', selfieStoragePath: selfieKey || null, reviewedAt: null, expiresAt: new Date(Date.now() + 30*24*60*60*1000) },
+      create: { userId: req.userId!, type: requestedType, status: isProd ? 'PENDING' : 'APPROVED', selfieStoragePath: selfieKey || null, expiresAt: new Date(Date.now() + 30*24*60*60*1000) }
     })
     if (!isProd) {
       await prisma.user.update({ where: { id: req.userId! }, data: { ageVerifiedAt: new Date() } })

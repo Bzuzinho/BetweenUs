@@ -179,6 +179,20 @@ enum VerificationStatus {
   EXPIRED
 }
 
+// 3.4 — was a free-form String defaulting to "selfie"; no taxonomy, no
+// public badge exposure. Kept 1-per-user cardinality (Verification.userId
+// stays @unique) to avoid destabilizing UserActivationService/
+// EligibilityService, both built in Sprint 2.5 around a single verification
+// record per user. True multi-type verification (tracking SELFIE and
+// ID_DOCUMENT simultaneously for one user) would need Verification.userId
+// to become non-unique + those two services updated accordingly — flagged
+// as follow-up, out of proportion to what this sprint asked for.
+enum VerificationType {
+  SELFIE
+  ID_DOCUMENT
+  VIDEO
+}
+
 enum ConsentType {
   TERMS
   PRIVACY_POLICY
@@ -622,7 +636,7 @@ model Verification {
   id                 String             @id @default(uuid())
   userId             String             @unique
   user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type               String             @default("selfie")
+  type               VerificationType   @default(SELFIE)
   status             VerificationStatus @default(PENDING)
   provider           String?
   selfieStoragePath  String?            // URL of the selfie in R2 — deleted after review

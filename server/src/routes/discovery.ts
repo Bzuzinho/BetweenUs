@@ -3,6 +3,7 @@ import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { notifyUser, notifyAdmins } from '../lib/notify'
 import { signMediaUrl } from '../lib/mediaAccessService'
+import { getVerificationBadges } from '../lib/verificationBadges'
 
 const router = Router()
 
@@ -121,7 +122,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
         ...(typeFilter && { type: typeFilter as any }),
       },
       include: {
-        user: { select: { id:true, ageVerifiedAt:true } },
+        user: { select: { id:true, ageVerifiedAt:true, verification: { select: { type: true, status: true } } } },
         photos: { where: { moderationStatus: 'APPROVED' }, take: 3 },
         intentions: { include: { intention: true } },
         boundaries: { include: { boundary: true } },
@@ -168,6 +169,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
         discretionLevel:    p.discretionLevel,
         score:              p.score,
         verified:           !!p.user?.ageVerifiedAt,
+        verificationBadges: getVerificationBadges(p.user?.verification),
         hasPhotos:          p.photos.length > 0,
         primaryPhoto,
         liked:              likedIds.has(p.id),
