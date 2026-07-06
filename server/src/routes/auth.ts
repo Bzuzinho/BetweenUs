@@ -7,6 +7,8 @@ import prisma from '../lib/prisma'
 import { generateTokens, verifyRefreshToken, verifyAccessToken } from '../utils/jwt'
 import { notifyAdmins } from '../lib/notify'
 import { evaluateAndActivateUser } from '../lib/userActivationService'
+import { getPendingReacceptance, recordReacceptance } from '../lib/legalDocumentService'
+import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -216,8 +218,30 @@ router.get('/me', async (req: Request, res: Response) => {
       if (membership?.profile) (user as any).profile = membership.profile
     }
 
-    res.json(user)
+    // 3.3: flag any legal document the user accepted an outdated version of
+    // (or never accepted at all, for documents published after they signed
+    // up). Empty array = nothing to do, same shape either way so the client
+    // doesn't need a separate "not applicable" branch.
+    const pendingLegalReacceptance = await getPendingReacceptance(userId).catch(() => [])
+
+    res.json({ ...user, pendingLegalReacceptance })
   } catch { res.status(401).json({ error: 'Token inválido.' }) }
+})
+
+// POST /api/auth/consents/reaccept — accept the currently published version
+// of a legal document (used after a pendingLegalReacceptance prompt)
+router.post('/consents/reaccept', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { consentType } = req.body
+    if (!consentType) return res.status(400).json({ error: 'consentType obrigatório.' })
+    const consent = await recordReacceptance(req.userId!, consentType, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    })
+    res.json({ ok: true, consent })
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Erro ao registar aceitação.' })
+  }
 })
 
 // POST /api/auth/email/verify — resend verification email (same fix as verifications.ts)

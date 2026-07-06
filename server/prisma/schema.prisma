@@ -662,6 +662,26 @@ model UserConsent {
   @@map("user_consents")
 }
 
+// 3.3 — source of truth for what "version" in UserConsent.version actually
+// refers to. Before this, version was a free string (hardcoded "1.0" at
+// registration) with nothing behind it — no way to know what changed
+// between versions, and no way to trigger reacceptance when the text
+// changes. Content lives here now (LegalPage.jsx fetches it, falling back
+// to its previous hardcoded copy if the API is unreachable).
+model LegalDocument {
+  id                   String      @id @default(uuid())
+  consentType          ConsentType
+  version              String
+  title                String
+  content              String
+  publishedAt          DateTime    @default(now())
+  requiresReacceptance Boolean     @default(true)
+  createdAt            DateTime    @default(now())
+
+  @@unique([consentType, version])
+  @@map("legal_documents")
+}
+
 model BlockedContactHash {
   id          String   @id @default(uuid())
   userId      String

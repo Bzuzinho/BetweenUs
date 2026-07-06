@@ -101,7 +101,87 @@ async function main() {
   }
   console.log(`Seeded ${genders.length} gender options`)
 
-  console.log('✅ Seed complete')
+  console.log('Seeding legal documents (v1.0)...')
+  const legalDocs = [
+    {
+      consentType: 'TERMS' as const,
+      version: '1.0',
+      title: 'Termos de Utilização',
+      content: `Última atualização: Junho 2026
+
+1. ACEITAÇÃO DOS TERMOS
+Ao criar uma conta na Between Us, confirmas que tens pelo menos 18 anos e aceitas estes Termos de Utilização na íntegra.
+
+2. NATUREZA DO SERVIÇO
+A Between Us é uma plataforma privada para ligações adultas, consensuais e discretas entre pessoas solteiras, casais e pessoas em relações abertas ou poliamorosas. Não toleramos conteúdo que envolva menores, coerção, ou atividades ilegais.
+
+3. CONTA E ELEGIBILIDADE
+Apenas maiores de 18 anos podem criar conta. És responsável por manter a confidencialidade da tua password e por toda a atividade na tua conta.
+
+4. CONDUTA DO UTILIZADOR
+É proibido: assediar outros utilizadores, partilhar conteúdo não consentido, criar perfis falsos, usar a plataforma para fins comerciais não autorizados, ou contactar menores.
+
+5. CONTEÚDO E MODERAÇÃO
+Todas as fotos passam por moderação antes de ficarem visíveis. Reservamo-nos o direito de remover conteúdo ou suspender contas que violem estes termos.
+
+6. SUBSCRIÇÕES E PAGAMENTOS
+Os planos Premium são processados via Stripe. Podes cancelar a qualquer momento; o acesso premium mantém-se até ao fim do período já pago.
+
+7. LIMITAÇÃO DE RESPONSABILIDADE
+A Between Us não se responsabiliza por interações entre utilizadores fora da plataforma. Recomendamos sempre cautela em encontros presenciais.
+
+8. RESCISÃO
+Podes apagar a tua conta a qualquer momento nas definições. Reservamo-nos o direito de suspender contas que violem estes termos.
+
+9. ALTERAÇÕES
+Podemos atualizar estes termos periodicamente. Notificaremos sobre alterações significativas.`,
+      requiresReacceptance: true,
+    },
+    {
+      consentType: 'PRIVACY_POLICY' as const,
+      version: '1.0',
+      title: 'Política de Privacidade',
+      content: `Última atualização: Junho 2026
+
+1. DADOS QUE RECOLHEMOS
+Email, data de nascimento, informações de perfil (que escolhes partilhar), fotos, mensagens, e dados de utilização da app.
+
+2. COMO USAMOS OS TEUS DADOS
+Para criar e gerir a tua conta, mostrar perfis compatíveis, processar pagamentos, e melhorar a segurança da plataforma.
+
+3. PARTILHA DE DADOS
+Nunca vendemos os teus dados. Partilhamos apenas com: processadores de pagamento (Stripe), serviços de armazenamento (Cloudflare R2), e quando legalmente exigido.
+
+4. CONTACTOS BLOQUEADOS
+Quando bloqueias contactos, convertemos os dados imediatamente em hash criptográfico HMAC-SHA256. Os valores originais nunca são guardados.
+
+5. FOTOS E SOFT REVEAL
+As tuas fotos são armazenadas de forma segura. O Soft Reveal permite-te controlar quem vê o quê e quando. Fotos de verificação são apagadas após revisão.
+
+6. OS TEUS DIREITOS (RGPD)
+Tens direito a aceder, corrigir, apagar, ou exportar os teus dados a qualquer momento. Podes revogar consentimentos opcionais nas definições.
+
+7. RETENÇÃO DE DADOS
+Mantemos os teus dados enquanto a conta estiver ativa. Após eliminação da conta, os dados são apagados num prazo de 30 dias, exceto quando a lei exigir retenção.
+
+8. SEGURANÇA
+Usamos encriptação, autenticação de dois fatores (em breve), e auditoria de acessos administrativos para proteger os teus dados.
+
+9. CONTACTO
+Para questões sobre privacidade: privacy@betweenus.app`,
+      requiresReacceptance: true,
+    },
+  ]
+  for (const doc of legalDocs) {
+    await prisma.legalDocument.upsert({
+      where: { consentType_version: { consentType: doc.consentType, version: doc.version } },
+      update: {},
+      create: doc,
+    })
+  }
+  console.log(`Seeded ${legalDocs.length} legal documents`)
+
+  console.log('Seed complete')
 }
 
 main()
