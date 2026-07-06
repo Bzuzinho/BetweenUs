@@ -1,28 +1,29 @@
-// Between Us — Email via Gmail SMTP
-// Sender: emailtemp02@gmail.com (app password required)
-// Works for any recipient — no domain verification needed
+// Between Us — Email
+// Primary: SendGrid HTTP API (plain HTTPS — works even when the host blocks
+// outbound SMTP ports, which Railway appears to do for this project).
+// Fallback: Gmail SMTP, kept for local/dev or if SendGrid isn't configured.
+// Sender: emailtemp02@gmail.com — verified as a Single Sender in SendGrid,
+// no domain required.
 
 import nodemailer from 'nodemailer'
 
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY
 const SMTP_HOST = process.env.SMTP_HOST   // smtp.gmail.com
 const SMTP_PORT = Number(process.env.SMTP_PORT || 587)
 const SMTP_USER = process.env.SMTP_USER   // emailtemp02@gmail.com
 const SMTP_PASS = process.env.SMTP_PASS   // Gmail App Password (16 chars)
 const EMAIL_FROM = process.env.EMAIL_FROM || 'Between Us <emailtemp02@gmail.com>'
+const EMAIL_FROM_ADDRESS = (EMAIL_FROM.match(/<(.+)>/)?.[1]) || EMAIL_FROM
+const EMAIL_FROM_NAME = EMAIL_FROM.replace(/\s*<.+>\s*/, '').trim() || 'Between Us'
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000'
 
-console.log('[EMAIL] ── GMAIL CONFIG ─────────────────────────')
-console.log('[EMAIL] HOST :', SMTP_HOST  || '❌ NOT SET')
-console.log('[EMAIL] USER :', SMTP_USER  || '❌ NOT SET')
-console.log('[EMAIL] PASS :', SMTP_PASS  ? `✅ set (${SMTP_PASS.slice(0,4)}…)` : '❌ NOT SET')
-console.log('[EMAIL] FROM :', EMAIL_FROM)
-console.log('[EMAIL] ────────────────────────────────────────')
+console.log('[EMAIL] ── CONFIG ─────────────────────────')
+console.log('[EMAIL] PROVIDER :', SENDGRID_API_KEY ? 'sendgrid (HTTP API)' : (SMTP_HOST ? 'smtp' : '❌ NONE CONFIGURED'))
+console.log('[EMAIL] FROM     :', EMAIL_FROM)
+console.log('[EMAIL] ──────────────────────────────────────')
 
 const getTransporter = () => {
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    console.warn('[EMAIL] ⚠️  Missing SMTP config — emails disabled')
-    return null
-  }
+  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) return null
   return nodemailer.createTransport({
     host: SMTP_HOST,
     port: SMTP_PORT,
@@ -34,13 +35,45 @@ const getTransporter = () => {
   } as any)
 }
 
+const sendViaSendgrid = async (to: string, subject: string, html: string) => {
+  const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${SENDGRID_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: EMAIL_FROM_ADDRESS, name: EMAIL_FROM_NAME },
+      subject,
+      content: [{ type: 'text/html', value: html }],
+    }),
+  })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`SendGrid ${res.status}: ${body.slice(0, 300)}`)
+  }
+}
+
 const send = async (to: string, subject: string, html: string, label: string) => {
-  const t = getTransporter()
-  if (!t) {
-    console.warn(`[EMAIL] Skipped ${label} → ${to}`)
+  if (SENDGRID_API_KEY) {
+    console.log(`[EMAIL] Sending ${label} → ${to} (via SendGrid)`)
+    try {
+      await sendViaSendgrid(to, subject, html)
+      console.log(`[EMAIL] ✅ Sent ${label} → ${to}`)
+    } catch (err: any) {
+      console.error(`[EMAIL] ❌ Failed ${label} → ${to}: ${err.message}`)
+      throw err
+    }
     return
   }
-  console.log(`[EMAIL] Sending ${label} → ${to}`)
+
+  const t = getTransporter()
+  if (!t) {
+    console.warn(`[EMAIL] Skipped ${label} → ${to} — no provider configured`)
+    return
+  }
+  console.log(`[EMAIL] Sending ${label} → ${to} (via SMTP)`)
   try {
     const info = await t.sendMail({ from: EMAIL_FROM, to, subject, html })
     console.log(`[EMAIL] ✅ Sent ${label} → ${to} (${info.messageId})`)
@@ -129,10 +162,12 @@ export const sendSafetyAlertEmail = async (email: string, opts: { scheduledAt: D
 }
 
 export const getEmailConfig = () => ({
+  provider: SENDGRID_API_KEY ? 'sendgrid' : (SMTP_HOST ? 'smtp' : null),
   host: SMTP_HOST || null,
   port: SMTP_PORT,
   user: SMTP_USER || null,
   pass: SMTP_PASS ? `set (${SMTP_PASS.slice(0,4)}…)` : null,
+  sendgridKey: SENDGRID_API_KEY ? `set (${SENDGRID_API_KEY.slice(0,6)}…)` : null,
   from: EMAIL_FROM,
-  configured: !!(SMTP_HOST && SMTP_USER && SMTP_PASS),
+  configured: !!SENDGRID_API_KEY || !!(SMTP_HOST && SMTP_USER && SMTP_PASS),
 })

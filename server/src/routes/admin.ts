@@ -744,17 +744,40 @@ router.get('/email-config', requireAdmin(), async (req: AuthRequest, res: Respon
   const { getEmailConfig } = await import('../lib/email')
   const config = getEmailConfig()
   const missing = Object.entries(config)
-    .filter(([k, v]) => !v && !['port', 'configured'].includes(k))
+    .filter(([k, v]) => !v && !['port', 'configured', 'sendgridKey'].includes(k))
     .map(([k]) => k)
 
   if (!config.configured) {
     return res.json({
       status: 'misconfigured', missing, config,
-      fix: 'No Railway → serviço backend → Variables, define: SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, SMTP_USER=emailtemp02@gmail.com, SMTP_PASS=<Gmail App Password de 16 caracteres>, EMAIL_FROM=Between Us <emailtemp02@gmail.com>. A App Password gera-se em myaccount.google.com/apppasswords (precisa de 2FA ativa nessa conta Gmail).'
+      fix: 'Recomendado: no Railway → serviço backend → Variables, define SENDGRID_API_KEY=<a tua API key do SendGrid> (usa HTTP, não é bloqueado pelo Railway). Alternativa (pode falhar por bloqueio de porta): SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, SMTP_USER=emailtemp02@gmail.com, SMTP_PASS=<Gmail App Password>, EMAIL_FROM=Between Us <emailtemp02@gmail.com>.'
     })
   }
 
-  // Test actual send connection — Gmail SMTP on 587 uses STARTTLS, not implicit SSL
+  // SendGrid — test the API key itself (no way to "ping" without sending an email)
+  if (config.provider === 'sendgrid') {
+    try {
+      const r = await fetch('https://api.sendgrid.com/v3/scopes', {
+        headers: { Authorization: `Bearer ${process.env.SENDGRID_API_KEY}` }
+      })
+      if (!r.ok) {
+        const body = await r.text().catch(() => '')
+        return res.json({
+          status: 'error', message: `SendGrid respondeu ${r.status}`, config,
+          hints: [
+            'Confirma que a API Key está correta e activa em app.sendgrid.com/settings/api_keys',
+            'A API Key precisa da permissão "Mail Send" pelo menos',
+            body.slice(0, 200),
+          ]
+        })
+      }
+      return res.json({ status: 'ok', message: '✅ SendGrid API ligado e pronto', config })
+    } catch (err: any) {
+      return res.json({ status: 'error', message: err.message, config, hints: ['Falha de rede a contactar api.sendgrid.com — verifica ligação do serviço.'] })
+    }
+  }
+
+  // Gmail SMTP fallback test
   try {
     const nodemailer = require('nodemailer')
     const t = nodemailer.createTransport({
@@ -782,7 +805,7 @@ router.get('/email-config', requireAdmin(), async (req: AuthRequest, res: Respon
         'Gera a App Password em myaccount.google.com/apppasswords',
         'SMTP_PORT deve ser 587 (STARTTLS), não 465',
         err.code === 'EAUTH' ? '⚠️ Erro de autenticação — a App Password está errada, expirou, ou foi revogada' : null,
-        (err.code === 'ETIMEDOUT' || /timeout/i.test(err.message)) ? '⚠️ Timeout de ligação — se persistir depois de forçar IPv4, o Railway pode estar a bloquear a porta 587 de saída; tenta mudar SMTP_PORT para 465 no Railway, ou considera um provedor por API HTTP (Resend, SendGrid) que não depende de portas SMTP' : null,
+        (err.code === 'ETIMEDOUT' || /timeout/i.test(err.message)) ? '⚠️ Timeout de ligação persistente mesmo com IPv4 — o Railway está provavelmente a bloquear portas SMTP de saída. Recomendado: configura SENDGRID_API_KEY em vez de SMTP (ver acima).' : null,
       ].filter(Boolean)
     })
   }
