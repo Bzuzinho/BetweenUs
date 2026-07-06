@@ -565,6 +565,7 @@ model SafetyCheckin {
   profile         Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
   matchId         String?
   scheduledAt     DateTime
+  safetyEmail     String?
   confirmedAt     DateTime?
   cancelledAt     DateTime?
   alertSent       Boolean   @default(false)
