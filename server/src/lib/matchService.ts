@@ -38,6 +38,15 @@ export const createLikeOrMatch = async (
 
     if (!actor || !target) return { kind: 'ERROR', message: 'Perfil não encontrado.' }
 
+    // 9.3 — defense-in-depth: discovery already excludes blocked profiles
+    // from ever being seen (5.3), but this closes the direct-API-call gap
+    // (liking a profileId obtained some other way) so a block cannot be
+    // routed around to force a like/match either way.
+    const { isBlockedEitherWay } = await import('./blockService')
+    if (await isBlockedEitherWay(actorProfileId, targetProfileId)) {
+      return { kind: 'ERROR', message: 'Ação não disponível.' }
+    }
+
     // Register the like (idempotent)
     await prisma.profileAction.upsert({
       where: { actorProfileId_targetProfileId: { actorProfileId, targetProfileId } },

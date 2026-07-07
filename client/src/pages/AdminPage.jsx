@@ -467,37 +467,144 @@ function DashboardTab({ changeTab }) {
   )
 }
 
-/* ─── Reports ────────────────────────────────────────────────────────────────── */
+/* ─── Reports / Moderation Dashboard (9.12) ─────────────────────────────────── */
+const TIER_COLOR = { MAXIMUM:C.danger, HIGH:C.danger, ELEVATED:C.warning, MODERATE:C.warning, LOW:C.muted, MINIMAL:C.muted, NONE:C.muted }
+const tierForPriority = (p) => p>=10?'MAXIMUM':p>=8?'HIGH':p>=7?'ELEVATED':p>=5?'MODERATE':p>=3?'LOW':p>=1?'MINIMAL':'NONE'
+const ageLabel = (createdAt) => {
+  const mins = Math.floor((Date.now() - new Date(createdAt).getTime()) / 60000)
+  if (mins < 60) return `${mins}min`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h`
+  return `${Math.floor(hours / 24)}d`
+}
+
 function ReportsTab() {
   const [reports, setReports] = useState([])
   const [status, setStatus] = useState('PENDING')
+  const [selectedId, setSelectedId] = useState(null)
   const load = useCallback(() => { api.get(`/admin/reports?status=${status}`).then(r => setReports(r.data.reports||[])) }, [status])
   useEffect(() => { load() }, [load])
-  const resolve = async (id, s) => { await api.put(`/admin/reports/${id}`, { status: s }); load() }
+
+  if (selectedId) {
+    return <ReportDetail reportId={selectedId} onBack={() => setSelectedId(null)} onResolved={() => { setSelectedId(null); load() }}/>
+  }
+
   return (
     <div>
       <div style={{ display:'flex', gap:6, marginBottom:14, flexWrap:'wrap' }}>
-        {['PENDING','REVIEWING','RESOLVED','DISMISSED'].map(s => (
+        {['PENDING','REVIEWING','RESOLVED','DISMISSED','ESCALATED'].map(s => (
           <button key={s} onClick={() => setStatus(s)} style={{ background:status===s?C.primaryDim:C.surface, border:`1px solid ${status===s?C.primary:C.border}`, borderRadius:8, padding:'6px 12px', color:status===s?C.primary:C.muted, fontSize:12, minHeight:34, cursor:'pointer' }}>{s}</button>
         ))}
       </div>
       {reports.length===0 && <p style={{color:C.muted}}>Sem reports com este estado.</p>}
-      {reports.map(r => (
-        <div key={r.id} style={{ background:C.surface, border:`1px solid ${r.priority>=8?'rgba(248,113,113,0.3)':C.border}`, borderRadius:14, padding:14, marginBottom:10 }}>
-          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
-            <span style={{ color:r.priority>=8?C.danger:C.primary, fontWeight:500, fontSize:13 }}>{r.reason}</span>
-            <span style={{ color:C.muted, fontSize:11 }}>{new Date(r.createdAt).toLocaleDateString('pt')}</span>
-          </div>
-          <div style={{ color:C.text2, fontSize:12, marginBottom:8 }}>{r.reportedUser?.email}{r.reportedUser?.riskScore>0&&<span style={{color:C.danger}}> · risco {r.reportedUser.riskScore}</span>}</div>
-          {r.details && <div style={{ color:C.muted, fontSize:12, marginBottom:8 }}>{r.details}</div>}
-          {status==='PENDING'&&(
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-              <button onClick={() => resolve(r.id,'RESOLVED')} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:10, padding:10, color:C.success, fontSize:12, minHeight:40, cursor:'pointer' }}>✓ Procedente</button>
-              <button onClick={() => resolve(r.id,'DISMISSED')} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:10, padding:10, color:C.muted, fontSize:12, minHeight:40, cursor:'pointer' }}>✕ Dispensar</button>
+      {reports.map(r => {
+        const tier = tierForPriority(r.priority)
+        return (
+          <div key={r.id} onClick={() => setSelectedId(r.id)} style={{ background:C.surface, border:`1px solid ${tier==='MAXIMUM'||tier==='HIGH'?'rgba(248,113,113,0.3)':C.border}`, borderRadius:14, padding:14, marginBottom:10, cursor:'pointer' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6, gap:8, flexWrap:'wrap' }}>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <span style={{ background:TIER_COLOR[tier], color:'#0A141A', borderRadius:6, padding:'2px 8px', fontSize:10, fontWeight:700 }}>{tier}</span>
+                <span style={{ color:C.text, fontWeight:500, fontSize:13 }}>{r.reason}</span>
+                {r.aiAssessment && <span title="Avaliação por IA disponível" style={{ background:C.primaryDim, color:C.primary, borderRadius:6, padding:'2px 8px', fontSize:10 }}>🤖 IA</span>}
+              </div>
+              <span style={{ color:C.muted, fontSize:11 }}>há {ageLabel(r.createdAt)}</span>
             </div>
-          )}
+            <div style={{ color:C.text2, fontSize:12, marginBottom:4 }}>{r.reportedUser?.email}{r.reportedUser?.riskScore>0&&<span style={{color:C.danger}}> · risco {r.reportedUser.riskScore}</span>}</div>
+            {r.details && <div style={{ color:C.muted, fontSize:12 }}>{r.details}</div>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// 9.12 — detail view: report + evidence (only rendered if the server
+// returned it — SUPPORT-tier admins get evidence:null and
+// evidenceRestricted:true, shown as a locked notice instead of silently
+// nothing) + previous reports + minimal account context + AI summary +
+// actions. Never renders a "show me everything about this account" view.
+function ReportDetail({ reportId, onBack, onResolved }) {
+  const [data, setData] = useState(null)
+  const [notes, setNotes] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(() => { api.get(`/admin/reports/${reportId}`).then(r => setData(r.data)) }, [reportId])
+  useEffect(() => { load() }, [load])
+
+  const resolve = async (s) => {
+    setBusy(true)
+    try { await api.put(`/admin/reports/${reportId}`, { status: s, internalNotes: notes || undefined }); onResolved() }
+    finally { setBusy(false) }
+  }
+  const reassess = async () => { setBusy(true); try { await api.post(`/admin/reports/${reportId}/assess`); load() } finally { setBusy(false) } }
+
+  if (!data) return <p style={{color:C.muted}}>A carregar…</p>
+  const { report, evidence, previousReports, aiAssessment, evidenceRestricted } = data
+  const tier = tierForPriority(report.priority)
+
+  return (
+    <div>
+      <button onClick={onBack} style={{ background:'none', border:'none', color:C.muted, fontSize:13, marginBottom:14, cursor:'pointer' }}>← Voltar à fila</button>
+
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:16, marginBottom:14 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+          <span style={{ background:TIER_COLOR[tier], color:'#0A141A', borderRadius:6, padding:'2px 8px', fontSize:10, fontWeight:700 }}>{tier}</span>
+          <span style={{ color:C.text, fontWeight:600, fontSize:15 }}>{report.reason}</span>
+          <span style={{ color:C.muted, fontSize:11, marginLeft:'auto' }}>{report.status} · há {ageLabel(report.createdAt)}</span>
         </div>
-      ))}
+        {report.details && <div style={{ color:C.text2, fontSize:13, marginBottom:10 }}>{report.details}</div>}
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, fontSize:12, color:C.muted }}>
+          <div>Reporter: {report.reporter?.email}</div>
+          <div>Denunciado: {report.reportedUser?.email || '—'}</div>
+          {report.reportedUser && <>
+            <div>Risco: {report.reportedUser.riskScore}</div>
+            <div>Perfil: {report.reportedUser.profile?.displayName} ({report.reportedUser.profile?.type})</div>
+          </>}
+        </div>
+      </div>
+
+      {previousReports?.length > 0 && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:16, marginBottom:14 }}>
+          <div style={{ color:C.text, fontSize:13, fontWeight:600, marginBottom:8 }}>Denúncias anteriores ao mesmo utilizador ({previousReports.length})</div>
+          {previousReports.map(p => (
+            <div key={p.id} style={{ fontSize:12, color:C.muted, marginBottom:4 }}>{p.reason} · {p.status} · {new Date(p.createdAt).toLocaleDateString('pt')}</div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:16, marginBottom:14 }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+          <div style={{ color:C.text, fontSize:13, fontWeight:600 }}>🤖 Avaliação por IA</div>
+          <button onClick={reassess} disabled={busy} style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:8, padding:'4px 10px', color:C.muted, fontSize:11, cursor:'pointer' }}>Reavaliar</button>
+        </div>
+        {!aiAssessment && <div style={{ color:C.muted, fontSize:12 }}>Sem avaliação (IA desativada ou ainda não corrida).</div>}
+        {aiAssessment && (
+          <div style={{ fontSize:12, color:C.text2 }}>
+            <div style={{ marginBottom:4 }}>{aiAssessment.result?.summary}</div>
+            <div style={{ color:C.muted }}>Severidade: {(aiAssessment.result?.severity*100).toFixed(0)}% · Prioridade recomendada: {aiAssessment.result?.recommendedPriority} · Categorias: {(aiAssessment.result?.categories||[]).join(', ')}</div>
+            <div style={{ color:C.muted, fontSize:10, marginTop:6 }}>Só orientativo — a decisão é sempre humana. {aiAssessment.provider}/{aiAssessment.model}</div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:16, marginBottom:14 }}>
+        <div style={{ color:C.text, fontSize:13, fontWeight:600, marginBottom:8 }}>Evidência</div>
+        {evidenceRestricted && <div style={{ color:C.warning, fontSize:12 }}>🔒 Sem permissão para ver evidência (moderation.evidence.view).</div>}
+        {!evidenceRestricted && (!evidence || evidence.length===0) && <div style={{ color:C.muted, fontSize:12 }}>Sem evidência associada.</div>}
+        {!evidenceRestricted && evidence?.map(e => (
+          <div key={e.id} style={{ background:C.input, borderRadius:10, padding:10, marginBottom:8, fontSize:12 }}>
+            <div style={{ color:C.primary, marginBottom:4 }}>{e.type}</div>
+            <pre style={{ color:C.text2, whiteSpace:'pre-wrap', wordBreak:'break-word', margin:0, fontFamily:'inherit' }}>{JSON.stringify(e.data, null, 2)}</pre>
+          </div>
+        ))}
+      </div>
+
+      <textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Nota interna (opcional)" style={{ width:'100%', background:C.input, border:`1px solid ${C.border}`, borderRadius:10, padding:10, color:C.text, fontSize:12, marginBottom:10, minHeight:60 }}/>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8 }}>
+        <button onClick={() => resolve('RESOLVED')} disabled={busy} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:10, padding:10, color:C.success, fontSize:12, minHeight:40, cursor:'pointer' }}>✓ Procedente</button>
+        <button onClick={() => resolve('ESCALATED')} disabled={busy} style={{ background:C.dangerDim, border:`1px solid ${C.danger}`, borderRadius:10, padding:10, color:C.danger, fontSize:12, minHeight:40, cursor:'pointer' }}>⚠ Escalar</button>
+        <button onClick={() => resolve('DISMISSED')} disabled={busy} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:10, padding:10, color:C.muted, fontSize:12, minHeight:40, cursor:'pointer' }}>✕ Dispensar</button>
+      </div>
     </div>
   )
 }

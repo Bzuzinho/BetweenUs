@@ -35,6 +35,8 @@ import privateInterestsRouter from '../src/routes/privateInterests'
 import agreementsRouter from '../src/routes/agreements'
 import travelRouter from '../src/routes/travel'
 import roomsRouter from '../src/routes/rooms'
+import privacyRouter from '../src/routes/privacy'
+import safetyRouter from '../src/routes/safety'
 
 app.use('/api/auth', authRouter)
 app.use('/api/profiles', profileRouter)
@@ -56,6 +58,8 @@ app.use('/api/private-interests', privateInterestsRouter)
 app.use('/api/agreements', agreementsRouter)
 app.use('/api/travel', travelRouter)
 app.use('/api/rooms', roomsRouter)
+app.use('/api/privacy', privacyRouter)
+app.use('/api/safety', safetyRouter)
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   res.status(err.status || 500).json({ error: err.message })

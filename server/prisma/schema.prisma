@@ -199,6 +199,34 @@ enum ReportStatus {
   ESCALATED
 }
 
+// 9.1 — evidence captured at report-submission time, deliberately
+// snapshotted rather than referencing live rows: a MESSAGE_SNAPSHOT must
+// stay readable to moderation even if the underlying Message/RoomMessage
+// is later soft-deleted (by the sender, by TTL expiry, or by the cleanup
+// job) or the sender's account is altered. `data` is a restricted subset
+// of fields (see reportEvidenceService.ts), never a full dump of
+// unrelated content.
+enum EvidenceType {
+  MESSAGE_SNAPSHOT
+  PROFILE_SNAPSHOT
+  MEDIA_REFERENCE
+  ROOM_CONTEXT
+  SYSTEM_EVENT
+}
+
+// 9.5 — replaces the ad-hoc toStatus() derivation (alertSent/cancelledAt/
+// confirmedAt booleans with no formal notion of "in between" states) with
+// an explicit, service-written status. Old boolean fields stay for
+// read-compat with anything already querying them directly.
+enum SafetyCheckinStatus {
+  SCHEDULED
+  WAITING_CONFIRMATION
+  SAFE_CONFIRMED
+  OVERDUE
+  ESCALATED
+  CANCELLED
+}
+
 enum SubscriptionPlan {
   FREE
   PREMIUM
@@ -1119,6 +1147,15 @@ model SafetyCheckin {
   alertSent       Boolean   @default(false)
   locationHint    String?
   createdAt       DateTime  @default(now())
+  // 9.5/9.6 — explicit state machine field, written only through
+  // SafetyCheckinStateMachine.transition(). requestSentAt/overdueAt/
+  // escalatedAt record WHEN each job-driven transition happened, so each
+  // of the three jobs (request/overdue/escalation) can query
+  // "haven't done X yet" without re-deriving it from timing math each run.
+  status          SafetyCheckinStatus @default(SCHEDULED)
+  requestSentAt   DateTime?
+  overdueAt       DateTime?
+  escalatedAt     DateTime?
 
   @@map("safety_checkins")
 }
@@ -1138,7 +1175,47 @@ model Report {
   createdAt         DateTime     @default(now())
   reviewedAt        DateTime?
 
+  evidence             ReportEvidence[]
+  moderationAssessments ModerationAssessment[]
+
   @@map("reports")
+}
+
+// 9.1 — snapshotted evidence, not a live reference. `data` holds the
+// restricted field subset for the given `type` (see
+// reportEvidenceService.ts's SNAPSHOT builders) — e.g. for
+// MESSAGE_SNAPSHOT: { messageId, body, senderUserId, sentAt, roomId }.
+// Deliberately no relation to Message/RoomMessage: the whole point is
+// that this keeps reading correctly after the source row is soft-deleted.
+model ReportEvidence {
+  id        String       @id @default(uuid())
+  reportId  String
+  report    Report       @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  type      EvidenceType
+  data      Json
+  createdAt DateTime     @default(now())
+
+  @@map("report_evidence")
+}
+
+// 9.8 — one row per assessment RUN (a report could be re-assessed after
+// new evidence arrives), never mutated after creation — an audit trail of
+// what the AI said and when, kept fully separate from the human decision
+// (Report.status / AdminAction), per 9.11's "guardar AI recommendation;
+// human decision" as two distinct, comparable records rather than one
+// overwriting the other.
+model ModerationAssessment {
+  id           String   @id @default(uuid())
+  reportId     String
+  report       Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  provider     String
+  model        String
+  promptVersion String
+  result       Json
+  confidence   Float
+  createdAt    DateTime @default(now())
+
+  @@map("moderation_assessments")
 }
 
 model Subscription {

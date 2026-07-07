@@ -150,13 +150,30 @@ export const sendMatchEmail = async (email: string, matchName: string) => {
   `), 'match')
 }
 
-export const sendSafetyAlertEmail = async (email: string, opts: { scheduledAt: Date, locationHint?: string | null }) => {
-  await send(email, '🚨 Alerta de segurança — Between Us', wrap(`
-    <h2 style="font-size:20px;color:#F87171;margin:0 0 12px">🚨 Alguém que confia em ti não fez check-in</h2>
+// 9.7 — neutral microcopy: names the requester (so the contact knows who
+// asked), states plainly that the scheduled confirmation hasn't arrived,
+// and is explicit that Between Us is not an emergency service and does
+// not contact authorities on its own. Deliberately does NOT reveal what
+// kind of encounter this was, who else might be involved, or anything
+// about Between Us's nature as a dating platform beyond the brand name
+// already in the subject line — locationHint is included only because
+// the REQUESTER chose to share it for exactly this situation.
+export const sendSafetyAlertEmail = async (
+  email: string,
+  opts: { scheduledAt: Date, locationHint?: string | null, requesterName?: string }
+) => {
+  const name = opts.requesterName || 'Alguém que confia em ti'
+  await send(email, '💚 Notificação de segurança — Between Us', wrap(`
+    <h2 style="font-size:20px;color:#F87171;margin:0 0 12px">💚 Pedido de verificação de segurança</h2>
     <p style="color:#AAB6C2;line-height:1.6;margin:0 0 16px">
-      Foste indicado/a como contacto de confiança para um encontro agendado para
+      <strong style="color:#F5F7FA">${name}</strong> pediu-nos para te enviar esta notificação de segurança.
+      Não recebemos a confirmação agendada para
       <strong style="color:#F5F7FA">${opts.scheduledAt.toLocaleString('pt-PT')}</strong>${opts.locationHint ? ` em <strong style="color:#F5F7FA">${opts.locationHint}</strong>` : ''}.
-      Essa pessoa ainda não confirmou que está bem. Considera entrar em contacto com ela.
+      Considera entrar em contacto com essa pessoa.
+    </p>
+    <p style="color:#7E8FA3;line-height:1.6;font-size:12px;margin:0">
+      O Between Us não é um serviço de emergência e este email é gerado automaticamente.
+      Não contactamos as autoridades — se achares que é uma emergência real, contacta-as diretamente.
     </p>
   `), 'safety-alert')
 }

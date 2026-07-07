@@ -1,7 +1,7 @@
 import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
-import { requireAdmin, logAdminAction } from '../middleware/admin'
+import { requireAdmin, logAdminAction, roleHasPermission } from '../middleware/admin'
 import { recalculateRiskScore, recalculateAllRiskScores } from '../lib/riskScore'
 import { evaluateAndActivateUser, canTransitionStatus } from '../lib/userActivationService'
 import { forUser as getEligibility } from '../lib/eligibilityService'
@@ -9,6 +9,8 @@ import { mergePhotosForViewer, signMediaUrl } from '../lib/mediaAccessService'
 import { getKeyVersionStats, getActiveKeyVersion } from '../lib/contactHashService'
 import { runHardDeleteJob, findEligibleUsers } from '../lib/hardDeleteJob'
 import { signMediaUrl as signAvatarUrl } from '../lib/mediaAccessService'
+import { getReportEvidenceForModerator } from '../lib/reportEvidenceService'
+import { getLatestAssessment, computeAgreementStats, runModerationAssessment } from '../lib/moderationAssessmentService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -565,7 +567,12 @@ router.put('/photos/:id', requireAdmin('photos'), async (req: AuthRequest, res: 
   res.json({ ok: true, photo })
 })
 
-// ─── Reports ──────────────────────────────────────────────────────────────────
+// ─── Reports / Moderation Dashboard (9.12) ─────────────────────────────────────
+// 9.12 — queue, already sorted by priority desc / age asc (oldest of the
+// highest-priority reports first). Deliberately does NOT include evidence
+// here (9.2: "não incluir evidence em listagens comuns de admin") — only
+// a lightweight AI badge (hasAssessment + severity), never the full
+// ModerationAssessment.result blob.
 router.get('/reports', requireAdmin('reports'), async (req: AuthRequest, res: Response) => {
   const { limit = 20, offset = 0, status = 'PENDING' } = req.query
   const reports = await prisma.report.findMany({
@@ -578,7 +585,55 @@ router.get('/reports', requireAdmin('reports'), async (req: AuthRequest, res: Re
     }
   })
   const total = await prisma.report.count({ where: { status: status as any } })
-  res.json({ reports, total })
+
+  const assessments = await (prisma as any).moderationAssessment.findMany({
+    where: { reportId: { in: reports.map((r: any) => r.id) } },
+    orderBy: { createdAt: 'desc' }
+  })
+  const latestByReport = new Map<string, any>()
+  for (const a of assessments) if (!latestByReport.has(a.reportId)) latestByReport.set(a.reportId, a)
+
+  const withBadge = reports.map((r: any) => {
+    const a = latestByReport.get(r.id)
+    return { ...r, aiAssessment: a ? { severity: a.confidence, recommendedPriority: a.result?.recommendedPriority ?? null } : null }
+  })
+
+  res.json({ reports: withBadge, total })
+})
+
+// 9.2/9.12 — detail view: report + evidence (only if the caller has
+// moderation.evidence.view — SUPPORT can open this route via 'reports'
+// but gets evidence: null) + previous reports against the same target +
+// minimal account/profile context + latest AI summary. Never the full
+// account (9.12: "não mostrar tudo da conta sem permission").
+router.get('/reports/:id', requireAdmin('reports'), async (req: AuthRequest, res: Response) => {
+  const report = await prisma.report.findUnique({
+    where: { id: req.params.id },
+    include: {
+      reporter: { select: { id: true, email: true } },
+      reportedUser: { select: { id: true, email: true, status: true, riskScore: true, createdAt: true, profile: { select: { displayName: true, type: true, city: true } } } }
+    }
+  })
+  if (!report) return res.status(404).json({ error: 'Report não encontrado.' })
+
+  const canViewEvidence = roleHasPermission((req as any).adminRole || null, 'moderation.evidence.view')
+  const evidence = canViewEvidence ? await getReportEvidenceForModerator(report.id, req.userId!) : null
+
+  const previousReports = report.reportedUserId
+    ? await prisma.report.findMany({
+        where: { reportedUserId: report.reportedUserId, id: { not: report.id } },
+        select: { id: true, reason: true, status: true, priority: true, createdAt: true },
+        orderBy: { createdAt: 'desc' }, take: 10
+      })
+    : []
+
+  const aiAssessment = await getLatestAssessment(report.id)
+
+  res.json({
+    report, evidence, previousReports,
+    aiAssessment: aiAssessment ? { ...aiAssessment, result: aiAssessment.result } : null,
+    evidenceRestricted: !canViewEvidence,
+  })
 })
 
 router.put('/reports/:id', requireAdmin('reports'), async (req: AuthRequest, res: Response) => {
@@ -590,6 +645,21 @@ router.put('/reports/:id', requireAdmin('reports'), async (req: AuthRequest, res
   if (status === 'RESOLVED' && report.reportedUserId) await recalculateRiskScore(report.reportedUserId)
   await logAdminAction(req.userId!, `${status}_REPORT`, 'report', req.params.id, { internalNote: internalNotes, ipAddress: req.ip })
   res.json({ ok: true, report })
+})
+
+// 9.8 — manual re-run (e.g. after new evidence arrives, or the flag was
+// just turned on). No-ops cleanly if AI_MODERATION_ENABLED is off.
+router.post('/reports/:id/assess', requireAdmin('reports'), async (req: AuthRequest, res: Response) => {
+  const result = await runModerationAssessment(req.params.id)
+  if (!result.assessment) return res.status(200).json({ ok: true, assessment: null, reason: result.reason })
+  res.json({ ok: true, assessment: result.assessment })
+})
+
+// 9.11 — human-in-the-loop measurement: AI recommendation vs human
+// decision agreement rate, overrides, approximate false-positive count.
+router.get('/moderation/stats', requireAdmin('reports'), async (req: AuthRequest, res: Response) => {
+  const stats = await computeAgreementStats()
+  res.json({ stats, aiEnabled: process.env.AI_MODERATION_ENABLED === 'true' })
 })
 
 // ─── Verifications ────────────────────────────────────────────────────────────

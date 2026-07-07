@@ -75,6 +75,11 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
 })
 
 // POST /api/privacy/block/:profileId — block a profile
+// 9.3 — delegates entirely to BlockService, which now also handles
+// shared Private Rooms (safety-lock a 2-person room, or have the blocker
+// leave a 3+-person room) on top of what this route already did (the
+// ProfileAction row + ending any active match). The target is never
+// notified.
 router.post('/block/:profileId', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     // 7.11 — Safe Exit's "Block user/profile" action must work for a
@@ -84,39 +89,8 @@ router.post('/block/:profileId', requireAuth, async (req: AuthRequest, res: Resp
     const myProfile = myProfileId ? await prisma.profile.findUnique({ where: { id: myProfileId } }) : null
     if (!myProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
 
-    await prisma.profileAction.upsert({
-      where: {
-        actorProfileId_targetProfileId: {
-          actorProfileId: myProfile.id,
-          targetProfileId: req.params.profileId
-        }
-      },
-      update: { action: 'BLOCK' },
-      create: {
-        actorProfileId: myProfile.id,
-        targetProfileId: req.params.profileId,
-        action: 'BLOCK'
-      }
-    })
-
-    // 5.9 — End any active match via MatchStateMachine.transition() instead
-    // of a raw updateMany({status:'BLOCKED'}) - BLOCK is valid from every
-    // non-terminal state (matchStateMachine.ts), and MATCH_BLOCKED's domain
-    // event (5.10) revokes any standing private-photo access between the
-    // two profiles, which the old raw update never did.
-    const affectedMatches = await prisma.match.findMany({
-      where: {
-        OR: [
-          { profileOneId: myProfile.id, profileTwoId: req.params.profileId },
-          { profileOneId: req.params.profileId, profileTwoId: myProfile.id }
-        ]
-      },
-      select: { id: true }
-    })
-    if (affectedMatches.length > 0) {
-      const { transition } = await import('../lib/matchService')
-      await Promise.all(affectedMatches.map(m => transition(m.id, 'BLOCK').catch(() => {})))
-    }
+    const { blockProfile } = await import('../lib/blockService')
+    await blockProfile(myProfile.id, req.params.profileId)
 
     res.json({ ok: true })
   } catch (err: any) {

@@ -286,7 +286,10 @@ httpServer.listen(PORT, () => {
   console.log('[SERVER] Between Us API v2.5.0 — port', PORT)
   console.log('[SERVER] Environment:', process.env.NODE_ENV)
   if (isProd && !process.env.SMTP_PASS) console.warn('[WARN] SMTP_PASS not set — emails will not send')
-  import('./lib/safetyAlertCron').then(({ startSafetyAlertCron }) => startSafetyAlertCron())
+  // 9.6 — safetyAlertCron.ts's single combined "detect overdue + alert"
+  // step is replaced by three distinct jobs, each owning one
+  // SafetyCheckinStateMachine transition (request/overdue/escalation).
+  import('./jobs/safetyCheckinJobs').then(({ startSafetyCheckinJobs }) => startSafetyCheckinJobs())
   // 7.7 — was written (T8) but never actually scheduled anywhere; wiring
   // it in-process here, same pattern as safetyAlertCron above.
   import('./jobs/cleanupExpiredMessages').then(({ startRoomMessageCleanupCron }) => startRoomMessageCleanupCron())
