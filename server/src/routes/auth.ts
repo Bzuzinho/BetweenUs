@@ -8,6 +8,7 @@ import { generateTokens, verifyRefreshToken, verifyAccessToken } from '../utils/
 import { notifyAdmins } from '../lib/notify'
 import { evaluateAndActivateUser } from '../lib/userActivationService'
 import { getPendingReacceptance, recordReacceptance } from '../lib/legalDocumentService'
+import { signMediaUrl } from '../lib/mediaAccessService'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
@@ -223,8 +224,9 @@ router.get('/me', async (req: Request, res: Response) => {
     // up). Empty array = nothing to do, same shape either way so the client
     // doesn't need a separate "not applicable" branch.
     const pendingLegalReacceptance = await getPendingReacceptance(userId).catch(() => [])
+    const avatarPath = await signMediaUrl(user.avatarPath)
 
-    res.json({ ...user, pendingLegalReacceptance })
+    res.json({ ...user, avatarPath, pendingLegalReacceptance })
   } catch { res.status(401).json({ error: 'Token inválido.' }) }
 })
 
@@ -430,20 +432,27 @@ router.post('/avatar', avatarUpload.single('avatar'), async (req: Request, res: 
     const { userId } = verifyAccessToken(token)
     if (!req.file) return res.status(400).json({ error: 'Ficheiro obrigatório.' })
 
-    let avatarUrl: string | null = null
+    // 3.1 follow-up: avatars now go through the same private-storage path
+    // as profile photos/selfies — the bucket is private by definition, and
+    // "public" is a viewer-facing access level (see mediaAccessPolicy.ts),
+    // not an R2 ACL. avatarPath stores an object key; every read path signs
+    // it fresh (see GET /me below, admin.ts GET /users and GET /users/:id).
+    let avatarValue: string | null = null
     if (process.env.STORAGE_ENDPOINT) {
-      const { uploadFile } = await import('../lib/storage')
+      const { uploadPrivateFile } = await import('../lib/storage')
       const ext = req.file.originalname.split('.').pop() || 'jpg'
       const filename = `avatars/${userId}-${Date.now()}.${ext}`
-      const result = await uploadFile(req.file.buffer, filename, req.file.mimetype)
-      avatarUrl = result.url
+      const result = await uploadPrivateFile(req.file.buffer, filename, req.file.mimetype)
+      avatarValue = result.key
     } else {
-      // Dev: store as base64 data URL for testing
-      avatarUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
+      // Dev: store as base64 data URL for testing — signMediaUrl passes
+      // data: URIs through unchanged, same as it does for legacy public URLs.
+      avatarValue = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
     }
 
-    await prisma.user.update({ where: { id: userId }, data: { avatarPath: avatarUrl } })
-    res.json({ ok:true, avatarPath: avatarUrl })
+    await prisma.user.update({ where: { id: userId }, data: { avatarPath: avatarValue } })
+    const { signMediaUrl } = await import('../lib/mediaAccessService')
+    res.json({ ok:true, avatarPath: await signMediaUrl(avatarValue) })
   } catch (err: any) {
     console.error('[AVATAR]', err.message)
     res.status(500).json({ error: 'Erro ao fazer upload.' })

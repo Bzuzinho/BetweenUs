@@ -19,8 +19,11 @@ import { decideMediaAccessLevel, canAccessVerificationSelfie, type MediaAccessLe
 
 const DEFAULT_TTL_SECONDS = 300 // 5 minutes — long enough to load a page, short enough to limit link-sharing exposure
 
+// data: URIs show up as a dev-mode fallback (see auth.ts POST /avatar when
+// STORAGE_ENDPOINT isn't set) — must be treated as "already a usable URL",
+// same as a real https:// one, never as something to sign as an R2 key.
 export const isStorageKey = (value?: string | null): boolean =>
-  !!value && !/^https?:\/\//i.test(value)
+  !!value && !/^(https?:|data:)/i.test(value)
 
 // 3.6 — shared with the hard-delete job: turns any stored photo/selfie
 // value (legacy public URL OR post-Sprint-3 private key) into the plain R2

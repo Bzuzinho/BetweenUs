@@ -8,6 +8,7 @@ import { forUser as getEligibility } from '../lib/eligibilityService'
 import { mergePhotosForViewer, signMediaUrl } from '../lib/mediaAccessService'
 import { getKeyVersionStats, getActiveKeyVersion } from '../lib/contactHashService'
 import { runHardDeleteJob, findEligibleUsers } from '../lib/hardDeleteJob'
+import { signMediaUrl as signAvatarUrl } from '../lib/mediaAccessService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -115,7 +116,7 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
       where, take: Number(limit), skip: Number(offset),
       orderBy: sortByRisk === 'true' ? { riskScore: 'desc' } : { createdAt: 'desc' },
       select: {
-        id: true, email: true, status: true, adminRole: true,
+        id: true, email: true, status: true, adminRole: true, avatarPath: true,
         createdAt: true, lastSeenAt: true, riskScore: true,
         profile: { select: { id: true, displayName: true, type: true, city: true, status: true } },
         subscription: { select: { plan: true, status: true } },
@@ -125,7 +126,14 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
     }),
     prisma.user.count({ where })
   ])
-  res.json({ users, total })
+  // 3.1 follow-up: avatarPath is now a private storage key, not a public
+  // URL — sign it for the list view. (Was also never selected here before,
+  // so u.avatarPath in AdminPage.jsx's user list was always undefined —
+  // same class of dead-field bug as the discovery photos/score ones.)
+  const usersWithAvatars = await Promise.all(users.map(async u => ({
+    ...u, avatarPath: await signAvatarUrl((u as any).avatarPath)
+  })))
+  res.json({ users: usersWithAvatars, total })
 })
 
 // ─── User detail (customer support view) ─────────────────────────────────────
@@ -182,6 +190,7 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
       })
     }
   }
+  safeUser.avatarPath = await signAvatarUrl(safeUser.avatarPath)
   res.json({
     ...safeUser,
     referral: {
@@ -240,6 +249,7 @@ router.put('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
       data: updateData,
       select: { id: true, email: true, status: true, adminRole: true, accountName: true, nif: true, avatarPath: true, dateOfBirth: true }
     })
+    ;(updated as any).avatarPath = await signAvatarUrl(updated.avatarPath)
 
     await logAdminAction(req.userId!, 'EDIT_USER', 'user', req.params.id, {
       targetUserId: req.params.id,
