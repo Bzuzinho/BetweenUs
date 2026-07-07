@@ -297,6 +297,7 @@ model User {
   adminActionsReceived  AdminAction[]        @relation("AdminTarget")
   betaInvites          BetaInvite[]         @relation("InviteCreator")
   betaInviteUsed       BetaInvite?          @relation("InviteUser")
+  onboardingProgress   OnboardingProgress?
 
   @@map("users")
 }
@@ -379,6 +380,29 @@ model ProfileMember {
 
   @@unique([profileId, userId])
   @@map("profile_members")
+}
+
+// 4.10 — lets the Create Profile wizard survive a refresh/tab-close
+// without losing progress. Deliberately ONE per-user draft row holding a
+// JSON blob, not a normalized table per field: this is throwaway scratch
+// data that gets superseded the moment the real Profile is created, not
+// something any other part of the app needs to query or join against.
+// The wizard itself still lives entirely in CreateProfilePage.jsx as a
+// single "collect everything, then POST /profiles once" flow — this only
+// adds save/resume on top of that, not a step-by-step backend-driven flow
+// (the /onboarding/step and /onboarding/steps routes below predate the
+// current wizard, are not called by any frontend code, and are left as-is
+// rather than removed or repurposed in this sprint).
+model OnboardingProgress {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  step      Int      @default(1)
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("onboarding_progress")
 }
 
 model ProfilePhoto {

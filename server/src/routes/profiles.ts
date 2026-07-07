@@ -87,6 +87,32 @@ router.get('/onboarding/steps', requireAuth, async (req: AuthRequest, res: Respo
   res.json({ steps: [], currentStep: (profile as any)?.onboardingStep || 1 })
 })
 
+// 4.10 — save/resume for the Create Profile wizard (CreateProfilePage.jsx),
+// which collects everything client-side and only calls POST /profiles once
+// at the very end. Before this, closing the tab mid-wizard lost everything.
+// This does NOT change that "submit once" shape — it just persists a draft
+// blob alongside it so the wizard can prefill on return. Deliberately
+// separate from the /onboarding/step(s) routes above, which predate the
+// current wizard and aren't called by any frontend code.
+router.get('/onboarding/progress', requireAuth, async (req: AuthRequest, res: Response) => {
+  const existing = await prisma.profile.findUnique({ where: { userId: req.userId! } })
+  if (existing) return res.json({ progress: null, reason: 'PROFILE_ALREADY_EXISTS' })
+  const draft = await (prisma as any).onboardingProgress.findUnique({ where: { userId: req.userId! } })
+  res.json({ progress: draft ? { step: draft.step, data: draft.data } : null })
+})
+
+router.put('/onboarding/progress', requireAuth, async (req: AuthRequest, res: Response) => {
+  const { step, data } = req.body
+  if (typeof step !== 'number' || step < 1) return res.status(400).json({ error: 'Passo inválido.' })
+  if (data && typeof data !== 'object') return res.status(400).json({ error: 'Dados inválidos.' })
+  await (prisma as any).onboardingProgress.upsert({
+    where:  { userId: req.userId! },
+    update: { step, data: data || {} },
+    create: { userId: req.userId!, step, data: data || {} }
+  })
+  res.json({ ok: true })
+})
+
 // GET /api/profiles/me
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const profileId = await resolveMyProfileId(req.userId!)
@@ -197,6 +223,10 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     })
 
     if (data.intentions?.length) await upsertIntentions(profile.id, normaliseIntentions(data.intentions))
+    // 4.10 — the real Profile now exists, so the onboarding draft (if any)
+    // is done serving its purpose. Best-effort: a failure here shouldn't
+    // fail profile creation itself, it'd just leave one harmless stale row.
+    await (prisma as any).onboardingProgress.delete({ where: { userId: req.userId! } }).catch(() => {})
     res.status(201).json(profile)
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })

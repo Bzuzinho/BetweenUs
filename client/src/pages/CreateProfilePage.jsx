@@ -50,13 +50,35 @@ export default function CreateProfilePage() {
   const [catalogGenders, setCatalogGenders] = useState([])
   const [catalogOrientations, setCatalogOrientations] = useState([])
   const [boundaryPrefs, setBoundaryPrefs] = useState({}) // boundaryId -> YES|MAYBE|NO
+  // 4.10 — save/resume: true once the initial draft-load request has
+  // returned (whether or not a draft existed), so the save effect below
+  // never fires before it, which would otherwise overwrite a real draft
+  // with the initial empty form during the brief loading window.
+  const [draftLoaded, setDraftLoaded] = useState(false)
 
   useEffect(() => {
     api.get('/catalog/intentions').then(r => setCatalogIntentions(r.data.intentions || [])).catch(() => {})
     api.get('/catalog/boundaries').then(r => setCatalogBoundaries(r.data.boundaries || [])).catch(() => {})
     api.get('/catalog/genders').then(r => setCatalogGenders(r.data.genders || [])).catch(() => {})
     api.get('/catalog/orientations').then(r => setCatalogOrientations(r.data.orientations || [])).catch(() => {})
+    api.get('/profiles/onboarding/progress').then(r => {
+      const p = r.data.progress
+      if (p?.data) {
+        if (p.data.form) setForm(prev => ({ ...prev, ...p.data.form }))
+        if (p.data.boundaryPrefs) setBoundaryPrefs(p.data.boundaryPrefs)
+        if (p.step) setStep(p.step)
+      }
+    }).catch(() => {}).finally(() => setDraftLoaded(true))
   }, [])
+
+  // 4.10 — persist step+form+boundaryPrefs on every step change (not on
+  // every keystroke — this only depends on `step`) so closing the tab
+  // mid-wizard doesn't lose progress. Best-effort: a failed save shouldn't
+  // block the wizard itself.
+  useEffect(() => {
+    if (!draftLoaded) return
+    api.put('/profiles/onboarding/progress', { step, data: { form, boundaryPrefs } }).catch(() => {})
+  }, [step, draftLoaded])
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const setBoundaryPref = (boundaryId, pref) => setBoundaryPrefs(p => ({ ...p, [boundaryId]: pref }))
