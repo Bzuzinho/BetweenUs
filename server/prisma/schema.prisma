@@ -50,6 +50,30 @@ enum ProfileStatus {
   SUSPENDED
 }
 
+// 4.5 — Sprint 4 evaluated migrating this to a data-driven catalog table
+// (like Gender/Orientation/Intention/Boundary) and decided AGAINST it for
+// now:
+//   - Unlike gender/orientation, relationship status genuinely drives
+//     behavior today (discovery.ts calcScore's compatMap keys off these
+//     exact enum values). A data-driven catalog would need that
+//     compatibility matrix to also become data-driven to avoid the
+//     classic trap of "admin renames a row, matching logic silently
+//     breaks" — a bigger change than a label-editing catalog.
+//   - The spec's own caution applies directly: "não introduzir
+//     complexidade sem impacto claro no produto." Admin being able to
+//     edit a label/description/sortOrder here has real but modest value;
+//     it doesn't yet justify decoupling the compatibility logic from the
+//     enum.
+// Also evaluated adding OPEN_RELATIONSHIP, HIERARCHICAL_POLY,
+// NON_HIERARCHICAL_POLY, SOLO_POLY as new values. Not added: OPEN already
+// exists and overlaps OPEN_RELATIONSHIP conceptually, and the poly
+// variants are a "relationship model" distinction (how poly, structurally)
+// layered on top of "relationship status" (single/committed/married/etc)
+// — conflating the two into one flat enum is exactly what the spec asks
+// to avoid ("separar relationship status de relationship model"). The
+// clean way to add poly-structure detail is a SEPARATE field/catalog, not
+// more enum values here — deferred until there's a concrete product need
+// for it, per the same anti-complexity caution above.
 enum RelationshipStatus {
   SINGLE
   COMMITTED
@@ -381,6 +405,14 @@ model Intention {
   slug        String             @unique
   description String?
   category    String?            // Sprint 2.5.7 — optional grouping for admin catalog UI
+  sensitive   Boolean            @default(false) // 4.6 — mirrors Boundary.sensitive; not shown as bluntly in UI copy
+  // 4.6 — some intentions are two sides of the same interaction across
+  // profile types (a couple's "seek a third person" and an individual's
+  // "open to couples seeking me" are the same real-world thing from two
+  // perspectives). Points at the OTHER intention's slug, not a hard FK —
+  // this is compatibility metadata for IntentionCompatibilityService, not
+  // a structural relationship the rest of the schema needs to enforce.
+  complementarySlug String?
   sortOrder   Int                @default(0)
   active      Boolean            @default(true)
   profiles    ProfileIntention[]
@@ -400,6 +432,20 @@ model ProfileIntention {
   @@map("profile_intentions")
 }
 
+// 4.7 — before this, isHardBoundary was a blanket rule: any hard boundary
+// where A=NO/B=YES excluded the pair, applied identically to every hard
+// boundary regardless of what it actually means. That's fine for
+// "no_couples" (a genuine mutual-alignment conflict) but wrong for
+// something like a hypothetical "show my face before match" boundary,
+// which is the profile's OWN visibility preference, not a claim about
+// what the other person must be OK with — it should never exclude anyone.
+// ruleType lets BoundaryCompatibilityService tell those apart.
+enum BoundaryRuleType {
+  MUTUAL_ALIGNMENT          // A and B must not directly contradict (A=NO + B=YES on the same slug, either direction)
+  REQUIRE_TARGET_ACCEPTANCE // A's YES only "counts" if B hasn't explicitly said NO; B being neutral (unset/MAYBE) is not a block
+  PERSONAL_PREFERENCE       // informational about the profile itself — never excludes anyone
+}
+
 model Boundary {
   id             String            @id @default(uuid())
   name           String
@@ -407,6 +453,12 @@ model Boundary {
   category       String
   description    String?
   isHardBoundary Boolean           @default(false) // Sprint 2.5.8 — hard conflicts should exclude from discovery
+  // 4.7 — only meaningful when isHardBoundary=true. Defaults to
+  // MUTUAL_ALIGNMENT (the only behavior that existed before this field),
+  // so any existing or future hard boundary that doesn't explicitly set
+  // this keeps behaving exactly as before rather than silently losing its
+  // exclusion power.
+  ruleType       BoundaryRuleType  @default(MUTUAL_ALIGNMENT)
   sensitive      Boolean           @default(false) // Sprint 2.5.8 — not exposed directly in UI
   sortOrder      Int               @default(0)
   active         Boolean           @default(true)

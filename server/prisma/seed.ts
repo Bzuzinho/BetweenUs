@@ -5,27 +5,33 @@ const prisma = new PrismaClient()
 async function main() {
   console.log('Seeding intentions...')
 
+  // 4.6 — category values are a fixed reference set (CONNECTION_TYPE,
+  // RELATIONSHIP_MODEL, EXPERIENCE, COMMUNICATION, EMOTIONAL), same
+  // free-string-but-conventionally-fixed pattern Boundary.category already
+  // uses. complementarySlug links seek_couple <-> seek_third — an
+  // individual open to couples and a couple seeking a third are the same
+  // real-world interaction from each side; see IntentionCompatibilityService.
   const intentions = [
-    { slug: 'casual_encounter',     name: 'Encontro casual',            description: 'Encontro pontual sem compromisso' },
-    { slug: 'recurring_connection', name: 'Ligação recorrente',         description: 'Encontros regulares ao longo do tempo' },
-    { slug: 'trio_experience',      name: 'Experiência a três',         description: 'Experiência entre três pessoas' },
-    { slug: 'swing',                name: 'Swing',                      description: 'Troca de parceiros entre casais' },
-    { slug: 'polyamory',            name: 'Poliamor',                   description: 'Relações múltiplas consensuais' },
-    { slug: 'online_only',          name: 'Apenas online',              description: 'Ligação exclusivamente digital' },
-    { slug: 'friends_with_benefits',name: 'Amizade colorida',           description: 'Amizade com componente íntima' },
-    { slug: 'fetish_exploration',   name: 'Explorar fetiches',          description: 'Exploração de interesses específicos' },
-    { slug: 'seek_couple',          name: 'Procurar casal',             description: 'Solteiro/a interessado/a em casal' },
-    { slug: 'seek_third',           name: 'Procurar terceira pessoa',   description: 'Casal à procura de terceira pessoa' },
-    { slug: 'conversation_only',    name: 'Apenas conversa',            description: 'Conversa discreta sem encontro' },
-    { slug: 'open_relationship',    name: 'Relação aberta',             description: 'Pessoa em relação aberta' },
-    { slug: 'still_exploring',      name: 'Ainda a descobrir',          description: 'Sem certeza do que procuro' },
+    { slug: 'casual_encounter',     name: 'Encontro casual',            description: 'Encontro pontual sem compromisso',       category: 'EXPERIENCE' },
+    { slug: 'recurring_connection', name: 'Ligação recorrente',         description: 'Encontros regulares ao longo do tempo',  category: 'RELATIONSHIP_MODEL' },
+    { slug: 'trio_experience',      name: 'Experiência a três',         description: 'Experiência entre três pessoas',         category: 'EXPERIENCE', sensitive: true },
+    { slug: 'swing',                name: 'Swing',                      description: 'Troca de parceiros entre casais',        category: 'EXPERIENCE', sensitive: true },
+    { slug: 'polyamory',            name: 'Poliamor',                   description: 'Relações múltiplas consensuais',         category: 'RELATIONSHIP_MODEL' },
+    { slug: 'online_only',          name: 'Apenas online',              description: 'Ligação exclusivamente digital',         category: 'COMMUNICATION' },
+    { slug: 'friends_with_benefits',name: 'Amizade colorida',           description: 'Amizade com componente íntima',          category: 'RELATIONSHIP_MODEL' },
+    { slug: 'fetish_exploration',   name: 'Explorar fetiches',          description: 'Exploração de interesses específicos',   category: 'EXPERIENCE', sensitive: true },
+    { slug: 'seek_couple',          name: 'Procurar casal',             description: 'Solteiro/a interessado/a em casal',      category: 'CONNECTION_TYPE', complementarySlug: 'seek_third' },
+    { slug: 'seek_third',           name: 'Procurar terceira pessoa',   description: 'Casal à procura de terceira pessoa',     category: 'CONNECTION_TYPE', complementarySlug: 'seek_couple' },
+    { slug: 'conversation_only',    name: 'Apenas conversa',            description: 'Conversa discreta sem encontro',         category: 'COMMUNICATION' },
+    { slug: 'open_relationship',    name: 'Relação aberta',             description: 'Pessoa em relação aberta',               category: 'RELATIONSHIP_MODEL' },
+    { slug: 'still_exploring',      name: 'Ainda a descobrir',          description: 'Sem certeza do que procuro',             category: 'EMOTIONAL' },
   ]
 
   for (const [index, intention] of intentions.entries()) {
     await prisma.intention.upsert({
       where: { slug: intention.slug },
-      update: { name: intention.name, description: intention.description },
-      create: { slug: intention.slug, name: intention.name, description: intention.description, sortOrder: index, active: true },
+      update: { name: intention.name, description: intention.description, category: intention.category, sensitive: !!intention.sensitive, complementarySlug: (intention as any).complementarySlug || null },
+      create: { slug: intention.slug, name: intention.name, description: intention.description, category: intention.category, sensitive: !!intention.sensitive, complementarySlug: (intention as any).complementarySlug || null, sortOrder: index, active: true },
     })
   }
   console.log(`Seeded ${intentions.length} intentions`)

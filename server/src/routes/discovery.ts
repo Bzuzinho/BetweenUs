@@ -4,6 +4,8 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { notifyUser, notifyAdmins } from '../lib/notify'
 import { signMediaUrl } from '../lib/mediaAccessService'
 import { getVerificationBadges } from '../lib/verificationBadges'
+import { evaluateIntentionCompatibility, type ProfileIntentionInput } from '../lib/intentionCompatibilityService'
+import { evaluateBoundaryCompatibility, type ProfileBoundaryInput } from '../lib/boundaryCompatibilityService'
 
 const router = Router()
 
@@ -11,23 +13,19 @@ const router = Router()
 const calcScore = (viewer: any, target: any): number => {
   let score = 0
 
-  // Intentions overlap (30%)
-  const vIntents = new Set(viewer.intentions?.map((i: any) => i.intention?.slug))
-  const tIntents = new Set(target.intentions?.map((i: any) => i.intention?.slug))
-  const overlap  = [...vIntents].filter(i => tIntents.has(i)).length
-  if (overlap > 0) score += Math.min(30, overlap * 10)
+  // Intentions overlap (30%) — 4.6: routed through
+  // IntentionCompatibilityService so direct AND complementary matches
+  // (couple seek_third <-> individual seek_couple) both count, not just
+  // literal same-slug overlap.
+  const intentionResult = evaluateIntentionCompatibility(toIntentionInputs(viewer), toIntentionInputs(target))
+  if (intentionResult.matches.length > 0) score += Math.min(30, intentionResult.matches.length * 10)
 
-  // No hard boundary conflict (25%)
-  // Sprint 2.5 audit: this compared lowercase 'no'/'yes' against the actual
-  // enum values ('NO'/'YES'/'MAYBE') — always empty sets, so this 25% bonus
-  // was unconditionally awarded to every pair regardless of real conflicts.
-  // Same class of bug as the ActionType 'like' vs 'LIKE' casing fix noted in
-  // the project history. Fixed casing here; see hasHardBoundaryConflict()
-  // below for the isHardBoundary exclusion (separate from scoring).
-  const vNos = new Set(viewer.boundaries?.filter((b: any) => b.preference === 'NO').map((b: any) => b.boundary?.slug))
-  const tYes = new Set(target.boundaries?.filter((b: any) => b.preference === 'YES').map((b: any) => b.boundary?.slug))
-  const conflicts = [...tYes].filter(s => vNos.has(s)).length
-  if (conflicts === 0) score += 25
+  // No hard boundary conflict (25%) — 4.7: routed through
+  // BoundaryCompatibilityService instead of a standalone NO/YES set
+  // comparison, so the score and the exclusion check (below, in the
+  // eligible filter) agree on what counts as a conflict.
+  const boundaryResult = evaluateBoundaryCompatibility(toBoundaryInputs(viewer), toBoundaryInputs(target))
+  if (boundaryResult.compatible) score += 25
 
   // Relationship status compatible (15%)
   const compatMap: Record<string, string[]> = {
@@ -57,19 +55,32 @@ const calcScore = (viewer: any, target: any): number => {
   return Math.min(100, score)
 }
 
-// A hard boundary conflict (same slug, viewer=NO / target=YES, AND that
-// boundary is flagged isHardBoundary) should exclude the profile from
-// discovery entirely — not just lower its score. Matches the original product
-// spec example: couple seeking a third person + single person marked
-// 'no_couples' → the couple must not appear to them at all.
-const hasHardBoundaryConflict = (viewer: any, target: any): boolean => {
-  const vNos = new Set(
-    (viewer.boundaries || []).filter((b: any) => b.preference === 'NO').map((b: any) => b.boundary?.slug)
-  )
-  return (target.boundaries || []).some((b: any) =>
-    b.preference === 'YES' && b.boundary?.isHardBoundary && vNos.has(b.boundary?.slug)
-  )
-}
+// 4.6: shared helper — Profile.intentions include shape ({ preference,
+// intention: { slug, complementarySlug } }) flattened to what the service
+// expects, in both directions (viewer as A, target as B, and vice versa).
+const toIntentionInputs = (profile: any): ProfileIntentionInput[] =>
+  (profile.intentions || []).map((pi: any) => ({
+    slug: pi.intention?.slug,
+    preference: pi.preference,
+    complementarySlug: pi.intention?.complementarySlug || null
+  })).filter((i: ProfileIntentionInput) => !!i.slug)
+
+// 4.7: same flattening for boundaries — Profile.boundaries include shape
+// ({ preference, boundary: { slug, isHardBoundary, ruleType } }).
+const toBoundaryInputs = (profile: any): ProfileBoundaryInput[] =>
+  (profile.boundaries || []).map((pb: any) => ({
+    slug: pb.boundary?.slug,
+    preference: pb.preference,
+    isHardBoundary: !!pb.boundary?.isHardBoundary,
+    ruleType: pb.boundary?.ruleType || 'MUTUAL_ALIGNMENT'
+  })).filter((b: ProfileBoundaryInput) => !!b.slug)
+
+// 4.7: replaces the old standalone hasHardBoundaryConflict — now delegates
+// to BoundaryCompatibilityService so scoring and exclusion use the exact
+// same rule-type-aware logic instead of two separately-maintained checks.
+const hasHardBoundaryConflict = (viewer: any, target: any): boolean =>
+  !evaluateBoundaryCompatibility(toBoundaryInputs(viewer), toBoundaryInputs(target)).compatible ||
+  !evaluateBoundaryCompatibility(toBoundaryInputs(target), toBoundaryInputs(viewer)).compatible
 
 // GET /api/discovery — all profiles ordered by score
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -139,6 +150,11 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       if (p.privacySettings && p.privacySettings.visibleInDiscovery === false) return false
       if (p.privacySettings?.invisibleMode) return false
       if (hasHardBoundaryConflict(viewerProfile, p)) return false
+      // 4.6: an explicit intention conflict (either direction) excludes
+      // entirely, same treatment as a hard boundary conflict — spec
+      // example: couple YES seek_third, individual explicit NO seek_couple.
+      if (!evaluateIntentionCompatibility(toIntentionInputs(viewerProfile), toIntentionInputs(p)).compatible) return false
+      if (!evaluateIntentionCompatibility(toIntentionInputs(p), toIntentionInputs(viewerProfile)).compatible) return false
       return true
     })
 
