@@ -8,6 +8,7 @@ import { Server } from 'socket.io'
 import { rateLimit } from 'express-rate-limit'
 import dotenv from 'dotenv'
 import { initSentry, Sentry } from './lib/sentry'
+import { verifyAccessToken } from './utils/jwt'
 
 dotenv.config()
 
@@ -177,12 +178,89 @@ app.use('/api/legal',          legalRouter)
 app.use('/api/private-interests', privateInterestsRouter)
 app.use('/api/agreements',    agreementsRouter)
 
+// 7.8 — Socket.IO authentication. The Sprint 7 audit found NO auth at all
+// on the connection handshake: any socket (authenticated HTTP session or
+// not) could join_room for any roomId just by guessing/knowing the id,
+// since join_room did zero membership checks. Every connection now must
+// present a valid access token (same JWT requireAuth already verifies)
+// during the handshake, or the connection is rejected outright — socket.
+// data.userId is then the ONLY source of truth for "who is this socket",
+// exactly like req.userId is for HTTP. No event handler below ever reads
+// a userId/senderUserId out of the payload the client sent.
+io.use((socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token || (socket.handshake.headers.authorization || '').replace(/^Bearer /, '')
+    if (!token) return next(new Error('Unauthorized'))
+    const payload = verifyAccessToken(token)
+    ;(socket.data as any).userId = payload.userId
+    next()
+  } catch {
+    next(new Error('Unauthorized'))
+  }
+})
+
 io.on('connection', socket => {
+  const userId = (socket.data as any).userId as string
+
+  // ── Conversation (unchanged scope this sprint — Sprint 7 is about
+  // Private Room; Conversation keeps its existing simple behavior, now at
+  // least benefiting from the connection-level auth above) ──
   socket.on('join_conversation',  (id: string) => socket.join('conversation:' + id))
   socket.on('leave_conversation', (id: string) => socket.leave('conversation:' + id))
   socket.on('typing', (data: any) => socket.to('conversation:' + data.conversationId).emit('typing', data))
-  socket.on('join_room',  (id: string) => socket.join('room:' + id))
-  socket.on('leave_room', (id: string) => socket.leave('room:' + id))
+
+  // ── Private Room (7.8) — every handler re-validates membership through
+  // RoomAuthorizationService on every call, not just at join time (a
+  // member could be removed mid-session; socket.io rooms don't know that
+  // on their own). ──
+  socket.on('room:join', async (roomId: string) => {
+    const { resolveRoomMembership } = await import('./lib/roomAuthorizationService')
+    const auth = await resolveRoomMembership(roomId, userId)
+    if (!auth.ok) return socket.emit('room:error', { roomId, error: auth.reason })
+    socket.join('room:' + roomId)
+  })
+
+  socket.on('room:leave', (roomId: string) => socket.leave('room:' + roomId))
+
+  socket.on('message:send', async (payload: { roomId: string; body?: string; messageType?: string; mediaId?: string; ttl?: string }) => {
+    const { sendRoomMessage } = await import('./lib/roomMessageService')
+    const result = await sendRoomMessage(payload.roomId, userId, payload)
+    if (!result.ok) return socket.emit('room:error', { roomId: payload.roomId, error: result.error })
+    io.to('room:' + payload.roomId).emit('message:created', result.message)
+  })
+
+  socket.on('message:delete', async (payload: { roomId: string; messageId: string }) => {
+    const { deleteRoomMessage } = await import('./lib/roomMessageService')
+    const result = await deleteRoomMessage(payload.roomId, payload.messageId, userId)
+    if (!result.ok) return socket.emit('room:error', { roomId: payload.roomId, error: result.error })
+    io.to('room:' + payload.roomId).emit('message:delete', { messageId: payload.messageId })
+  })
+
+  socket.on('typing:start', async (roomId: string) => {
+    const { resolveRoomMembership } = await import('./lib/roomAuthorizationService')
+    const auth = await resolveRoomMembership(roomId, userId)
+    if (!auth.ok) return
+    socket.to('room:' + roomId).emit('typing:start', { roomId, userId })
+  })
+  socket.on('typing:stop', async (roomId: string) => {
+    const { resolveRoomMembership } = await import('./lib/roomAuthorizationService')
+    const auth = await resolveRoomMembership(roomId, userId)
+    if (!auth.ok) return
+    socket.to('room:' + roomId).emit('typing:stop', { roomId, userId })
+  })
+
+  socket.on('rules:approval', async (payload: { roomId: string; action: 'accept' | 'revoke' }) => {
+    const { acceptRuleSet, revokeRuleAcceptance } = await import('./lib/roomRuleService')
+    const { resolveRoomMembership } = await import('./lib/roomAuthorizationService')
+    const auth = await resolveRoomMembership(payload.roomId, userId)
+    if (!auth.ok) return socket.emit('room:error', { roomId: payload.roomId, error: auth.reason })
+    const result = payload.action === 'revoke'
+      ? await revokeRuleAcceptance(payload.roomId, userId)
+      : await acceptRuleSet(payload.roomId, userId)
+    if (!result.ok) return socket.emit('room:error', { roomId: payload.roomId, error: result.error })
+    io.to('room:' + payload.roomId).emit('consent:updated', { roomId: payload.roomId, roomStatus: result.roomStatus })
+    if (result.roomStatus === 'ACTIVE') io.to('room:' + payload.roomId).emit('room:status', { roomId: payload.roomId, status: 'ACTIVE' })
+  })
 })
 
 // 3.8: explicit JSON 404 instead of Express's default text/html fallback
@@ -205,6 +283,9 @@ httpServer.listen(PORT, () => {
   console.log('[SERVER] Environment:', process.env.NODE_ENV)
   if (isProd && !process.env.SMTP_PASS) console.warn('[WARN] SMTP_PASS not set — emails will not send')
   import('./lib/safetyAlertCron').then(({ startSafetyAlertCron }) => startSafetyAlertCron())
+  // 7.7 — was written (T8) but never actually scheduled anywhere; wiring
+  // it in-process here, same pattern as safetyAlertCron above.
+  import('./jobs/cleanupExpiredMessages').then(({ startRoomMessageCleanupCron }) => startRoomMessageCleanupCron())
 })
 
 export default app

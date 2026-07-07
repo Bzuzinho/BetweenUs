@@ -161,6 +161,11 @@ enum MessageType {
   SYSTEM
   CONSENT_REQUEST
   PHOTO_UNLOCK_REQUEST
+  // 7.6 — added for RoomMessage's richer message vocabulary. Also valid on
+  // Conversation's Message (shared enum) though no current code path there
+  // produces them.
+  RULE_UPDATE
+  SAFETY
 }
 
 enum ConversationType {
@@ -313,6 +318,7 @@ model User {
   onboardingProgress   OnboardingProgress?
   travelModeApprovals  TravelModeApproval[]
   photoAccessApprovals PhotoAccessApproval[]
+  roomRuleApprovals    RoomRuleApproval[]
 
   // 5.11 — discovery's candidate query joins on user.status (and
   // effectively adminRole via a null check) for every request.
@@ -778,47 +784,196 @@ model Message {
   @@map("messages")
 }
 
+// 7.2 — replaces the old free-string roomType. INDIVIDUAL_PAIR/COUPLE_SINGLE/
+// COUPLE_COUPLE/POLY_GROUP are composition-based (derived from the actual
+// participants), CUSTOM is the fallback for standalone rooms created by a
+// user picking a vibe/label rather than rooms derived from a match. Old
+// string values (TRIO, SWING_GROUP, POLYAMORY, COUPLE_PLUS_ONE,
+// COUPLE_PLUS_COUPLE) are backfilled per-row from actual membership by the
+// 7.2 migration script, not a blind string map — see
+// scripts/migratePrivateRoomEnums.ts.
+enum PrivateRoomType {
+  INDIVIDUAL_PAIR
+  COUPLE_SINGLE
+  COUPLE_COUPLE
+  POLY_GROUP
+  CUSTOM
+}
+
+// 7.3 — see PrivateRoomStateMachine for the transition table. DRAFT: just
+// created, no active rule set yet. WAITING_CONSENT: a rule set version
+// exists but not everyone has accepted it — new messages are blocked.
+// ACTIVE: everyone has accepted the current rule set. PAUSED: manually
+// paused by a member. CLOSED: terminal, room archived. SAFETY_LOCKED: an
+// admin/safety action froze the room (distinct from CLOSED — reversible
+// via UNLOCK, and distinct from a member-initiated PAUSE).
+enum PrivateRoomStatus {
+  DRAFT
+  WAITING_CONSENT
+  ACTIVE
+  PAUSED
+  CLOSED
+  SAFETY_LOCKED
+}
+
+// 7.5 — OWNER: creator of a standalone room (POST /rooms); match-derived
+// rooms (PrivateRoomService.createFromMatch) deliberately assign no OWNER
+// — the room is peer-symmetric, no single participant should have
+// unilateral control over a room born from a match between equals.
+// MODERATOR_SYSTEM: reserved for a future system/admin moderation
+// presence in the room; never assigned to a normal member automatically
+// (explicit spec requirement — "Não dar permissões de moderação de
+// conteúdo a owner normal").
+enum RoomMemberRole {
+  OWNER
+  MEMBER
+  MODERATOR_SYSTEM
+}
+
+// 7.5 — separate from role. The old code overloaded role itself with an
+// 'invited' string value (no role yet, just a placeholder) which doesn't
+// fit a real RoomMemberRole enum - INVITED members have no role opinion
+// yet. Mirrors ProfileMember's own status/isCreator separation.
+enum RoomMemberStatus {
+  INVITED
+  ACCEPTED
+}
+
+// 7.7 — the room-level default applied to new messages that don't specify
+// their own expiresAt. Purely a convenience TTL preset, not a security
+// boundary - see the cleanup job's own comment on why this must never be
+// marketed as screenshot protection.
+enum MessageTtlPreset {
+  NONE
+  ONE_HOUR
+  ONE_DAY
+  SEVEN_DAYS
+}
+
+// 7.4 — DRAFT: being assembled, not yet requiring consent. ACTIVE: the
+// room's current live rule set (at most one per room at a time).
+// SUPERSEDED: replaced by a newer version once every member re-accepts.
+enum RoomRuleSetStatus {
+  DRAFT
+  ACTIVE
+  SUPERSEDED
+}
+
 model PrivateRoom {
   id          String              @id @default(uuid())
   matchId     String?             @unique   // optional — rooms can exist without a match
   match       Match?              @relation(fields: [matchId], references: [id], onDelete: Cascade)
   title       String?
-  roomType    String              @default("CUSTOM")
+  roomType    PrivateRoomType     @default(CUSTOM)
   description String?
+  // 7.4 — kept temporarily for read-compat with any client still rendering
+  // the old flat list; RoomRuleSet/RoomRule are now the source of truth.
+  // Not written to by any Sprint 7 code path.
   rules       String[]
-  status      String              @default("ACTIVE")
+  status      PrivateRoomStatus   @default(DRAFT)
+  defaultMessageTtl MessageTtlPreset @default(NONE)
+  closedAt        DateTime?
+  safetyLockedAt  DateTime?
   createdAt   DateTime            @default(now())
   members     PrivateRoomMember[]
   messages    RoomMessage[]
+  ruleSets    RoomRuleSet[]
 
   @@map("private_rooms")
 }
 
+// 7.6 — RoomMessage V2: body is now optional (IMAGE/SYSTEM messages carry
+// no text), messageType classifies the message, mediaId points at a
+// private storage key (photos flow through the same signed-URL access
+// pattern as ProfilePhoto — see mediaAccessService), expiresAt/readAt
+// mirror Message's already-existing fields on Conversation so the same
+// cleanup job can treat both uniformly.
 model RoomMessage {
-  id          String      @id @default(uuid())
-  roomId      String
-  room        PrivateRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  id           String          @id @default(uuid())
+  roomId       String
+  room         PrivateRoom     @relation(fields: [roomId], references: [id], onDelete: Cascade)
   senderUserId String
-  sender      User        @relation("RoomMessageSender", fields: [senderUserId], references: [id])
-  body        String
-  createdAt   DateTime    @default(now())
-  deletedAt   DateTime?
+  sender       User            @relation("RoomMessageSender", fields: [senderUserId], references: [id])
+  body         String?
+  messageType  MessageType     @default(TEXT)
+  mediaId      String?
+  expiresAt    DateTime?
+  readAt       DateTime?
+  createdAt    DateTime        @default(now())
+  deletedAt    DateTime?
 
+  @@index([roomId, createdAt])
   @@map("room_messages")
 }
 
 model PrivateRoomMember {
-  id            String      @id @default(uuid())
+  id            String           @id @default(uuid())
   privateRoomId String
-  privateRoom   PrivateRoom @relation(fields: [privateRoomId], references: [id], onDelete: Cascade)
+  privateRoom   PrivateRoom      @relation(fields: [privateRoomId], references: [id], onDelete: Cascade)
   userId        String
-  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role          String      @default("member")
-  joinedAt      DateTime    @default(now())
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role          RoomMemberRole   @default(MEMBER)
+  status        RoomMemberStatus @default(ACCEPTED)
+  joinedAt      DateTime         @default(now())
   leftAt        DateTime?
 
   @@unique([privateRoomId, userId])
   @@map("private_room_members")
+}
+
+// 7.4 — a versioned, room-wide rule set. At most one ACTIVE per room;
+// creating a new version (material rule change) moves the prior ACTIVE
+// set to SUPERSEDED and the room to WAITING_CONSENT until every active
+// member re-accepts the new version (see roomRuleService.ts).
+model RoomRuleSet {
+  id              String            @id @default(uuid())
+  roomId          String
+  room            PrivateRoom       @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  version         Int
+  status          RoomRuleSetStatus @default(DRAFT)
+  createdByUserId String
+  createdAt       DateTime          @default(now())
+  activatedAt     DateTime?
+  rules           RoomRule[]
+  approvals       RoomRuleApproval[]
+
+  @@unique([roomId, version])
+  @@map("room_rule_sets")
+}
+
+// ruleType is a free-string category (same conventionally-fixed-but-not-
+// enum-enforced pattern as Boundary.category) — e.g. CONSENT, PRIVACY,
+// COMMUNICATION, MEETING, SAFETY — so new categories don't need a schema
+// change.
+model RoomRule {
+  id        String      @id @default(uuid())
+  ruleSetId String
+  ruleSet   RoomRuleSet @relation(fields: [ruleSetId], references: [id], onDelete: Cascade)
+  ruleType  String
+  label     String
+  value     String?
+  sortOrder Int         @default(0)
+
+  @@map("room_rules")
+}
+
+// One row per (ruleSet, member) who has weighed in. Keyed directly on
+// userId (not profileMemberId) — PrivateRoomMember itself is already
+// user-level, not profile-member-level (a couple's two members already
+// show up as two separate PrivateRoomMember rows once a room is created
+// from a match), so there's no extra indirection needed here.
+model RoomRuleApproval {
+  id         String      @id @default(uuid())
+  ruleSetId  String
+  ruleSet    RoomRuleSet @relation(fields: [ruleSetId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  acceptedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime    @default(now())
+
+  @@unique([ruleSetId, userId])
+  @@map("room_rule_approvals")
 }
 
 model ConsentCheck {
