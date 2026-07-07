@@ -290,6 +290,8 @@ httpServer.listen(PORT, () => {
   // 7.7 — was written (T8) but never actually scheduled anywhere; wiring
   // it in-process here, same pattern as safetyAlertCron above.
   import('./jobs/cleanupExpiredMessages').then(({ startRoomMessageCleanupCron }) => startRoomMessageCleanupCron())
+  // 8.6 — same in-process interval pattern, expires overdue ConsentCheck rows.
+  import('./jobs/expireConsentChecks').then(({ startExpireConsentChecksCron }) => startExpireConsentChecksCron())
 })
 
 export default app

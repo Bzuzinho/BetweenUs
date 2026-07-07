@@ -250,6 +250,9 @@ enum NotificationMode {
   SILENT
 }
 
+// 8.3 — ConsentCheck.status stays a CACHED aggregate, recomputed by
+// consentCheckService from ConsentCheckResponse rows. It is never written
+// directly from a route in response to one person's answer — see 8.2/8.3.
 enum ConsentCheckStatus {
   PENDING
   ACCEPTED
@@ -266,6 +269,27 @@ enum ConsentCheckPhase {
   VIDEO_CALL
   MEETING_PROPOSAL
   SAFETY_CHECKIN
+}
+
+// 8.2 — per-responder answer to a ConsentCheck. NOT_YET is an explicit,
+// distinct answer ("not ready yet") — it must never be treated as
+// ACCEPTED, and it is distinct from PENDING (no answer at all/silence).
+// REVOKED is only reachable from ACCEPTED (see consentCheckService).
+enum ConsentResponseStatus {
+  PENDING
+  ACCEPTED
+  NOT_YET
+  DECLINED
+  REVOKED
+}
+
+// 8.10 — mirrors RoomRuleSet's DRAFT/ACTIVE/SUPERSEDED-style version
+// lifecycle: at most one ACTIVE IntentAlignment per room at a time.
+enum IntentAlignmentStatus {
+  DRAFT
+  WAITING_APPROVAL
+  ACTIVE
+  ARCHIVED
 }
 
 enum PhotoAccessStatus {
@@ -319,6 +343,8 @@ model User {
   travelModeApprovals  TravelModeApproval[]
   photoAccessApprovals PhotoAccessApproval[]
   roomRuleApprovals    RoomRuleApproval[]
+  consentCheckResponses ConsentCheckResponse[]
+  intentAlignmentApprovals IntentAlignmentApproval[]
 
   // 5.11 — discovery's candidate query joins on user.status (and
   // effectively adminRole via a null check) for every request.
@@ -363,7 +389,6 @@ model Profile {
   matchesAsTwo     Match[]           @relation("MatchProfileTwo")
   travelModes      TravelMode[]
   safetyCheckins   SafetyCheckin[]
-  consentChecks    ConsentCheck[]
   compatibilityScoresAsSource CompatibilityScore[] @relation("CompatibilityScoreSource")
   compatibilityScoresAsTarget CompatibilityScore[] @relation("CompatibilityScoreTarget")
 
@@ -878,6 +903,7 @@ model PrivateRoom {
   members     PrivateRoomMember[]
   messages    RoomMessage[]
   ruleSets    RoomRuleSet[]
+  intentAlignments IntentAlignment[]
 
   @@map("private_rooms")
 }
@@ -976,12 +1002,17 @@ model RoomRuleApproval {
   @@map("room_rule_approvals")
 }
 
+// 8.2 — ConsentCheck is now the REQUEST/PHASE record only ("is there an
+// open ask to move to FACE_REVEAL on this match"), not a per-person state.
+// Each required participant gets their own ConsentCheckResponse row (see
+// below) — status here is a cached aggregate only, see ConsentCheckStatus.
+// profileId was removed: a check is no longer "owned" by one side's
+// profile, it applies to the whole match (per-person state lives on the
+// responses instead).
 model ConsentCheck {
   id          String             @id @default(uuid())
   matchId     String
   match       Match              @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  profileId   String
-  profile     Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
   phase       ConsentCheckPhase
   status      ConsentCheckStatus @default(PENDING)
   initiatedBy String
@@ -989,7 +1020,91 @@ model ConsentCheck {
   expiresAt   DateTime?
   createdAt   DateTime           @default(now())
 
+  responses   ConsentCheckResponse[]
+
   @@map("consent_checks")
+}
+
+// 8.2 — one row per required participant per ConsentCheck. This is the
+// actual source of truth consentCheckService aggregates from — see the
+// comment on ConsentCheck.status. respondedAt is set the moment status
+// moves away from PENDING (ACCEPTED/NOT_YET/DECLINED); revokedAt is set
+// only on the ACCEPTED -> REVOKED transition.
+model ConsentCheckResponse {
+  id             String                @id @default(uuid())
+  consentCheckId String
+  consentCheck   ConsentCheck          @relation(fields: [consentCheckId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status         ConsentResponseStatus @default(PENDING)
+  respondedAt    DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@unique([consentCheckId, userId])
+  @@map("consent_check_responses")
+}
+
+// 8.8/8.9 — "Shared Intentions" (product name) / IntentAlignment
+// (technical name). Explicitly NOT a legal contract — see 8.8. Scoped to
+// a PrivateRoom, structurally distinct from RoomRuleSet (in-room
+// behaviour) and ConsentCheck (permission for one phase/action) — see
+// 8.11: never mix these three concepts in the UI or in queries.
+model IntentAlignment {
+  id              String                 @id @default(uuid())
+  privateRoomId   String
+  privateRoom     PrivateRoom            @relation(fields: [privateRoomId], references: [id], onDelete: Cascade)
+  version         Int
+  status          IntentAlignmentStatus  @default(DRAFT)
+  createdByUserId String
+  createdAt       DateTime               @default(now())
+  activatedAt     DateTime?
+  archivedAt      DateTime?
+
+  items       IntentAlignmentItem[]
+  approvals   IntentAlignmentApproval[]
+
+  @@map("intent_alignments")
+}
+
+// 8.9 — key/value/label kept generic (String) rather than a fixed struct,
+// consistent with ProfileAgreementAnswer's pattern — see
+// lib/intentAlignmentFields.ts for the catalog of known keys/allowed
+// values/labels this sprint ships with (connection_goal,
+// meeting_openness, emotional_openness, recurrence, confidentiality,
+// communication_pace). Not DB-enforced so the catalog can grow without a
+// migration, same tradeoff already made for AgreementQuestion answers.
+model IntentAlignmentItem {
+  id          String          @id @default(uuid())
+  alignmentId String
+  alignment   IntentAlignment @relation(fields: [alignmentId], references: [id], onDelete: Cascade)
+  key         String
+  value       String
+  label       String?
+
+  @@unique([alignmentId, key])
+  @@map("intent_alignment_items")
+}
+
+// 8.10 — per-member approval of a DRAFT/WAITING_APPROVAL version. A
+// declinedAt (rather than only approvedAt/revokedAt) lets one explicit
+// "no" archive the proposal immediately without ever activating it, while
+// the previous ACTIVE alignment is left completely untouched — see
+// intentAlignmentService.ts.
+model IntentAlignmentApproval {
+  id          String          @id @default(uuid())
+  alignmentId String
+  alignment   IntentAlignment @relation(fields: [alignmentId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  approvedAt  DateTime?
+  declinedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime        @default(now())
+
+  @@unique([alignmentId, userId])
+  @@map("intent_alignment_approvals")
 }
 
 model SafetyCheckin {

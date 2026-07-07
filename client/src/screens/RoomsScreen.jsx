@@ -52,6 +52,59 @@ const REPORT_REASONS = [
   { value:'OTHER', label:'Outro' },
 ]
 
+// 8.7 — status of the ConsentCheck aggregate (cached, computed server-side
+// by consentCheckService — never written to directly from here).
+const CONSENT_STATUS_LABEL = {
+  PENDING:'A aguardar respostas', ACCEPTED:'Confirmado por todos',
+  DECLINED:'Recusado', EXPIRED:'Expirado', REVOKED:'Consentimento revogado',
+}
+const smallBtn = {
+  flex:1, border:'none', borderRadius:10, padding:'8px 10px', fontSize:12,
+  fontWeight:600, cursor:'pointer',
+}
+
+// 8.9 — mirrors server/src/lib/intentAlignmentFields.ts. Kept as a small,
+// duplicated client-side copy (same pattern already used for
+// CONSENT_PHASES mirroring ConsentCheckPhase) rather than sharing a
+// module across the client/server boundary.
+const INTENT_FIELDS = [
+  { key:'connection_goal', label:'O que procuramos aqui', options:[
+    { value:'CHAT_ONLY', label:'Só conversar' },
+    { value:'CASUAL', label:'Algo casual' },
+    { value:'ONE_TIME', label:'Um encontro pontual' },
+    { value:'RECURRING', label:'Uma ligação recorrente' },
+    { value:'OPEN_TO_DISCOVER', label:'Aberto/a a descobrir' },
+  ]},
+  { key:'meeting_openness', label:'Abertura a encontrarmo-nos', options:[
+    { value:'NOT_YET', label:'Ainda não' },
+    { value:'MAYBE_LATER', label:'Talvez mais tarde' },
+    { value:'OPEN_NOW', label:'Aberto/a agora' },
+  ]},
+  { key:'emotional_openness', label:'Envolvimento emocional', options:[
+    { value:'NO_EMOTIONAL', label:'Sem envolvimento emocional' },
+    { value:'OPEN_TO_EMOTIONAL', label:'Aberto/a a envolvimento emocional' },
+    { value:'UNSURE', label:'Ainda não sei' },
+  ]},
+  { key:'recurrence', label:'Frequência desejada', options:[
+    { value:'ONE_TIME', label:'Uma única vez' },
+    { value:'OCCASIONAL', label:'Ocasional' },
+    { value:'REGULAR', label:'Regular' },
+    { value:'UNSURE', label:'Ainda não sei' },
+  ]},
+  { key:'confidentiality', label:'Discrição', options:[
+    { value:'FULL_DISCRETION', label:'Discrição total' },
+    { value:'KNOWN_CIRCLE_OK', label:'Ok partilhar com círculo próximo' },
+    { value:'OPEN', label:'Sem necessidade de discrição' },
+  ]},
+  { key:'communication_pace', label:'Ritmo de comunicação', options:[
+    { value:'SLOW', label:'Devagar' },
+    { value:'STEADY', label:'Constante' },
+    { value:'FREQUENT', label:'Frequente' },
+  ]},
+]
+const labelForField = (key) => INTENT_FIELDS.find(f => f.key === key)?.label || key
+const labelForValue = (key, value) => INTENT_FIELDS.find(f => f.key === key)?.options.find(o => o.value === value)?.label || value
+
 function Avatar({ profile, size = 32 }) {
   const photo = profile?.photos?.[0]
   return (
@@ -249,36 +302,182 @@ function SafeExitModal({ room, onClose, onLeft }) {
   )
 }
 
+// 8.7 — full rewrite: shows every consent check for this match with its
+// PER-PERSON state (never just one global status — see
+// consentCheckService's aggregation rule), Sim/Ainda não/Não answers
+// (NOT_YET is its own explicit answer, never silently treated as
+// accepted), and a Revoke action once you've said yes. "Podes mudar a tua
+// resposta mais tarde" per the spec's non-manipulative-language ask.
 function ConsentCheckModal({ room, onClose }) {
+  const { user } = useAuth()
+  const [checks, setChecks] = useState([])
+  const [loading, setLoading] = useState(true)
   const [phase, setPhase] = useState('CHAT')
-  const [busy, setBusy] = useState(false)
-  const [done, setDone] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [busyId, setBusyId] = useState(null)
 
-  const send = async () => {
-    if (!room.matchId) return
-    setBusy(true)
-    try {
-      await api.post('/consent/check', { matchId: room.matchId, phase })
-      setDone(true)
-    } finally { setBusy(false) }
+  const load = () => {
+    if (!room.matchId) { setLoading(false); return }
+    api.get(`/consent/match/${room.matchId}`).then(r => setChecks(r.data.checks || [])).finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, [room.matchId])
+
+  const create = async () => {
+    setCreating(true)
+    try { await api.post('/consent/check', { matchId: room.matchId, phase }); load() } finally { setCreating(false) }
+  }
+  const answer = async (checkId, status) => {
+    setBusyId(checkId)
+    try { await api.put(`/consent/check/${checkId}`, { status }); load() } finally { setBusyId(null) }
+  }
+  const revoke = async (checkId) => {
+    setBusyId(checkId)
+    try { await api.post(`/consent/check/${checkId}/revoke`); load() } finally { setBusyId(null) }
   }
 
   return (
     <Sheet onClose={onClose} title="✅ Consent Check">
       {!room.matchId && <div style={{ color:C.muted, fontSize:13 }}>Esta sala não está ligada a um match — Consent Check não está disponível.</div>}
-      {room.matchId && !done && (
+      {room.matchId && (
         <>
-          <p style={{ color:C.muted, fontSize:12, marginBottom:14 }}>Pede confirmação explícita a todos antes de avançar.</p>
-          <select value={phase} onChange={e => setPhase(e.target.value)}
-            style={{ width:'100%', background:C.input, border:`1px solid ${C.border}`, borderRadius:12, padding:'10px 14px', color:C.text, fontSize:13, marginBottom:14 }}>
-            {CONSENT_PHASES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-          </select>
-          <button onClick={send} disabled={busy} style={{ width:'100%', background:C.primary, border:'none', borderRadius:50, padding:12, color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>
-            Pedir confirmação
+          <p style={{ color:C.muted, fontSize:12, marginBottom:14 }}>Pede confirmação explícita a todos antes de avançar. Podes mudar a tua resposta mais tarde.</p>
+
+          {loading && <div style={{ color:C.muted, fontSize:13 }}>A carregar…</div>}
+
+          {!loading && checks.map(check => {
+            const mine = (check.responses || []).find(r => r.userId === user?.id)
+            const phaseLabel = CONSENT_PHASES.find(p => p.value === check.phase)?.label || check.phase
+            const canAnswer = check.status !== 'EXPIRED' && (!mine || mine.status === 'PENDING' || mine.status === 'NOT_YET')
+            return (
+              <div key={check.id} style={{ background:C.input, border:`1px solid ${C.border}`, borderRadius:14, padding:14, marginBottom:10 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+                  <div style={{ color:C.text, fontSize:13, fontWeight:600 }}>{phaseLabel}</div>
+                  <span style={{ fontSize:11, color: STATUS_COLOR[check.status] || C.muted }}>{CONSENT_STATUS_LABEL[check.status] || check.status}</span>
+                </div>
+                <div style={{ fontSize:11, color:C.muted, marginBottom:10 }}>{check.acceptedCount}/{check.requiredCount} confirmaram</div>
+
+                {canAnswer && (
+                  <div style={{ display:'flex', gap:6 }}>
+                    <button onClick={() => answer(check.id, 'ACCEPTED')} disabled={busyId===check.id} style={{ ...smallBtn, background:C.success, color:'#0A140A' }}>Sim</button>
+                    <button onClick={() => answer(check.id, 'NOT_YET')} disabled={busyId===check.id} style={{ ...smallBtn, background:C.input, border:`1px solid ${C.border}`, color:C.text2 }}>Ainda não</button>
+                    <button onClick={() => answer(check.id, 'DECLINED')} disabled={busyId===check.id} style={{ ...smallBtn, background:'transparent', border:`1px solid rgba(248,113,113,0.3)`, color:C.danger }}>Não</button>
+                  </div>
+                )}
+                {mine?.status === 'ACCEPTED' && (
+                  <button onClick={() => revoke(check.id)} disabled={busyId===check.id} style={{ ...smallBtn, width:'100%', background:'transparent', border:`1px solid rgba(248,113,113,0.3)`, color:C.danger }}>
+                    Revogar o meu consentimento
+                  </button>
+                )}
+                {mine?.status === 'DECLINED' && <div style={{ fontSize:11, color:C.danger }}>Recusaste este pedido.</div>}
+                {mine?.status === 'NOT_YET' && <div style={{ fontSize:11, color:C.warning }}>Respondeste "ainda não" — podes mudar quando quiseres.</div>}
+              </div>
+            )
+          })}
+          {!loading && checks.length === 0 && (
+            <div style={{ color:C.muted, fontSize:12, marginBottom:14 }}>Ainda sem pedidos de consentimento nesta sala.</div>
+          )}
+
+          <div style={{ display:'flex', gap:8, marginTop:6 }}>
+            <select value={phase} onChange={e => setPhase(e.target.value)}
+              style={{ flex:1, background:C.input, border:`1px solid ${C.border}`, borderRadius:12, padding:'10px 14px', color:C.text, fontSize:13 }}>
+              {CONSENT_PHASES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+            <button onClick={create} disabled={creating} style={{ background:C.primary, border:'none', borderRadius:50, padding:'0 18px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>
+              Pedir
+            </button>
+          </div>
+        </>
+      )}
+    </Sheet>
+  )
+}
+
+// 8.8/8.10/8.11 — Shared Intentions. Deliberately its own modal, its own
+// endpoints, its own visual language — never mixed with Room Rules or
+// Consent Check. Explicitly framed as non-contractual per 8.8.
+function IntentAlignmentModal({ room, onClose }) {
+  const { user } = useAuth()
+  const [active, setActive] = useState(null)
+  const [pending, setPending] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [draft, setDraft] = useState({})
+  const [busy, setBusy] = useState(false)
+
+  const load = () => {
+    api.get(`/rooms/${room.id}/intent-alignment`).then(r => {
+      setActive(r.data.active)
+      setPending(r.data.pending)
+    }).finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, [room.id])
+
+  const propose = async () => {
+    const items = INTENT_FIELDS.filter(f => draft[f.key]).map(f => ({ key: f.key, value: draft[f.key] }))
+    if (items.length === 0) return
+    setBusy(true)
+    try { await api.post(`/rooms/${room.id}/intent-alignment`, { items }); load() } finally { setBusy(false) }
+  }
+  const approve = async () => {
+    setBusy(true)
+    try { await api.post(`/rooms/${room.id}/intent-alignment/${pending.id}/approve`); load() } finally { setBusy(false) }
+  }
+  const decline = async () => {
+    setBusy(true)
+    try { await api.post(`/rooms/${room.id}/intent-alignment/${pending.id}/decline`); load() } finally { setBusy(false) }
+  }
+
+  const myApproval = (pending?.approvals || []).find(a => a.userId === user?.id)
+  const alreadyResponded = myApproval && (myApproval.approvedAt || myApproval.declinedAt)
+
+  return (
+    <Sheet onClose={onClose} title="🧭 Intenções Partilhadas">
+      <p style={{ color:C.muted, fontSize:12, marginBottom:14 }}>O que dizem procurar aqui — não é um contrato, só ajuda a alinhar expectativas. Qualquer pessoa pode propor uma atualização.</p>
+
+      {loading && <div style={{ color:C.muted, fontSize:13 }}>A carregar…</div>}
+
+      {!loading && pending && (
+        <div style={{ background:'rgba(251,191,36,0.08)', border:'1px solid rgba(251,191,36,0.25)', borderRadius:14, padding:14, marginBottom:14 }}>
+          <div style={{ color:C.warning, fontSize:12, fontWeight:600, marginBottom:8 }}>Proposta à espera de aprovação (v{pending.version})</div>
+          {(pending.items || []).map(i => (
+            <div key={i.key} style={{ fontSize:12, color:C.text2, marginBottom:2 }}>{labelForField(i.key)}: {labelForValue(i.key, i.value)}</div>
+          ))}
+          {!alreadyResponded && (
+            <div style={{ display:'flex', gap:8, marginTop:10 }}>
+              <button onClick={approve} disabled={busy} style={{ ...smallBtn, background:C.success, color:'#0A140A' }}>Aprovar</button>
+              <button onClick={decline} disabled={busy} style={{ ...smallBtn, background:'transparent', border:'1px solid rgba(248,113,113,0.3)', color:C.danger }}>Recusar</button>
+            </div>
+          )}
+          {alreadyResponded && <div style={{ fontSize:11, color:C.muted, marginTop:8 }}>Já respondeste a esta proposta.</div>}
+        </div>
+      )}
+
+      {!loading && active && (
+        <div style={{ background:C.input, border:`1px solid ${C.border}`, borderRadius:14, padding:14, marginBottom:14 }}>
+          <div style={{ color:C.text, fontSize:12, fontWeight:600, marginBottom:8 }}>Ativas (v{active.version})</div>
+          {(active.items || []).map(i => (
+            <div key={i.key} style={{ fontSize:12, color:C.text2, marginBottom:2 }}>{labelForField(i.key)}: {labelForValue(i.key, i.value)}</div>
+          ))}
+        </div>
+      )}
+
+      {!loading && !pending && (
+        <>
+          <div style={{ color:C.text, fontSize:12, fontWeight:600, marginBottom:8 }}>Propor {active ? 'uma atualização' : 'Intenções Partilhadas'}</div>
+          {INTENT_FIELDS.map(f => (
+            <div key={f.key} style={{ marginBottom:10 }}>
+              <div style={{ fontSize:11, color:C.muted, marginBottom:4 }}>{f.label}</div>
+              <select value={draft[f.key] || ''} onChange={e => setDraft(prev => ({ ...prev, [f.key]: e.target.value }))}
+                style={{ width:'100%', background:C.input, border:`1px solid ${C.border}`, borderRadius:10, padding:'8px 12px', color:C.text, fontSize:13 }}>
+                <option value="">— não definido —</option>
+                {f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+          ))}
+          <button onClick={propose} disabled={busy} style={{ width:'100%', background:C.primary, border:'none', borderRadius:50, padding:12, color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>
+            Propor
           </button>
         </>
       )}
-      {done && <div style={{ color:C.success, fontSize:13 }}>✓ Pedido enviado.</div>}
     </Sheet>
   )
 }
@@ -330,8 +529,14 @@ function RoomChat({ room: initialRoom, onBack }) {
   const [showRules, setShowRules] = useState(false)
   const [showSafeExit, setShowSafeExit] = useState(false)
   const [showConsent, setShowConsent] = useState(false)
+  const [showIntentions, setShowIntentions] = useState(false)
   const [consentSummary, setConsentSummary] = useState(null)
   const [typingUsers, setTypingUsers] = useState([])
+  // 8.11 — bumped on 'consent-check:updated'/'intent-alignment:updated'
+  // socket events so an already-open modal remounts and reloads its own
+  // data, instead of silently going stale while someone else answers.
+  const [consentRefresh, setConsentRefresh] = useState(0)
+  const [intentRefresh, setIntentRefresh] = useState(0)
   const bottomRef = useRef(null)
 
   const load = useCallback(() => {
@@ -362,6 +567,10 @@ function RoomChat({ room: initialRoom, onBack }) {
     const onStatus = ({ roomId, status }) => { if (roomId === room.id) setRoom(prev => ({ ...prev, status })) }
     const onClosed = ({ roomId }) => { if (roomId === room.id) { alert('Esta sala foi fechada.'); onBack() } }
     const onConsent = ({ roomId }) => { if (roomId === room.id) api.get(`/rooms/${roomId}/rules`).then(r => setConsentSummary(r.data.consent)).catch(() => {}) }
+    // 8.11 — distinct events from the Room Rules 'consent:updated' above:
+    // this is the phase-based ConsentCheck system (8.2/8.3), never mixed.
+    const onConsentCheck = ({ roomId }) => { if (roomId === room.id) setConsentRefresh(n => n + 1) }
+    const onIntentAlignment = ({ roomId }) => { if (roomId === room.id) setIntentRefresh(n => n + 1) }
     const onTypingStart = ({ roomId, userId }) => { if (roomId === room.id && userId !== user?.id) setTypingUsers(prev => [...new Set([...prev, userId])]) }
     const onTypingStop = ({ roomId, userId }) => { if (roomId === room.id) setTypingUsers(prev => prev.filter(u => u !== userId)) }
 
@@ -371,6 +580,8 @@ function RoomChat({ room: initialRoom, onBack }) {
     socket.on('room:closed', onClosed)
     socket.on('consent:updated', onConsent)
     socket.on('rules:updated', onConsent)
+    socket.on('consent-check:updated', onConsentCheck)
+    socket.on('intent-alignment:updated', onIntentAlignment)
     socket.on('typing:start', onTypingStart)
     socket.on('typing:stop', onTypingStop)
 
@@ -382,6 +593,8 @@ function RoomChat({ room: initialRoom, onBack }) {
       socket.off('room:closed', onClosed)
       socket.off('consent:updated', onConsent)
       socket.off('rules:updated', onConsent)
+      socket.off('consent-check:updated', onConsentCheck)
+      socket.off('intent-alignment:updated', onIntentAlignment)
       socket.off('typing:start', onTypingStart)
       socket.off('typing:stop', onTypingStop)
     }
@@ -417,7 +630,8 @@ function RoomChat({ room: initialRoom, onBack }) {
     <div style={{ display:'flex', flexDirection:'column', height:'100vh', background:C.bg }}>
       {showRules && <RulesModal roomId={room.id} onClose={() => setShowRules(false)} onChanged={load} />}
       {showSafeExit && <SafeExitModal room={room} onClose={() => setShowSafeExit(false)} onLeft={onBack} />}
-      {showConsent && <ConsentCheckModal room={room} onClose={() => setShowConsent(false)} />}
+      {showConsent && <ConsentCheckModal key={consentRefresh} room={room} onClose={() => setShowConsent(false)} />}
+      {showIntentions && <IntentAlignmentModal key={intentRefresh} room={room} onClose={() => setShowIntentions(false)} />}
 
       {/* Header */}
       <div style={{ background:C.surface, borderBottom:`1px solid ${C.border}`, padding:'10px 16px' }}>
@@ -454,7 +668,7 @@ function RoomChat({ room: initialRoom, onBack }) {
         {/* Actions */}
         <div style={{ display:'flex', gap:6, marginTop:8, flexWrap:'wrap' }}>
           <button onClick={() => setShowConsent(true)} style={actionBtn}>✅ Consent Check</button>
-          <button onClick={() => setShowConsent(true)} style={actionBtn}>👁 Soft Reveal</button>
+          <button onClick={() => setShowIntentions(true)} style={actionBtn}>🧭 Intenções</button>
           <button onClick={() => setShowRules(true)} style={actionBtn}>📌 Regras</button>
           <button onClick={() => setShowSafeExit(true)} style={{ ...actionBtn, color:C.danger, borderColor:'rgba(248,113,113,0.3)' }}>🚪 Safe Exit</button>
         </div>

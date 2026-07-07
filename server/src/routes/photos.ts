@@ -9,6 +9,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { notifyAdmins } from '../lib/notify'
 import { resolveMyProfileId, getActiveMembers } from '../lib/profileMembershipService'
 import * as sharedMediaConsentService from '../lib/sharedMediaConsentService'
+import { isPhaseCurrentlyRevoked } from '../lib/consentCheckService'
 
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
@@ -226,6 +227,14 @@ router.post('/:id/request-access', requireAuth, async (req: AuthRequest, res: Re
       }
     })
     if (!activeMatch) return res.status(403).json({ error: 'É necessário ter um match activo com esta pessoa.' })
+
+    // 8.5 — a revoked FACE_REVEAL consent check blocks future media
+    // access requests on this match, per the spec's explicit example.
+    // This does not touch photos already granted before the revocation —
+    // only new/renewed access requests are denied.
+    if (await isPhaseCurrentlyRevoked(activeMatch.id, 'FACE_REVEAL')) {
+      return res.status(403).json({ error: 'O consentimento para revelar o rosto foi revogado neste match.' })
+    }
 
     // 6.8 — a photo depicting more than one member (MULTIPLE_MEMBERS/
     // SHARED_PROFILE) always requires that specific set of people to

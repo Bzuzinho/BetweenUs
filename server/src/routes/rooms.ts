@@ -17,6 +17,10 @@ import { sendRoomMessage, deleteRoomMessage } from '../lib/roomMessageService'
 import {
   DEFAULT_ROOM_RULES, proposeRuleSet, acceptRuleSet, revokeRuleAcceptance, getConsentState,
 } from '../lib/roomRuleService'
+import {
+  proposeAlignment, approveAlignment, declineAlignment, getCurrentAlignment, getPendingAlignment,
+} from '../lib/intentAlignmentService'
+import { listConsentChecksForMatch } from '../lib/consentCheckService'
 
 const router = Router()
 
@@ -148,8 +152,17 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
 
     const room = await (prisma as any).privateRoom.findUnique({ where: { id: req.params.id }, select: roomSelect })
     if (!room || room.status === 'CLOSED') return res.status(404).json({ error: 'Sala não encontrada.' })
+    // 8.11 — deliberately three SEPARATE keys, never merged: `consent`
+    // here means Room Rule acceptance (7.4/7.5), `sharedIntentions` means
+    // IntentAlignment (8.8), and `consentChecks` means the phase-based
+    // ConsentCheck system (8.2/8.3). Do not rename/collapse these.
     const consent = await getConsentState(req.params.id)
-    res.json({ ...(await signRoomPhotos(room)), consent })
+    const sharedIntentions = {
+      active: await getCurrentAlignment(req.params.id),
+      pending: await getPendingAlignment(req.params.id)
+    }
+    const consentChecks = room.matchId ? await listConsentChecksForMatch(room.matchId) : []
+    res.json({ ...(await signRoomPhotos(room)), consent, sharedIntentions, consentChecks })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
   }
@@ -280,6 +293,73 @@ router.post('/:id/rules/revoke', requireAuth, async (req: AuthRequest, res: Resp
   if (!result.ok) return res.status(400).json({ error: result.error })
   await emitToRoom(req.params.id, 'consent:updated', { roomId: req.params.id, roomStatus: result.roomStatus })
   res.json(result)
+})
+
+// GET /api/rooms/:id/intent-alignment — 8.11: distinct from /rules and
+// from ConsentCheck. Returns the current ACTIVE alignment (if any) and
+// any proposal awaiting approval.
+router.get('/:id/intent-alignment', requireAuth, async (req: AuthRequest, res: Response) => {
+  const auth = await resolveRoomMembership(req.params.id, req.userId!)
+  if (!auth.ok) return res.status(403).json({ error: auth.reason })
+  const active = await getCurrentAlignment(req.params.id)
+  const pending = await getPendingAlignment(req.params.id)
+  res.json({ active, pending })
+})
+
+// POST /api/rooms/:id/intent-alignment — propose a new version. 8.10:
+// never edits the ACTIVE alignment in place — always creates the next
+// version and requires every active room member to approve before it
+// takes over.
+router.post('/:id/intent-alignment', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const data = z.object({
+      items: z.array(z.object({
+        key: z.string().min(1), value: z.string().min(1), label: z.string().optional()
+      })).min(1)
+    }).parse(req.body)
+
+    const auth = await resolveRoomMembership(req.params.id, req.userId!)
+    if (!auth.ok) return res.status(403).json({ error: auth.reason })
+
+    const result = await proposeAlignment(req.params.id, req.userId!, data.items)
+    if (result.error) {
+      const code = result.error === 'NOT_MEMBER' ? 403 : 400
+      return res.status(code).json({ error: result.error })
+    }
+    await emitToRoom(req.params.id, 'intent-alignment:updated', { roomId: req.params.id, alignmentId: result.alignment.id, status: result.alignment.status })
+    res.status(201).json({ alignment: result.alignment })
+  } catch (err: any) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// POST /api/rooms/:id/intent-alignment/:alignmentId/approve
+router.post('/:id/intent-alignment/:alignmentId/approve', requireAuth, async (req: AuthRequest, res: Response) => {
+  const auth = await resolveRoomMembership(req.params.id, req.userId!)
+  if (!auth.ok) return res.status(403).json({ error: auth.reason })
+  const result = await approveAlignment(req.params.alignmentId, req.userId!)
+  if (result.error) {
+    const code = result.error === 'NOT_FOUND' ? 404 : result.error === 'NOT_MEMBER' ? 403 : 400
+    return res.status(code).json({ error: result.error })
+  }
+  await emitToRoom(req.params.id, 'intent-alignment:updated', { roomId: req.params.id, alignmentId: result.alignment.id, status: result.alignment.status })
+  res.json({ alignment: result.alignment })
+})
+
+// POST /api/rooms/:id/intent-alignment/:alignmentId/decline — a single
+// explicit decline archives the proposal without it ever going ACTIVE;
+// the previous ACTIVE alignment (if any) is untouched (8.10/8.12).
+router.post('/:id/intent-alignment/:alignmentId/decline', requireAuth, async (req: AuthRequest, res: Response) => {
+  const auth = await resolveRoomMembership(req.params.id, req.userId!)
+  if (!auth.ok) return res.status(403).json({ error: auth.reason })
+  const result = await declineAlignment(req.params.alignmentId, req.userId!)
+  if (result.error) {
+    const code = result.error === 'NOT_FOUND' ? 404 : result.error === 'NOT_MEMBER' ? 403 : 400
+    return res.status(code).json({ error: result.error })
+  }
+  await emitToRoom(req.params.id, 'intent-alignment:updated', { roomId: req.params.id, alignmentId: result.alignment.id, status: result.alignment.status })
+  res.json({ alignment: result.alignment })
 })
 
 // POST /api/rooms/:id/invite — OWNER only (standalone rooms only have an
