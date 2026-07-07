@@ -21,7 +21,14 @@ afterEach(async () => {
     'matches', 'profile_actions', 'profile_boundaries',
     'profile_intentions', 'privacy_settings',
     'blocked_contact_hashes', 'travel_modes', 'verifications',
-    'reports', 'couple_profiles', 'profiles',
+    'reports',
+    // 4.11: new Sprint 4 per-test/per-user tables — NOT the catalog tables
+    // themselves (gender_options/orientation_options/private_interests are
+    // admin-managed catalogs like intentions/boundaries already were, not
+    // per-test data, so they're deliberately left alone here). Must come
+    // before couple_profiles/profiles/users since they reference them.
+    'profile_private_interests', 'profile_members', 'onboarding_progress',
+    'couple_profiles', 'profiles',
     // 3.9: new Sprint 3 tables — must be cleaned between test suites too
     'legal_documents',
     'subscriptions', 'user_consents', 'users',

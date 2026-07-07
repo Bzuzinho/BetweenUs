@@ -29,6 +29,9 @@ import subscriptionsRouter from '../src/routes/subscriptions'
 import legalRouter from '../src/routes/legal'
 import verificationsRouter from '../src/routes/verifications'
 import contactsRouter from '../src/routes/contacts'
+import catalogRouter from '../src/routes/catalog'
+import groupsRouter from '../src/routes/groups'
+import privateInterestsRouter from '../src/routes/privateInterests'
 
 app.use('/api/auth', authRouter)
 app.use('/api/profiles', profileRouter)
@@ -44,6 +47,9 @@ app.use('/api/subscriptions', subscriptionsRouter)
 app.use('/api/legal', legalRouter)
 app.use('/api/verifications', verificationsRouter)
 app.use('/api/contacts', contactsRouter)
+app.use('/api/catalog', catalogRouter)
+app.use('/api/groups', groupsRouter)
+app.use('/api/private-interests', privateInterestsRouter)
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   res.status(err.status || 500).json({ error: err.message })
