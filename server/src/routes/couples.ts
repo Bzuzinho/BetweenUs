@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { createLikeOrMatch } from '../lib/matchService'
-import { removeMember } from '../lib/profileMembershipService'
+import { removeMember, resolveMyProfileId } from '../lib/profileMembershipService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -128,6 +128,67 @@ router.post('/like/:targetProfileId', requireAuth, async (req: AuthRequest, res:
     }
   } catch (err: any) {
     console.error('[COUPLE LIKE]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// GET /api/couples/matches/pending — 6.6: matches this profile is a
+// required approver for, still PENDING_COUPLE_APPROVAL. This is the data
+// behind "Interesse enviado → Parceiro A confirmou → Parceiro B confirmou"
+// - nothing in the client previously read this at all (confirmed in the
+// Sprint 6 audit: GET /api/matches only ever returns status ACTIVE, so a
+// pending double-consent match was invisible until BOTH partners somehow
+// knew to call the approve endpoint blind).
+router.get('/matches/pending', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const myProfileId = await resolveMyProfileId(req.userId!)
+    if (!myProfileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
+    const matches = await prisma.match.findMany({
+      where: {
+        status: 'PENDING_COUPLE_APPROVAL',
+        OR: [{ profileOneId: myProfileId }, { profileTwoId: myProfileId }]
+      },
+      include: {
+        profileOne: { select: { id: true, displayName: true, type: true,
+          photos: { where: { moderationStatus: 'APPROVED', isPrimary: true }, take: 1 } } },
+        profileTwo: { select: { id: true, displayName: true, type: true,
+          photos: { where: { moderationStatus: 'APPROVED', isPrimary: true }, take: 1 } } },
+      },
+      orderBy: { createdAt: 'desc' }
+    })
+
+    const { getRequiredApproverUserIds } = await import('../lib/matchService')
+    const { getActiveMembers } = await import('../lib/profileMembershipService')
+
+    const enriched = await Promise.all(matches.map(async (match: any) => {
+      const otherProfile = match.profileOneId === myProfileId ? match.profileTwo : match.profileOne
+      const myRequired = await getRequiredApproverUserIds(myProfileId)
+      const otherRequired = await getRequiredApproverUserIds(
+        match.profileOneId === myProfileId ? match.profileTwoId : match.profileOneId
+      )
+      const approvals = await prisma.coupleMatchApproval.findMany({
+        where: { matchId: match.id, approvedAt: { not: null } }
+      })
+      const approvedUserIds = new Set<string>(approvals.map((a: any) => a.userId))
+      const myMembers = await getActiveMembers(myProfileId)
+
+      return {
+        matchId: match.id,
+        profile: otherProfile,
+        // 6.6 flow steps — only ever reveals MY OWN side's individual
+        // approval progress (that's not private from me, it's my own
+        // partner). The other side is deliberately a single aggregate
+        // boolean, never a per-member breakdown.
+        myApprovals: myMembers.map(m => ({ userId: m.userId, isCreator: m.isCreator, approved: approvedUserIds.has(m.userId) })),
+        mySideConfirmed: myRequired.every(uid => approvedUserIds.has(uid)),
+        otherSideConfirmed: otherRequired.every(uid => approvedUserIds.has(uid)),
+      }
+    }))
+
+    res.json({ pending: enriched })
+  } catch (err: any) {
+    console.error('[COUPLE PENDING MATCHES]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
   }
 })

@@ -175,6 +175,39 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
     targetUserId: req.params.id, ipAddress: req.ip, userAgent: req.headers['user-agent']
   })
 
+  // 6.10 — admin visibility into couple/group membership, ApprovalPolicy,
+  // and Agreement status. Deliberately the SAME aggregate-only summary
+  // member-facing routes get (getAgreementSummary) — per-member agreement
+  // answers are NOT included here by default; that's the separate, always-
+  // explicitly-logged GET /api/agreements/admin/:profileId/raw route.
+  let coupleContext: any = null
+  if (user.profile && user.profile.type !== 'INDIVIDUAL') {
+    const { getActiveMembers } = await import('../lib/profileMembershipService')
+    const { getAgreementSummary } = await import('../lib/profileAgreementService')
+    const [activeMembers, memberRows, agreementSummary] = await Promise.all([
+      getActiveMembers(user.profile.id),
+      (prisma as any).profileMember.findMany({
+        where: { profileId: user.profile.id },
+        include: { user: { select: { id: true, email: true, status: true } } },
+        orderBy: { createdAt: 'asc' }
+      }),
+      getAgreementSummary(user.profile.id).catch(() => null),
+    ])
+    coupleContext = {
+      approvalPolicy: (user.profile as any).approvalPolicy,
+      activeMemberCount: activeMembers.length,
+      members: memberRows.map((m: any) => ({
+        id: m.id, userId: m.userId, email: m.user?.email || m.invitedEmail,
+        isCreator: m.isCreator, status: m.status, joinedAt: m.respondedAt, invitedAt: m.createdAt,
+      })),
+      agreement: agreementSummary ? {
+        status: agreementSummary.status, version: agreementSummary.version,
+        conflictCount: agreementSummary.conflictCount, missingCount: agreementSummary.missingCount,
+        lockedAt: agreementSummary.lockedAt,
+      } : null,
+    }
+  }
+
   // Strip sensitive fields before sending
   const { passwordHash, ...safeUser } = user as any
   // 3.1: admin support view is a moderation context — always resolve CLEAN,
@@ -193,6 +226,7 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
   safeUser.avatarPath = await signAvatarUrl(safeUser.avatarPath)
   res.json({
     ...safeUser,
+    coupleContext,
     referral: {
       invitedBy: referredAs?.referralCode?.user || null,
       invitedByAt: referredAs?.createdAt || null,

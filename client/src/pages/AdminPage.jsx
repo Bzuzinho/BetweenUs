@@ -789,6 +789,80 @@ function AdminSelfieImage({ userId }) {
   )
 }
 
+// 6.10 — admin visibility into couple/group membership, ApprovalPolicy and
+// Agreement status. Aggregate-only by default (status/conflict count, not
+// per-member answers) — "Ver respostas individuais" is a separate, explicit
+// action that hits the dedicated raw endpoint and is always admin-logged
+// server-side (see routes/agreements.ts's /admin/:profileId/raw).
+function CoupleAdminSection({ ctx, profileId }) {
+  const [raw, setRaw] = useState(null)
+  const [loadingRaw, setLoadingRaw] = useState(false)
+
+  const loadRaw = async () => {
+    if (!profileId) return
+    setLoadingRaw(true)
+    try {
+      const res = await api.get(`/agreements/admin/${profileId}/raw`)
+      setRaw(res.data)
+    } catch {} finally { setLoadingRaw(false) }
+  }
+
+  return (
+    <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16 }}>
+      <div style={{ fontSize:14, fontWeight:500, color:C.text2, marginBottom:12 }}>💑 Membros e Acordo</div>
+
+      <div style={{ fontSize:12, color:C.muted, marginBottom:14 }}>
+        ApprovalPolicy: <strong style={{color:C.text}}>{ctx.approvalPolicy}</strong>
+        {' · '}Membros ativos: <strong style={{color:C.text}}>{ctx.activeMemberCount}</strong>
+      </div>
+
+      <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>
+        Membros
+      </div>
+      {ctx.members.map(m => (
+        <div key={m.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
+          padding:'8px 0', borderBottom:`1px solid ${C.border}`, fontSize:12 }}>
+          <span style={{ color:C.text }}>{m.email || '(convite pendente)'}{m.isCreator ? ' · criador/a' : ''}</span>
+          <span style={{ color: m.status === 'ACCEPTED' ? C.success : m.status === 'PENDING' ? C.warning : C.muted }}>
+            {m.status}
+          </span>
+        </div>
+      ))}
+
+      <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', margin:'16px 0 6px' }}>
+        Modo Acordo
+      </div>
+      {ctx.agreement ? (
+        <div style={{ fontSize:12, color:C.text2, lineHeight:1.9 }}>
+          <div>Estado: <strong style={{color:C.text}}>{ctx.agreement.status}</strong> (v{ctx.agreement.version})</div>
+          <div>Conflitos por alinhar: <strong style={{color: ctx.agreement.conflictCount > 0 ? C.danger : C.text}}>{ctx.agreement.conflictCount}</strong></div>
+          <div>Por responder: <strong style={{color:C.text}}>{ctx.agreement.missingCount}</strong></div>
+          {ctx.agreement.lockedAt && <div>Bloqueado em: <strong style={{color:C.text}}>{new Date(ctx.agreement.lockedAt).toLocaleDateString('pt')}</strong></div>}
+        </div>
+      ) : <div style={{ color:C.muted, fontSize:12 }}>Sem ronda de Modo Acordo ainda.</div>}
+
+      {!raw ? (
+        <button onClick={loadRaw} disabled={loadingRaw} style={{ marginTop:14, background:C.dangerDim,
+          border:`1px solid rgba(248,113,113,0.3)`, borderRadius:10, padding:'8px 14px',
+          color:C.danger, fontSize:12, cursor:'pointer' }}>
+          {loadingRaw ? 'A carregar...' : '⚠ Ver respostas individuais (acção registada em log)'}
+        </button>
+      ) : (
+        <div style={{ marginTop:14, background:C.dangerDim, border:`1px solid rgba(248,113,113,0.3)`, borderRadius:12, padding:12 }}>
+          <div style={{ fontSize:11, color:C.danger, marginBottom:8 }}>
+            ⚠ Vista excecional — esta consulta ficou registada no log de admin.
+          </div>
+          {raw.answers.map((a, i) => (
+            <div key={i} style={{ fontSize:12, color:C.text2, padding:'4px 0', borderBottom:`1px solid ${C.border}` }}>
+              <strong style={{color:C.text}}>{a.member.email}</strong>: {a.question} → {a.preference}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function UserDetail({ userId, onBack }) {
   const { user: me } = useAuth()
   const [data, setData] = useState(null)
@@ -908,7 +982,11 @@ function UserDetail({ userId, onBack }) {
       {err && <div style={{ background:C.dangerDim,  border:`1px solid rgba(248,113,113,0.25)`, borderRadius:10, padding:'10px 14px', marginBottom:12, color:C.danger,  fontSize:13 }}>{err}</div>}
 
       <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:16 }}>
-        {[['info','📧 Conta'],['profile','👤 Perfil'],['subscription','✦ Subscrição'],['invites','🎁 Convites'],['verification','◈ Verificação'],['privacy','🔒 Privacidade'],['history','📋 Histórico']].map(([k,l]) => (
+        {[
+          ['info','📧 Conta'],['profile','👤 Perfil'],
+          ...(data.coupleContext ? [['couple','💑 Casal/Grupo']] : []),
+          ['subscription','✦ Subscrição'],['invites','🎁 Convites'],['verification','◈ Verificação'],['privacy','🔒 Privacidade'],['history','📋 Histórico']
+        ].map(([k,l]) => (
           <button key={k} onClick={() => setView(k)} style={{ background:view===k?C.primaryDim:C.surface, border:`1.5px solid ${view===k?C.primary:C.border}`, borderRadius:10, padding:'8px 10px', color:view===k?C.primary:C.muted, fontSize:11, fontWeight:view===k?500:400, cursor:'pointer', minHeight:38 }}>{l}</button>
         ))}
       </div>
@@ -946,6 +1024,10 @@ function UserDetail({ userId, onBack }) {
           </div>
           <RoleManager userId={userId} currentRole={u.adminRole} onChanged={load}/>
         </div>
+      )}
+
+      {view==='couple' && data.coupleContext && (
+        <CoupleAdminSection ctx={data.coupleContext} profileId={data.profile?.id} />
       )}
 
       {view==='subscription' && (

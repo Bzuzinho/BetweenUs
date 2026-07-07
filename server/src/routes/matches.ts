@@ -1,14 +1,16 @@
 import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { resolveMyProfileId } from '../lib/profileMembershipService'
 
 const router = Router()
 
-// Helper: verify user belongs to match
-const getUserProfileId = async (userId: string): Promise<string | null> => {
-  const profile = await prisma.profile.findUnique({ where: { userId }, select: { id: true } })
-  return profile?.id || null
-}
+// 6.6 — was Profile.userId-only (broke for a couple/group's non-creator
+// members, the same bug class fixed across photos.ts/travel.ts/agreements.ts
+// this sprint). Matters here specifically because it silently hid ACTIVE
+// matches — including newly-unlocked Private Rooms — from a couple's
+// second partner.
+const getUserProfileId = resolveMyProfileId
 
 const verifyMatchMembership = async (matchId: string, profileId: string) => {
   const match = await prisma.match.findFirst({
