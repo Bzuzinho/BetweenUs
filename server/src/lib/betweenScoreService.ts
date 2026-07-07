@@ -142,13 +142,30 @@ export const calculateBetweenScore = async (
   const travelOverlap = travelOverlaps(source, target)
   const locationScoreValue = travelOverlap ? 100 : baseLocationScore(source, target)
 
+  // conversationPace uses its own small-scale interpretation rather than
+  // evaluateBoundaryCompatibility's raw `score` field directly: that field
+  // is calibrated for the general "boundaries" bucket where dozens of
+  // boundaries can contribute (commonYes.length * 15, meant to accumulate
+  // across many selections). The conversation_style catalog only has a
+  // handful of options total (slow_pace/fast_pace/talk_first/...), so
+  // reusing the same formula here would make a high conversationPace score
+  // nearly unreachable even for a perfect match on the one or two pace
+  // boundaries someone actually picked.
+  const paceScore = (): number => {
+    if (paceResult.hardConflicts.length > 0) return 20
+    if (paceBoundaries(source).length === 0 || paceBoundaries(target).length === 0) return 60 // no data either side — neutral
+    if (paceResult.commonYes.length > 0 && paceResult.softDifferences.length === 0) return 100
+    if (paceResult.commonYes.length > 0) return 70 // some agreement, some difference
+    return 40 // only differences, no agreement
+  }
+
   const breakdown: Record<keyof BetweenScoreWeights, BreakdownEntry> = {
     intentions:          { score: intentionResult.score, weight: weights.intentions },
     boundaries:          { score: boundaryResult.score, weight: weights.boundaries },
     relationshipContext: { score: relationshipContextScore(source.relationshipStatus, target.relationshipStatus), weight: weights.relationshipContext },
     discretion:          { score: discretionScore(source.discretionLevel, target.discretionLevel), weight: weights.discretion },
     location:            { score: locationScoreValue, weight: weights.location },
-    conversationPace:    { score: paceResult.hardConflicts.length > 0 ? 20 : (paceBoundaries(source).length === 0 || paceBoundaries(target).length === 0 ? 60 : paceResult.score), weight: weights.conversationPace },
+    conversationPace:    { score: paceScore(), weight: weights.conversationPace },
   }
 
   const finalScore = Math.round(

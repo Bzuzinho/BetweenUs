@@ -28,6 +28,12 @@ afterEach(async () => {
     // per-test data, so they're deliberately left alone here). Must come
     // before couple_profiles/profiles/users since they reference them.
     'profile_private_interests', 'profile_members', 'onboarding_progress',
+    // 5.11 — CompatibilityScore is per-profile-pair cached data, cleaned
+    // between tests like every other per-test table. between_score_configs
+    // is NOT cleaned here for the same reason gender_options/intentions/
+    // boundaries aren't - it's an admin-managed settings row, not per-test
+    // data (tests that need custom weights create their own row explicitly).
+    'compatibility_scores',
     'couple_profiles', 'profiles',
     // 3.9: new Sprint 3 tables — must be cleaned between test suites too
     'legal_documents',
