@@ -62,8 +62,14 @@ const signRoomPhotos = async (room: any) => {
 
 const emitToRoom = async (roomId: string, event: string, payload: any) => {
   try {
-    const { io } = await import('../index')
-    io.to(`room:${roomId}`).emit(event, payload)
+    // 7.12 — reads the published Server instance from socketRegistry
+    // instead of `import('../index')`, which would re-execute index.ts's
+    // top level (including an unconditional httpServer.listen()) any time
+    // this ran inside a test process that imports routes directly via
+    // __tests__/app.ts rather than booting the real server.
+    const { getIo } = await import('../lib/socketRegistry')
+    const io = getIo()
+    if (io) io.to(`room:${roomId}`).emit(event, payload)
   } catch {}
 }
 

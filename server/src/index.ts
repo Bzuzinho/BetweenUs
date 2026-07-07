@@ -29,6 +29,10 @@ const ALLOWED_ORIGINS = isProd
 export const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, methods: ['GET','POST'], credentials: true }
 })
+// 7.12 — publish into socketRegistry so route/service code can reach `io`
+// without ever importing this whole module (which would re-run its
+// top-level side effects, including httpServer.listen() below).
+import('./lib/socketRegistry').then(({ setIo }) => setIo(io))
 
 // 3.8: real CSP + hardened headers. API is JSON-only (no HTML views), so we
 // lock content sources down hard; CSP_REPORT_ONLY lets ops flip to audit mode
