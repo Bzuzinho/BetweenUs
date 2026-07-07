@@ -15,7 +15,7 @@ import { notifyUser } from './notify'
 
 export type DomainEventType =
   | 'MATCH_CREATED' | 'MATCH_APPROVAL_REQUIRED' | 'MATCH_ACTIVATED'
-  | 'MATCH_PAUSED' | 'MATCH_ENDED' | 'MATCH_BLOCKED'
+  | 'MATCH_PAUSED' | 'MATCH_ENDED' | 'MATCH_BLOCKED' | 'MATCH_REJECTED'
 
 export interface DomainEvent {
   type: DomainEventType
@@ -28,7 +28,7 @@ type Handler = (event: DomainEvent) => Promise<void>
 
 const handlers: Record<DomainEventType, Handler[]> = {
   MATCH_CREATED: [], MATCH_APPROVAL_REQUIRED: [], MATCH_ACTIVATED: [],
-  MATCH_PAUSED: [], MATCH_ENDED: [], MATCH_BLOCKED: [],
+  MATCH_PAUSED: [], MATCH_ENDED: [], MATCH_BLOCKED: [], MATCH_REJECTED: [],
 }
 
 export const on = (type: DomainEventType, handler: Handler): void => {
@@ -79,6 +79,41 @@ on('MATCH_ACTIVATED', async (event) => {
     ...oneUserIds.map(uid => notifyUser(uid, 'match', '💫 Match confirmado!', `Tens um novo match com ${twoName}.`, { matchId: event.matchId, tab: 'matches' })),
     ...twoUserIds.map(uid => notifyUser(uid, 'match', '💫 Match confirmado!', `Tens um novo match com ${oneName}.`, { matchId: event.matchId, tab: 'matches' })),
   ])
+
+  // 6.6 — "Interesse enviado → Parceiro A confirmou → Parceiro B confirmou
+  // → Private Room desbloqueada": PrivateRoom.matchId has existed in the
+  // schema since before Sprint 6 but was never auto-linked to a Match by
+  // any code path (confirmed in the Sprint 6 audit - rooms.ts's POST /
+  // creates only standalone rooms, "matchId intentionally omitted"). Any
+  // match with 3+ total active members across both sides (couple+individual,
+  // couple+couple) gets its Private Room created here, the moment the
+  // match itself goes ACTIVE — that IS the "unlocked" moment. A plain
+  // individual-individual match (2 total members) keeps using its
+  // already-created Conversation and gets no room.
+  const totalMembers = oneUserIds.length + twoUserIds.length
+  if (totalMembers >= 3) {
+    const existingRoom = await (prisma as any).privateRoom.findUnique({ where: { matchId: event.matchId } }).catch(() => null)
+    if (!existingRoom) {
+      const roomType =
+        (oneUserIds.length === 2 && twoUserIds.length === 1) || (oneUserIds.length === 1 && twoUserIds.length === 2) ? 'COUPLE_PLUS_ONE' :
+        (oneUserIds.length === 2 && twoUserIds.length === 2) ? 'COUPLE_PLUS_COUPLE' : 'CUSTOM'
+      const allUserIds = [...oneUserIds, ...twoUserIds]
+      await prisma.privateRoom.create({
+        data: {
+          title: `${oneName} & ${twoName}`,
+          roomType,
+          status: 'ACTIVE',
+          matchId: event.matchId,
+          members: { create: allUserIds.map((userId, i) => ({ userId, role: i === 0 ? 'owner' : 'member', joinedAt: new Date() })) }
+        }
+      }).catch((e: any) => console.error('[MATCH_ACTIVATED private room]', e.message))
+      await Promise.all(allUserIds.map(uid => notifyUser(
+        uid, 'private_room', '🔓 Sala privada desbloqueada',
+        'O match tornou-se numa sala privada partilhada.',
+        { matchId: event.matchId, tab: 'rooms' }
+      )))
+    }
+  }
 })
 
 // ── MATCH_PAUSED / MATCH_ENDED ───────────────────────────────────────────
@@ -88,6 +123,24 @@ on('MATCH_ACTIVATED', async (event) => {
 // in the conversation later.
 on('MATCH_PAUSED', async () => {})
 on('MATCH_ENDED', async () => {})
+
+// ── MATCH_REJECTED ────────────────────────────────────────────────────────
+// 6.5: notifies EVERY active member of BOTH sides with the exact same
+// neutral copy — never singles out which side or which member rejected.
+// This is the structural guarantee behind "nunca revelar quem rejeitou":
+// there is no code path here that reads which specific user's approval
+// was missing, only that the match as a whole didn't proceed.
+on('MATCH_REJECTED', async (event) => {
+  const [oneUserIds, twoUserIds] = await Promise.all([
+    userIdsFor(event.profileOneId), userIdsFor(event.profileTwoId)
+  ])
+  const allUserIds = [...oneUserIds, ...twoUserIds]
+  await Promise.all(allUserIds.map(uid => notifyUser(
+    uid, 'match_ended', 'Match não avançou',
+    'Este match não reuniu a aprovação necessária e foi encerrado.',
+    { matchId: event.matchId, tab: 'matches' }
+  )))
+})
 
 // ── MATCH_APPROVAL_REQUIRED ──────────────────────────────────────────────
 // Notifies whichever required approvers haven't approved yet. Couples.ts's

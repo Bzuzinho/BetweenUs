@@ -32,6 +32,8 @@ import contactsRouter from '../src/routes/contacts'
 import catalogRouter from '../src/routes/catalog'
 import groupsRouter from '../src/routes/groups'
 import privateInterestsRouter from '../src/routes/privateInterests'
+import agreementsRouter from '../src/routes/agreements'
+import travelRouter from '../src/routes/travel'
 
 app.use('/api/auth', authRouter)
 app.use('/api/profiles', profileRouter)
@@ -50,6 +52,8 @@ app.use('/api/contacts', contactsRouter)
 app.use('/api/catalog', catalogRouter)
 app.use('/api/groups', groupsRouter)
 app.use('/api/private-interests', privateInterestsRouter)
+app.use('/api/agreements', agreementsRouter)
+app.use('/api/travel', travelRouter)
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   res.status(err.status || 500).json({ error: err.message })

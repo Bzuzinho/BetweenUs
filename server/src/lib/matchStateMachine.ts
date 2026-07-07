@@ -14,7 +14,7 @@
 // concept) without forcing any current caller to use it.
 export type MatchState = 'PENDING' | 'PENDING_COUPLE_APPROVAL' | 'ACTIVE' | 'PAUSED' | 'ENDED' | 'BLOCKED'
 export type MatchEvent =
-  | 'CREATE' | 'REQUIRE_COUPLE_APPROVAL' | 'APPROVE' | 'ACTIVATE' | 'PAUSE' | 'RESUME' | 'END' | 'BLOCK'
+  | 'CREATE' | 'REQUIRE_COUPLE_APPROVAL' | 'APPROVE' | 'REJECT' | 'ACTIVATE' | 'PAUSE' | 'RESUME' | 'END' | 'BLOCK'
 
 export interface TransitionCheck {
   allowed: boolean
@@ -33,6 +33,12 @@ const TRANSITIONS: Record<MatchEvent, { from: MatchState[] | null; to: MatchStat
   CREATE:                  { from: null,                                to: 'PENDING' }, // caller picks the real target state via toStateOverride below
   REQUIRE_COUPLE_APPROVAL: { from: ['PENDING'],                         to: 'PENDING_COUPLE_APPROVAL' },
   APPROVE:                 { from: ['PENDING_COUPLE_APPROVAL'],         to: 'PENDING_COUPLE_APPROVAL' }, // self-transition: records one approver, doesn't move the FSM by itself
+  // 6.5 — reject flow: any required approver on either side can reject a
+  // pending double-consent match. Lands on ENDED, same terminal state as a
+  // manually-ended match — the point isn't a distinct status, it's that the
+  // MATCH_REJECTED domain event (vs MATCH_ENDED) can carry neutral copy
+  // that never reveals WHICH side or WHICH member rejected.
+  REJECT:                  { from: ['PENDING_COUPLE_APPROVAL'],         to: 'ENDED' },
   ACTIVATE:                { from: ['PENDING', 'PENDING_COUPLE_APPROVAL'], to: 'ACTIVE' },
   PAUSE:                   { from: ['ACTIVE'],                          to: 'PAUSED' },
   RESUME:                  { from: ['PAUSED'],                          to: 'ACTIVE' },

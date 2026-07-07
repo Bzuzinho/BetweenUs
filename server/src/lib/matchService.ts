@@ -136,6 +136,7 @@ const EVENT_TO_DOMAIN_EVENT: Partial<Record<MatchEvent, DomainEventType>> = {
   PAUSE:                   'MATCH_PAUSED',
   END:                     'MATCH_ENDED',
   BLOCK:                   'MATCH_BLOCKED',
+  REJECT:                  'MATCH_REJECTED',
   // APPROVE and RESUME deliberately have no domain event: APPROVE is a
   // self-transition (records that one approver approved, doesn't move the
   // FSM), and RESUME lands on ACTIVE but firing MATCH_ACTIVATED's "you

@@ -97,6 +97,11 @@ export const acceptMembership = async (inviteToken: string, userId: string) => {
   // computed against the pre-acceptance membership.
   const { invalidateScoresForProfile } = await import('./scoreInvalidationService')
   await invalidateScoresForProfile(invite.profileId).catch(() => {})
+  // 6.1 — a newly-accepted member wasn't around for whatever the current
+  // Agreement round already decided; expire it so the profile starts a
+  // clean round with everyone who's actually present able to answer.
+  const { expireAgreementOnMembershipChange } = await import('./profileAgreementService')
+  await expireAgreementOnMembershipChange(invite.profileId).catch(() => {})
   return updated
 }
 
@@ -109,6 +114,28 @@ export const declineMembership = async (inviteToken: string) => {
     where: { id: invite.id },
     data: { status: 'DECLINED', respondedAt: new Date(), inviteToken: null }
   })
+}
+
+// 6.1 — lifted out of routes/profiles.ts (where it was a private, unexported
+// helper duplicated in spirit across couples.ts's older Profile.userId-only
+// routes) so every new Sprint 6 router (agreements, travel, photos) resolves
+// "my profile" the same correct way: owned profile, OR accepted
+// ProfileMember row, OR (pre-backfill legacy safety net) CoupleProfile's
+// partnerTwoUserId. Behavior is unchanged from the profiles.ts original —
+// this is a relocation, not a rewrite.
+export const resolveMyProfileId = async (userId: string): Promise<string | null> => {
+  const owned = await prisma.profile.findUnique({ where: { userId }, select: { id: true } })
+  if (owned) return owned.id
+
+  const membership = await (prisma as any).profileMember.findFirst({
+    where: { userId, status: 'ACCEPTED' }, select: { profileId: true }
+  })
+  if (membership) return membership.profileId
+
+  const coupleProfile = await prisma.coupleProfile.findFirst({
+    where: { partnerTwoUserId: userId }, select: { profileId: true }
+  })
+  return coupleProfile?.profileId || null
 }
 
 // Removes (or marks declined, if never fully joined) a member from a
@@ -125,4 +152,8 @@ export const removeMember = async (profileId: string, userId: string): Promise<v
   // the profile's effective compatibility inputs.
   const { invalidateScoresForProfile } = await import('./scoreInvalidationService')
   await invalidateScoresForProfile(profileId).catch(() => {})
+  // 6.1 — membership shrinking also invalidates the couple's current
+  // Agreement round: it no longer represents who's actually on the profile.
+  const { expireAgreementOnMembershipChange } = await import('./profileAgreementService')
+  await expireAgreementOnMembershipChange(profileId).catch(() => {})
 }

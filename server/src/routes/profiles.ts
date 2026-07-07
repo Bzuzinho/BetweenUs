@@ -5,7 +5,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { coarsenCoordinate } from '../utils/location'
 import { mergePhotosForViewer } from '../lib/mediaAccessService'
 import { getVerificationBadges } from '../lib/verificationBadges'
-import { isActiveMember, getActiveMembers } from '../lib/profileMembershipService'
+import { isActiveMember, getActiveMembers, resolveMyProfileId } from '../lib/profileMembershipService'
 import { evaluateCompleteness } from '../lib/profileCompletenessService'
 
 const router = Router()
@@ -41,28 +41,10 @@ async function canManageProfile(profileId: string, userId: string): Promise<bool
   return isActiveMember(profileId, userId)
 }
 
-// Resolves "my" profile for /me routes — the profile I own, OR the shared
-// couple/group profile I've been accepted into as a member. 4.1: no longer
-// reads CoupleProfile.partnerTwoUserId directly — that fallback now lives
-// inside ProfileMembershipService.getActiveMembers, reached indirectly via
-// the ProfileMember lookup below for anyone already backfilled, and via
-// the same profile-search approach for anyone who isn't (rare: only
-// matters for a not-yet-backfilled couple's second partner looking up
-// their own profile before ever touching ProfileMember directly).
-async function resolveMyProfileId(userId: string): Promise<string | null> {
-  const owned = await prisma.profile.findUnique({ where: { userId }, select: { id: true } })
-  if (owned) return owned.id
+// 6.1 — resolveMyProfileId moved to profileMembershipService.ts (imported
+// at top of file) so every Sprint 6 router can share the exact same
+// resolution logic instead of re-deriving it.
 
-  const membership = await (prisma as any).profileMember.findFirst({
-    where: { userId, status: 'ACCEPTED' }, select: { profileId: true }
-  })
-  if (membership) return membership.profileId
-
-  const coupleProfile = await prisma.coupleProfile.findFirst({
-    where: { partnerTwoUserId: userId }, select: { profileId: true }
-  })
-  return coupleProfile?.profileId || null
-}
 
 async function upsertIntentions(profileId: string, intentions: { slug: string; preference: 'YES'|'MAYBE'|'NO' }[]) {
   for (const { slug } of intentions) {

@@ -142,6 +142,19 @@ enum CoupleStatus {
   DISABLED
 }
 
+// 6.5 — formalizes "who must approve a match" as an explicit policy rather
+// than the implicit "every ACCEPTED member" behavior
+// ProfileMembershipService.getRequiredApprovers already had. COUPLE always
+// behaves as ALL (enforced in code, not by this field being immutable -
+// see approvalPolicyService.ts's comment on why). MAJORITY/DESIGNATED exist
+// for GROUP's future use ("feature futura" per the spec) - not implemented
+// as real alternate behavior yet.
+enum ApprovalPolicy {
+  ALL
+  MAJORITY
+  DESIGNATED
+}
+
 enum MessageType {
   TEXT
   IMAGE
@@ -298,6 +311,8 @@ model User {
   betaInvites          BetaInvite[]         @relation("InviteCreator")
   betaInviteUsed       BetaInvite?          @relation("InviteUser")
   onboardingProgress   OnboardingProgress?
+  travelModeApprovals  TravelModeApproval[]
+  photoAccessApprovals PhotoAccessApproval[]
 
   // 5.11 — discovery's candidate query joins on user.status (and
   // effectively adminRole via a null check) for every request.
@@ -346,6 +361,17 @@ model Profile {
   compatibilityScoresAsSource CompatibilityScore[] @relation("CompatibilityScoreSource")
   compatibilityScoresAsTarget CompatibilityScore[] @relation("CompatibilityScoreTarget")
 
+  agreements ProfileAgreement[]
+
+  // 6.5 — ApprovalPolicy formalizes what was already implicit behavior:
+  // ProfileMembershipService.getRequiredApprovers already returns every
+  // ACCEPTED member, which IS "ALL" - this makes that explicit and gives
+  // GROUP a place to diverge later without touching COUPLE's semantics.
+  // COUPLE ignores this field and always behaves as ALL (see
+  // approvalPolicyService.ts) - stored mainly for GROUP's future use and
+  // for admin visibility (6.10).
+  approvalPolicy ApprovalPolicy @default(ALL)
+
   // 5.11 — discovery's candidate-pool query filters on status+type together
   // on every request; before this there was no index on either column at
   // all, meaning a full table scan of profiles for every single discovery
@@ -388,6 +414,8 @@ model ProfileMember {
   invitedAt    DateTime            @default(now())
   respondedAt  DateTime?
 
+  agreementAnswers ProfileAgreementAnswer[]
+
   @@unique([profileId, userId])
   @@map("profile_members")
 }
@@ -415,6 +443,18 @@ model OnboardingProgress {
   @@map("onboarding_progress")
 }
 
+// 6.8 — memberScope/depictedMemberIds are new. Deliberately manual, set by
+// the uploader at upload time (or edited after) — never facial recognition
+// or any automated detection, per the spec's explicit instruction.
+// depictedMemberIds holds ProfileMember ids, not User ids, consistent with
+// ProfileMembershipService being the membership source of truth everywhere
+// else in this codebase.
+enum MediaMemberScope {
+  SINGLE_MEMBER     // depicts only the uploader — default, matches all pre-Sprint-6 photos
+  MULTIPLE_MEMBERS  // depicts 2+ specific, identified members of a COUPLE/GROUP profile
+  SHARED_PROFILE    // couple/group photo not clearly of specific individuals (e.g. a joint photo, a symbol/object) — still requires all active members' consent to grant, same as MULTIPLE_MEMBERS
+}
+
 model ProfilePhoto {
   id               String           @id @default(uuid())
   profileId        String
@@ -427,6 +467,8 @@ model ProfilePhoto {
   isPrimary        Boolean          @default(false)
   sortOrder        Int              @default(0)
   exifStripped     Boolean          @default(false)
+  memberScope      MediaMemberScope @default(SINGLE_MEMBER)
+  depictedMemberIds String[]        @default([])
   createdAt        DateTime         @default(now())
 
   accessRequests   PhotoAccessRequest[]
@@ -498,6 +540,7 @@ model Boundary {
   sortOrder      Int               @default(0)
   active         Boolean           @default(true)
   profiles       ProfileBoundary[]
+  agreementAnswers ProfileAgreementAnswer[]
 
   @@map("boundaries")
 }
@@ -512,6 +555,90 @@ model ProfileBoundary {
 
   @@unique([profileId, boundaryId])
   @@map("profile_boundaries")
+}
+
+// 6.1 — Modo Acordo: replaces the pre-Sprint-6 fake version (any one
+// partner directly PUT-ing Profile.intentions/boundaries, no individual
+// answers, no waiting for the other member, no conflict detection - see
+// the Sprint 6 audit note in couples.ts) with a real per-member-answer,
+// conservative-merge mechanic.
+//
+// One ProfileAgreement row per "round" of the couple's shared answers -
+// version increments only when a member starts a NEW round after a LOCKED
+// or EXPIRED one, not on every individual answer (those just update
+// ProfileAgreementAnswer rows within the current version).
+enum ProfileAgreementStatus {
+  DRAFT             // created, no member has answered anything yet
+  WAITING_MEMBERS   // at least one member has answered, not all have
+  ALIGNED           // all active members answered every question, no conflicts
+  CONFLICT          // all active members answered, at least one real disagreement
+  LOCKED            // explicitly locked (e.g. required before certain actions) - answers frozen
+  EXPIRED           // past expiresAt - membership changed or admin/product policy invalidated it
+}
+
+model ProfileAgreement {
+  id        String                 @id @default(uuid())
+  profileId String
+  profile   Profile                @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  version   Int                    @default(1)
+  status    ProfileAgreementStatus @default(DRAFT)
+  lockedAt  DateTime?
+  expiresAt DateTime?
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+
+  answers   ProfileAgreementAnswer[]
+
+  @@unique([profileId, version])
+  @@map("profile_agreements")
+}
+
+// Exactly one of boundaryId / agreementQuestionId is set, never both, never
+// neither - enforced in ProfileAgreementService, not at the DB level
+// (Postgres unique constraints don't reliably dedupe across nullable
+// columns anyway, so uniqueness-per-member-per-question is also handled in
+// the service via find-then-upsert, same pattern ProfileBoundary/
+// ProfileIntention already use elsewhere in this schema).
+model ProfileAgreementAnswer {
+  id                  String             @id @default(uuid())
+  agreementId         String
+  agreement           ProfileAgreement   @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+  profileMemberId     String
+  profileMember       ProfileMember      @relation(fields: [profileMemberId], references: [id], onDelete: Cascade)
+  boundaryId          String?
+  boundary            Boundary?          @relation(fields: [boundaryId], references: [id])
+  agreementQuestionId String?
+  agreementQuestion   AgreementQuestion? @relation(fields: [agreementQuestionId], references: [id])
+  preference          BoundaryPreference
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([agreementId, profileMemberId])
+  @@map("profile_agreement_answers")
+}
+
+// 6.2 — questions specific to how the COUPLE operates as a unit (their own
+// internal process), not compatibility preferences compared against a
+// third party's Boundary selections. BOTH_VALIDATE_MATCH is the clear
+// example from the spec's own list: everything else in that list
+// (NO_EMOTIONAL_INVOLVEMENT, ONE_TIME_ONLY, VERIFIED_ONLY, SINGLES_ONLY/
+// COUPLES_ONLY, NO_KNOWN_PEOPLE, NO_FACE_AT_START, TALK_FIRST, etc.) already
+// exists as a Boundary slug from Sprint 2.5.8's seed and is reused via
+// ProfileAgreementAnswer.boundaryId instead of being duplicated here.
+model AgreementQuestion {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  label       String
+  description String?
+  category    String?
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  answers     ProfileAgreementAnswer[]
+
+  @@map("agreement_questions")
 }
 
 // 4.8 — Private Interests ("fetiches privados"). Deliberately a SEPARATE
@@ -831,16 +958,32 @@ model BlockedContactHash {
   @@map("blocked_contact_hashes")
 }
 
+// 6.7 — status/createdByUserId/approvals are new. For INDIVIDUAL profiles
+// a trip is created straight into SCHEDULED (nothing to approve — there's
+// only one member). For COUPLE/GROUP, creating a trip starts it at
+// WAITING_MEMBER_APPROVAL: the creator alone cannot announce availability
+// for the whole profile, matching the spec's explicit "não permitir um
+// membro anunciar disponibilidade dos dois sozinho".
+enum TravelModeStatus {
+  WAITING_MEMBER_APPROVAL
+  SCHEDULED
+  CANCELLED
+}
+
 model TravelMode {
-  id        String   @id @default(uuid())
-  profileId String
-  profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  city      String
-  country   String?
-  startDate DateTime
-  endDate   DateTime
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id              String           @id @default(uuid())
+  profileId       String
+  profile         Profile          @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  city            String
+  country         String?
+  startDate       DateTime
+  endDate         DateTime
+  active          Boolean          @default(true)
+  status          TravelModeStatus @default(SCHEDULED)
+  createdByUserId String?
+  createdAt       DateTime         @default(now())
+
+  approvals TravelModeApproval[]
 
   // 5.11 — DiscoveryService's location/travel step (5.2 pipeline step 10)
   // looks up each candidate's active travel rows; before this TravelMode
@@ -848,6 +991,22 @@ model TravelMode {
   // its own CRUD routes.
   @@index([profileId, active])
   @@map("travel_modes")
+}
+
+// 6.7 — one row per required approver (every ACCEPTED ProfileMember at
+// creation time), mirroring CoupleMatchApproval's shape. A trip only
+// reaches SCHEDULED once every row here has approvedAt set.
+model TravelModeApproval {
+  id           String    @id @default(uuid())
+  travelModeId String
+  travelMode   TravelMode @relation(fields: [travelModeId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  approvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@unique([travelModeId, userId])
+  @@map("travel_mode_approvals")
 }
 
 // 5.5 — CompatibilityScore: persisted, versioned score cache. Replaces
@@ -949,8 +1108,34 @@ model PhotoAccessRequest {
   respondedAt  DateTime?
   createdAt    DateTime           @default(now())
 
+  // 6.8 — only populated/consulted for MULTIPLE_MEMBERS/SHARED_PROFILE
+  // photos: one row per depicted member whose consent is required. For a
+  // SINGLE_MEMBER photo (the pre-Sprint-6 default), this stays empty and
+  // `status` alone still means what it always meant — the owner's own
+  // decision, no per-member approval layer needed.
+  approvals    PhotoAccessApproval[]
+
   @@unique([photoId, requesterId])
   @@map("photo_access_requests")
+}
+
+// 6.8 — mirrors CoupleMatchApproval/TravelModeApproval's shape: one row per
+// required approver (each depicted member's user, resolved via
+// ProfileMembershipService), the request's overall `status` only becomes
+// APPROVED once every row here has approvedAt set (see
+// sharedMediaConsentService.ts).
+model PhotoAccessApproval {
+  id                   String    @id @default(uuid())
+  photoAccessRequestId String
+  request              PhotoAccessRequest @relation(fields: [photoAccessRequestId], references: [id], onDelete: Cascade)
+  userId               String
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  approvedAt           DateTime?
+  rejectedAt           DateTime?
+  createdAt            DateTime  @default(now())
+
+  @@unique([photoAccessRequestId, userId])
+  @@map("photo_access_approvals")
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────

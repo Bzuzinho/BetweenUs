@@ -235,6 +235,31 @@ Para questões sobre privacidade: privacy@betweenus.app`,
   }
   console.log(`Seeded ${privateInterests.length} private interests`)
 
+  console.log('Seeding agreement questions...')
+
+  // 6.2 — AgreementQuestion is deliberately NOT a duplicate of Boundary.
+  // Almost every example question in the Sprint 6 spec (pace, privacy,
+  // meeting type...) already exists as a Boundary from the seed above -
+  // those stay boundaries because they're third-party compatibility
+  // signals (compared against a candidate's own boundaries). This catalog
+  // is reserved for questions that are purely about the couple/group's
+  // OWN internal process and have no meaning as a compatibility signal
+  // against an external profile.
+  const agreementQuestions = [
+    { slug: 'both_validate_match',     label: 'Os dois têm de validar um match antes de avançar', category: 'PROCESS' },
+    { slug: 'both_validate_photo_access', label: 'Os dois têm de aprovar pedidos de acesso a fotos privadas', category: 'PROCESS' },
+    { slug: 'both_present_first_chat', label: 'Ambos preferem estar presentes na primeira conversa', category: 'PROCESS' },
+    { slug: 'debrief_after_meeting',   label: 'Preferem conversar em casal depois de cada encontro', category: 'PROCESS' },
+  ]
+  for (const [index, question] of agreementQuestions.entries()) {
+    await (prisma as any).agreementQuestion.upsert({
+      where: { slug: question.slug },
+      update: { label: question.label, category: question.category },
+      create: { slug: question.slug, label: question.label, category: question.category, sortOrder: index, active: true },
+    })
+  }
+  console.log(`Seeded ${agreementQuestions.length} agreement questions`)
+
   console.log('Seed complete')
 }
 
