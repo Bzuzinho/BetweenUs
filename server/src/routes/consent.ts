@@ -1,14 +1,14 @@
 import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { resolveMyProfileId } from '../lib/profileMembershipService'
 
 const router = Router()
 
-// Point 7: shared membership check, mirrors matches.ts logic
-const getMyProfileId = async (userId: string): Promise<string | null> => {
-  const profile = await prisma.profile.findUnique({ where: { userId }, select: { id: true } })
-  return profile?.id || null
-}
+// 7.10/7.11 — was Profile.userId-only (silently excluded a couple's
+// non-creator member from ever using Consent Check), same bug class
+// fixed across Sprint 6/7. Now shares the canonical resolver.
+const getMyProfileId = resolveMyProfileId
 
 const verifyMatchMembership = async (matchId: string, profileId: string): Promise<boolean> => {
   const match = await prisma.match.findFirst({

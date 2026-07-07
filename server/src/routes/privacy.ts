@@ -1,6 +1,7 @@
 import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { resolveMyProfileId } from '../lib/profileMembershipService'
 
 const router = Router()
 
@@ -76,7 +77,11 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
 // POST /api/privacy/block/:profileId — block a profile
 router.post('/block/:profileId', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const myProfile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
+    // 7.11 — Safe Exit's "Block user/profile" action must work for a
+    // couple/group's non-creator member too, same bug class fixed across
+    // Sprint 6/7 elsewhere (Profile.userId-only lookup silently excluded them).
+    const myProfileId = await resolveMyProfileId(req.userId!)
+    const myProfile = myProfileId ? await prisma.profile.findUnique({ where: { id: myProfileId } }) : null
     if (!myProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
 
     await prisma.profileAction.upsert({
