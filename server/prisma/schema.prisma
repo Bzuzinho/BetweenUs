@@ -299,6 +299,9 @@ model User {
   betaInviteUsed       BetaInvite?          @relation("InviteUser")
   onboardingProgress   OnboardingProgress?
 
+  // 5.11 — discovery's candidate query joins on user.status (and
+  // effectively adminRole via a null check) for every request.
+  @@index([status])
   @@map("users")
 }
 
@@ -340,7 +343,14 @@ model Profile {
   travelModes      TravelMode[]
   safetyCheckins   SafetyCheckin[]
   consentChecks    ConsentCheck[]
+  compatibilityScoresAsSource CompatibilityScore[] @relation("CompatibilityScoreSource")
+  compatibilityScoresAsTarget CompatibilityScore[] @relation("CompatibilityScoreTarget")
 
+  // 5.11 — discovery's candidate-pool query filters on status+type together
+  // on every request; before this there was no index on either column at
+  // all, meaning a full table scan of profiles for every single discovery
+  // request regardless of profile count.
+  @@index([status, type])
   @@map("profiles")
 }
 
@@ -562,6 +572,11 @@ model ProfileAction {
   createdAt       DateTime   @default(now())
 
   @@unique([actorProfileId, targetProfileId])
+  // 5.11/5.3 — discovery now also needs "who has BLOCKed the viewer"
+  // (reverse direction, previously never checked at all - see the 5.3
+  // audit note in discoveryService.ts) and "who has LIKEd the viewer",
+  // both filtered by targetProfileId + action.
+  @@index([targetProfileId, action])
   @@map("profile_actions")
 }
 
@@ -581,6 +596,13 @@ model Match {
   privateRoom  PrivateRoom?
   consentChecks ConsentCheck[]
 
+  // 5.11 — the composite unique above gives a usable index for
+  // profileOneId-only lookups (it's the leftmost column), but NOT for
+  // profileTwoId-only lookups (e.g. discovery's "am I already matched with
+  // this candidate" OR-clause, matches.ts's inbox query) - those need
+  // their own index or they full-scan.
+  @@index([profileTwoId])
+  @@index([status])
   @@unique([profileOneId, profileTwoId])
   @@map("matches")
 }
@@ -820,7 +842,62 @@ model TravelMode {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 
+  // 5.11 — DiscoveryService's location/travel step (5.2 pipeline step 10)
+  // looks up each candidate's active travel rows; before this TravelMode
+  // had zero indexes and, more importantly, zero callers at all outside
+  // its own CRUD routes.
+  @@index([profileId, active])
   @@map("travel_modes")
+}
+
+// 5.5 — CompatibilityScore: persisted, versioned score cache. Replaces
+// "recompute Between Score on every discovery request, keep nothing"
+// (the pre-Sprint-5 behavior) with a real cache that can be invalidated
+// surgically (5.8) instead of thrown away wholesale.
+//
+// Deliberately DIRECTIONAL, not symmetric: sourceProfileId->targetProfileId
+// and targetProfileId->sourceProfileId are two separate rows and CAN differ
+// (e.g. REQUIRE_TARGET_ACCEPTANCE boundaries, or intention preferences that
+// aren't mirrored on both sides) - this must never be assumed symmetric.
+model CompatibilityScore {
+  id               String    @id @default(uuid())
+  sourceProfileId  String
+  sourceProfile    Profile   @relation("CompatibilityScoreSource", fields: [sourceProfileId], references: [id], onDelete: Cascade)
+  targetProfileId  String
+  targetProfile    Profile   @relation("CompatibilityScoreTarget", fields: [targetProfileId], references: [id], onDelete: Cascade)
+  score            Int
+  algorithmVersion String
+  breakdown        Json
+  reasons          Json
+  calculatedAt     DateTime  @default(now())
+  expiresAt        DateTime?
+
+  @@unique([sourceProfileId, targetProfileId, algorithmVersion])
+  @@index([targetProfileId])
+  @@map("compatibility_scores")
+}
+
+// 5.6 — BETWEEN_SCORE_V2 weights, admin-editable, never hardcoded in a
+// route. Same single-row-per-version pattern as ReferralRule. Weights are
+// stored as 0-1 fractions and are expected to sum to 1.0, but that's a
+// convention this table doesn't enforce at the DB level (validated by
+// BetweenScoreConfigService instead) - matches how ReferralRule also
+// trusts its own service layer rather than DB constraints for business
+// rules.
+model BetweenScoreConfig {
+  id                        String   @id @default(uuid())
+  algorithmVersion          String   @unique
+  weightIntentions          Float    @default(0.30)
+  weightBoundaries          Float    @default(0.30)
+  weightRelationshipContext Float    @default(0.15)
+  weightDiscretion          Float    @default(0.10)
+  weightLocation            Float    @default(0.10)
+  weightConversationPace    Float    @default(0.05)
+  active                    Boolean  @default(true)
+  updatedAt                 DateTime @updatedAt
+  updatedByUserId           String?
+
+  @@map("between_score_configs")
 }
 
 model AdminAction {

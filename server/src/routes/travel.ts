@@ -46,6 +46,12 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
       }
     })
 
+    // 5.8 — Travel Mode now actually feeds BetweenScoreService's location
+    // dimension (5.2 pipeline step 10) - before Sprint 5 this route had
+    // zero effect on discovery at all, so there was nothing to invalidate.
+    const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+    await invalidateScoresForProfile(profile.id).catch(() => {})
+
     res.status(201).json({ travelMode: travel })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
@@ -61,6 +67,8 @@ router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     where: { id: req.params.id },
     data: { active: false }
   })
+  const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+  await invalidateScoresForProfile(profile.id).catch(() => {})
   res.json({ ok: true })
 })
 

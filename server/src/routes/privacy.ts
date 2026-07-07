@@ -94,16 +94,24 @@ router.post('/block/:profileId', requireAuth, async (req: AuthRequest, res: Resp
       }
     })
 
-    // End any active match
-    await prisma.match.updateMany({
+    // 5.9 — End any active match via MatchStateMachine.transition() instead
+    // of a raw updateMany({status:'BLOCKED'}) - BLOCK is valid from every
+    // non-terminal state (matchStateMachine.ts), and MATCH_BLOCKED's domain
+    // event (5.10) revokes any standing private-photo access between the
+    // two profiles, which the old raw update never did.
+    const affectedMatches = await prisma.match.findMany({
       where: {
         OR: [
           { profileOneId: myProfile.id, profileTwoId: req.params.profileId },
           { profileOneId: req.params.profileId, profileTwoId: myProfile.id }
         ]
       },
-      data: { status: 'BLOCKED' }
+      select: { id: true }
     })
+    if (affectedMatches.length > 0) {
+      const { transition } = await import('../lib/matchService')
+      await Promise.all(affectedMatches.map(m => transition(m.id, 'BLOCK').catch(() => {})))
+    }
 
     res.json({ ok: true })
   } catch (err: any) {

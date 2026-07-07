@@ -80,6 +80,10 @@ async function upsertIntentions(profileId: string, intentions: { slug: string; p
       return { profileId, intentionId: ir.id, preference: match?.preference || 'YES' }
     })
   })
+  // 5.8 — single hook point for all 4 call sites (PUT /me, PUT /:id, POST /
+  // create+update branches) instead of invalidating at each route.
+  const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+  await invalidateScoresForProfile(profileId).catch(() => {})
 }
 
 router.get('/onboarding/steps', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -164,6 +168,12 @@ router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
         ...(data.discretionLevel  !== undefined && { discretionLevel: data.discretionLevel }),
       }
     })
+    // 5.8 — relationshipStatus/discretionLevel/city/location all feed
+    // BetweenScoreService directly, independent of whether intentions were
+    // also touched in this same request (upsertIntentions invalidates on
+    // its own path, redundant-but-harmless if both fire).
+    const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+    await invalidateScoresForProfile(updated.id).catch(() => {})
     if (data.intentions?.length) await upsertIntentions(updated.id, normaliseIntentions(data.intentions))
     res.json(updated)
   } catch (err: any) {
@@ -195,6 +205,8 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
           ...(data.discretionLevel  !== undefined && { discretionLevel: data.discretionLevel }),
         }
       })
+      const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+      await invalidateScoresForProfile(updated.id).catch(() => {})
       if (data.intentions?.length) await upsertIntentions(updated.id, normaliseIntentions(data.intentions))
       return res.json(updated)
     }
@@ -277,6 +289,8 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
         ...(data.discretionLevel  !== undefined && { discretionLevel: data.discretionLevel }),
       }
     })
+    const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+    await invalidateScoresForProfile(updated.id).catch(() => {})
     if (data.intentions?.length) await upsertIntentions(updated.id, normaliseIntentions(data.intentions))
     res.json(updated)
   } catch (err: any) {
@@ -318,6 +332,8 @@ router.put('/me/boundaries', requireAuth, async (req: AuthRequest, res: Response
   if (!Array.isArray(boundaries)) return res.status(400).json({ error: 'Formato inválido.' })
   await prisma.profileBoundary.deleteMany({ where: { profileId } })
   await prisma.profileBoundary.createMany({ data: boundaries.map((b: any) => ({ profileId, boundaryId: b.boundaryId, preference: b.preference })) })
+  const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+  await invalidateScoresForProfile(profileId).catch(() => {})
   res.json({ message: 'Limites actualizados.' })
 })
 
@@ -328,6 +344,8 @@ router.put('/:id/boundaries', requireAuth, async (req: AuthRequest, res: Respons
   if (!Array.isArray(boundaries)) return res.status(400).json({ error: 'Formato inválido.' })
   await prisma.profileBoundary.deleteMany({ where: { profileId: profile.id } })
   await prisma.profileBoundary.createMany({ data: boundaries.map((b: any) => ({ profileId: profile.id, boundaryId: b.boundaryId, preference: b.preference })) })
+  const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+  await invalidateScoresForProfile(profile.id).catch(() => {})
   res.json({ message: 'Limites actualizados.' })
 })
 

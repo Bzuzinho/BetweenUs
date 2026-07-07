@@ -49,6 +49,12 @@ router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       .filter((s: any) => s.interestId && ['YES', 'MAYBE', 'NO'].includes(s.preference))
       .map((s: any) => ({ profileId: profile.id, interestId: s.interestId, preference: s.preference }))
   })
+  // 5.8 note: private interests deliberately do NOT need score
+  // invalidation here - they're not part of BetweenScoreService's weighted
+  // score/breakdown at all, and CompatibilityExplanationService's aggregate
+  // "N private compatibility signals aligned" line is computed fresh on
+  // every discovery read (never stored inside the cached CompatibilityScore
+  // row), so there's nothing stale to invalidate.
   res.json({ ok: true })
 })
 

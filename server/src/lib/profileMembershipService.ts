@@ -87,10 +87,17 @@ export const acceptMembership = async (inviteToken: string, userId: string) => {
     where: { inviteToken, status: 'PENDING' }
   })
   if (!invite) return null
-  return (prisma as any).profileMember.update({
+  const updated = await (prisma as any).profileMember.update({
     where: { id: invite.id },
     data: { userId, status: 'ACCEPTED', respondedAt: new Date(), inviteToken: null }
   })
+  // 5.8 — a couple/group going from 1 to 2+ active members changes what
+  // "this profile" effectively is for compatibility purposes (relationship
+  // context, who's behind it) - invalidate rather than leave a stale score
+  // computed against the pre-acceptance membership.
+  const { invalidateScoresForProfile } = await import('./scoreInvalidationService')
+  await invalidateScoresForProfile(invite.profileId).catch(() => {})
+  return updated
 }
 
 export const declineMembership = async (inviteToken: string) => {
@@ -114,4 +121,8 @@ export const removeMember = async (profileId: string, userId: string): Promise<v
     where: { profileId, userId },
     data: { status: 'DECLINED', respondedAt: new Date() }
   })
+  // 5.8 — same reasoning as acceptMembership: membership shrinking changes
+  // the profile's effective compatibility inputs.
+  const { invalidateScoresForProfile } = await import('./scoreInvalidationService')
+  await invalidateScoresForProfile(profileId).catch(() => {})
 }

@@ -161,13 +161,17 @@ router.post('/matches/:matchId/approve', requireAuth, async (req: AuthRequest, r
     const approvedUserIds = new Set(approvals.map(a => a.userId))
     const allApproved = requiredApprovers.every(uid => approvedUserIds.has(uid))
 
+    // 5.9 — CoupleMatchApproval bookkeeping (above) stays here, it's a
+    // separate model from Match.status. But the actual status flip now
+    // goes through MatchStateMachine.transition() instead of a raw
+    // prisma.match.update - ACTIVATE's MATCH_ACTIVATED domain event (5.10)
+    // sends the "match ativo" notification to every active member of both
+    // profiles, so the manual notifyUser loop that used to live here is
+    // no longer needed.
     if (allApproved) {
-      await prisma.match.update({ where: { id: match.id }, data: { status: 'ACTIVE', matchedAt: new Date() } })
-      const { notifyUser } = await import('../lib/notify')
-      requiredApprovers
-        .filter(uid => uid !== req.userId)
-        .forEach(uid => notifyUser(uid, 'match', '💫 Match ativo!',
-          'Todos aprovaram. Já podem conversar.', { matchId: match.id, tab: 'matches' }).catch(() => {}))
+      const { transition } = await import('../lib/matchService')
+      const result = await transition(match.id, 'ACTIVATE')
+      if (!result.ok) return res.status(409).json({ error: result.error })
       return res.json({ ok: true, active: true, message: 'Todos aprovaram! Match ativo.' })
     }
 
