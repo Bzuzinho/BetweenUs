@@ -6,6 +6,7 @@ import { signMediaUrl } from '../lib/mediaAccessService'
 import { getVerificationBadges } from '../lib/verificationBadges'
 import { evaluateIntentionCompatibility, type ProfileIntentionInput } from '../lib/intentionCompatibilityService'
 import { evaluateBoundaryCompatibility, type ProfileBoundaryInput } from '../lib/boundaryCompatibilityService'
+import { evaluateCompleteness } from '../lib/profileCompletenessService'
 
 const router = Router()
 
@@ -142,6 +143,19 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       take: 100,
     })
 
+    // 4.9: a candidate missing a viewable photo, or a COUPLE/GROUP still
+    // missing an active member, isn't really "discoverable" regardless of
+    // Profile.status — this is ProfileCompletenessService's first real
+    // consumer, deliberately gating only on those two fields (not the full
+    // score) since those are the ones that make a card non-functional to
+    // show, not just less filled-in than it could be.
+    const completenessEntries = await Promise.all(
+      profiles.map(async p => ({ id: p.id, result: await evaluateCompleteness(p as any) }))
+    )
+    const completenessByProfileId = new Map<string, Awaited<ReturnType<typeof evaluateCompleteness>>>(
+      completenessEntries.map(e => [e.id, e.result])
+    )
+
     // Sprint 2.5 audit: privacySettings was already fetched here but never
     // actually used to filter — a profile with invisibleMode/visibleInDiscovery
     // off (Premium 'Modo Invisível') still appeared in everyone's discovery.
@@ -155,6 +169,9 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       // example: couple YES seek_third, individual explicit NO seek_couple.
       if (!evaluateIntentionCompatibility(toIntentionInputs(viewerProfile), toIntentionInputs(p)).compatible) return false
       if (!evaluateIntentionCompatibility(toIntentionInputs(p), toIntentionInputs(viewerProfile)).compatible) return false
+      const completeness = completenessByProfileId.get(p.id)
+      if (completeness?.missing.includes('PRIMARY_PHOTO')) return false
+      if (completeness?.missing.includes('MEMBERS')) return false
       return true
     })
 

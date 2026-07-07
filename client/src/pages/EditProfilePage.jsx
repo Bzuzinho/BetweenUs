@@ -33,6 +33,20 @@ const DISCRETION = [
   { value:'OPEN',      label:'Perfil aberto',         desc:'Visível para todos na plataforma' },
 ]
 
+// 4.9 — pure display labels for ProfileCompletenessService's `missing`
+// codes. The score/logic itself always comes from the backend; this is
+// only translating field codes to PT copy, nothing computed here.
+const COMPLETENESS_LABELS = {
+  DISPLAY_NAME:     'nome de exibição',
+  MEMBERS:          'convidar parceiro/membros',
+  GENDER:           'género',
+  INTENTIONS:       'o que procuras',
+  BOUNDARIES:       'mapa de limites',
+  PRIMARY_PHOTO:    'foto de perfil',
+  PRIVACY_SETTINGS: 'definições de privacidade',
+  BIO:              'biografia',
+}
+
 export default function EditProfilePage() {
   const navigate = useNavigate()
   const [form, setForm] = useState(null)
@@ -46,6 +60,7 @@ export default function EditProfilePage() {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
+  const [completeness, setCompleteness] = useState(null)
 
   useEffect(() => {
     api.get('/catalog/intentions').then(r => setCatalogIntentions(r.data.intentions || [])).catch(() => {})
@@ -68,6 +83,9 @@ export default function EditProfilePage() {
       const b = {}
       ;(p.boundaries || []).forEach(pb => { b[pb.boundaryId] = pb.preference })
       setBoundaryPrefs(b)
+      // 4.9: score/missing come straight from ProfileCompletenessService —
+      // never computed or guessed on the frontend.
+      setCompleteness(p.completeness || null)
     }).catch(() => navigate('/create-profile'))
     .finally(() => setLoading(false))
   }, [])
@@ -122,6 +140,17 @@ export default function EditProfilePage() {
 
         {msg   && <div style={{ background:'rgba(74,222,128,0.08)', border:`1px solid rgba(74,222,128,0.25)`, borderRadius:12, padding:'11px 14px', marginBottom:14, color:C.success, fontSize:14 }}>{msg}</div>}
         {error && <div style={{ background:'rgba(248,113,113,0.08)', border:`1px solid rgba(248,113,113,0.25)`, borderRadius:12, padding:'11px 14px', marginBottom:14, color:C.danger, fontSize:14 }}>{error}</div>}
+        {completeness && !completeness.complete && (
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:'12px 16px', marginBottom:14 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:C.text }}>Perfil {completeness.score}% completo</div>
+            </div>
+            <div style={{ height:6, borderRadius:3, background:C.input, overflow:'hidden', marginBottom:8 }}>
+              <div style={{ height:'100%', width:`${completeness.score}%`, background:C.primary, borderRadius:3 }}/>
+            </div>
+            <div style={{ fontSize:12, color:C.muted }}>Falta: {completeness.missing.map(f => COMPLETENESS_LABELS[f] || f).join(', ')}</div>
+          </div>
+        )}
 
         {/* Dados básicos */}
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:20, marginBottom:14 }}>

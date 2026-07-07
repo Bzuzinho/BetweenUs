@@ -6,6 +6,7 @@ import { coarsenCoordinate } from '../utils/location'
 import { mergePhotosForViewer } from '../lib/mediaAccessService'
 import { getVerificationBadges } from '../lib/verificationBadges'
 import { isActiveMember, getActiveMembers } from '../lib/profileMembershipService'
+import { evaluateCompleteness } from '../lib/profileCompletenessService'
 
 const router = Router()
 
@@ -110,7 +111,10 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     viewerProfileId: profile.id
   })
   // 3.4: public verification badge, derived from Verification.status, not exposed elsewhere
-  res.json({ ...safeProfile, photos: resolvedPhotos, verificationBadges: getVerificationBadges(user?.verification) })
+  // 4.9: completeness is computed server-side so the frontend never hardcodes
+  // a percentage — { score, complete, missing: [...] }
+  const completeness = await evaluateCompleteness(profile as any)
+  res.json({ ...safeProfile, photos: resolvedPhotos, verificationBadges: getVerificationBadges(user?.verification), completeness })
 })
 
 // PUT /api/profiles/me  ← new: edit own profile
