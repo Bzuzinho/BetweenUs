@@ -330,6 +330,7 @@ model Profile {
   photos           ProfilePhoto[]
   intentions       ProfileIntention[]
   boundaries       ProfileBoundary[]
+  privateInterests ProfilePrivateInterest[]
   privacySettings  PrivacySettings?
   actionsGiven     ProfileAction[]   @relation("ActionActor")
   actionsReceived  ProfileAction[]   @relation("ActionTarget")
@@ -477,6 +478,37 @@ model ProfileBoundary {
 
   @@unique([profileId, boundaryId])
   @@map("profile_boundaries")
+}
+
+// 4.8 — Private Interests ("fetiches privados"). Deliberately a SEPARATE
+// model from Intention/Boundary, not another category within them: these
+// selections must never be shown publicly in detail, only ever as an
+// aggregate count ("4 private interests aligned"), and only after some
+// future explicit-consent reveal flow — nothing here should make it easy
+// to accidentally expose which specific interests someone selected.
+model PrivateInterest {
+  id          String                   @id @default(uuid())
+  slug        String                   @unique
+  label       String
+  category    String?
+  description String?
+  active      Boolean                  @default(true)
+  sortOrder   Int                      @default(0)
+  profiles    ProfilePrivateInterest[]
+
+  @@map("private_interests")
+}
+
+model ProfilePrivateInterest {
+  id         String             @id @default(uuid())
+  profileId  String
+  profile    Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  interestId String
+  interest   PrivateInterest    @relation(fields: [interestId], references: [id])
+  preference BoundaryPreference // reuses YES/MAYBE/NO — same shape as ProfileBoundary, no need for a fourth preference enum
+
+  @@unique([profileId, interestId])
+  @@map("profile_private_interests")
 }
 
 model PrivacySettings {

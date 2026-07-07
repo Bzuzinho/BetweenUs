@@ -212,6 +212,29 @@ Para questões sobre privacidade: privacy@betweenus.app`,
   }
   console.log(`Seeded ${legalDocs.length} legal documents`)
 
+  console.log('Seeding private interests...')
+
+  // 4.8 — kept deliberately generic/non-explicit at the seed level; these
+  // are meant to be extended by an admin who knows the product's real
+  // taxonomy, not to ship a finished list here.
+  const privateInterests = [
+    { slug: 'roleplay',          label: 'Roleplay',                category: 'EXPERIENCE' },
+    { slug: 'power_dynamics',    label: 'Dinâmicas de poder',       category: 'EXPERIENCE' },
+    { slug: 'exhibitionism',     label: 'Exibicionismo',            category: 'EXPERIENCE' },
+    { slug: 'voyeurism',         label: 'Voyeurismo',               category: 'EXPERIENCE' },
+    { slug: 'group_experiences', label: 'Experiências em grupo',    category: 'EXPERIENCE' },
+    { slug: 'toys_exploration',  label: 'Exploração com brinquedos',category: 'EXPERIENCE' },
+    { slug: 'still_curious',     label: 'Ainda curioso/a',          category: 'EMOTIONAL' },
+  ]
+  for (const [index, interest] of privateInterests.entries()) {
+    await prisma.privateInterest.upsert({
+      where: { slug: interest.slug },
+      update: { label: interest.label, category: interest.category },
+      create: { slug: interest.slug, label: interest.label, category: interest.category, sortOrder: index, active: true },
+    })
+  }
+  console.log(`Seeded ${privateInterests.length} private interests`)
+
   console.log('Seed complete')
 }
 

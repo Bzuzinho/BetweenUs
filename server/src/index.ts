@@ -147,6 +147,7 @@ import catalogRouter         from './routes/catalog'
 import groupsRouter           from './routes/groups'
 import referralsRouter        from './routes/referrals'
 import legalRouter            from './routes/legal'
+import privateInterestsRouter from './routes/privateInterests'
 
 app.use('/api/auth',          authRouter)
 app.use('/api/profiles',      profileRouter)
@@ -172,6 +173,7 @@ app.use('/api/catalog',       catalogRouter)
 app.use('/api/groups',        groupsRouter)
 app.use('/api/referrals',     referralsRouter)
 app.use('/api/legal',          legalRouter)
+app.use('/api/private-interests', privateInterestsRouter)
 
 io.on('connection', socket => {
   socket.on('join_conversation',  (id: string) => socket.join('conversation:' + id))

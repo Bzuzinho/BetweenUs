@@ -2148,31 +2148,37 @@ function IntentionsManager() {
   )
 }
 
-/* ─── Gender options manager (Sprint 2.5.6) ──────────────────────────────────── */
-function CatalogOptionsManager({ apiPath, singularLabel }) {
+/* ─── Generic catalog options manager (Sprint 2.5.6, extended 4.4/4.8) ──────── */
+// basePath/dataKey let this be reused for routers that don't live under
+// /catalog/admin/:apiPath (e.g. private interests has its own router) —
+// they default to the original genders/orientations shape so nothing else
+// needs to change.
+function CatalogOptionsManager({ apiPath, singularLabel, basePath, dataKey, showCategory }) {
+  const base = basePath || `/catalog/admin/${apiPath}`
+  const key = dataKey || apiPath
   const [items, setItems] = useState([])
   const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ label:'', slug:'', description:'', active:true })
+  const [form, setForm] = useState({ label:'', slug:'', description:'', category:'', active:true })
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
 
-  const load = useCallback(() => { api.get(`/catalog/admin/${apiPath}`).then(r => setItems(r.data[apiPath]||[])) }, [])
+  const load = useCallback(() => { api.get(base).then(r => setItems(r.data[key]||[])) }, [])
   useEffect(() => { load() }, [load])
 
-  const openNew = () => { setForm({ label:'', slug:'', description:'', active:true }); setEditing('new'); setErr('') }
-  const openEdit = (g) => { setForm({ label:g.label, slug:g.slug, description:g.description||'', active:g.active }); setEditing(g); setErr('') }
+  const openNew = () => { setForm({ label:'', slug:'', description:'', category:'', active:true }); setEditing('new'); setErr('') }
+  const openEdit = (g) => { setForm({ label:g.label, slug:g.slug, description:g.description||'', category:g.category||'', active:g.active }); setEditing(g); setErr('') }
 
   const save = async () => {
     if (!form.label.trim() || !form.slug.trim()) return setErr('Nome e slug obrigatórios.')
     setSaving(true); setErr('')
     try {
-      if (editing === 'new') await api.post(`/catalog/admin/${apiPath}`, form)
-      else await api.put(`/catalog/admin/${apiPath}/${editing.id}`, form)
+      if (editing === 'new') await api.post(base, form)
+      else await api.put(`${base}/${editing.id}`, form)
       setEditing(null); load()
     } catch (e) { setErr(e.response?.data?.error || 'Erro ao guardar.') } finally { setSaving(false) }
   }
 
-  const toggleActive = async (g) => { await api.put(`/catalog/admin/${apiPath}/${g.id}`, { active: !g.active }).catch(()=>{}); load() }
+  const toggleActive = async (g) => { await api.put(`${base}/${g.id}`, { active: !g.active }).catch(()=>{}); load() }
 
   const del = async (g) => {
     if (g.usageCount > 0) {
@@ -2180,7 +2186,7 @@ function CatalogOptionsManager({ apiPath, singularLabel }) {
       return toggleActive({ ...g, active: true })
     }
     if (!confirm('Apagar esta opção?')) return
-    await api.delete(`/catalog/admin/${apiPath}/${g.id}`).catch(e => setErr(e.response?.data?.error || 'Erro ao apagar.'))
+    await api.delete(`${base}/${g.id}`).catch(e => setErr(e.response?.data?.error || 'Erro ao apagar.'))
     load()
   }
 
@@ -2198,6 +2204,10 @@ function CatalogOptionsManager({ apiPath, singularLabel }) {
       <input style={INP} value={form.slug} onChange={e=>setForm(p=>({...p,slug:e.target.value}))} disabled={editing!=='new'}/>
       <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>DESCRIÇÃO</label>
       <textarea style={{...INP, resize:'vertical'}} rows={2} value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))}/>
+      {showCategory && <>
+        <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>CATEGORIA</label>
+        <input style={INP} value={form.category} onChange={e=>setForm(p=>({...p,category:e.target.value}))}/>
+      </>}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:C.elevated, borderRadius:10, padding:'12px 14px' }}>
         <div style={{ fontSize:14, color:C.text }}>Activa</div>
         <div onClick={()=>setForm(p=>({...p,active:!p.active}))} style={{ width:44, height:24, borderRadius:12, cursor:'pointer', background:form.active?C.primary:C.input, position:'relative', border:`1px solid ${form.active?C.primary:C.border}` }}>
@@ -2236,6 +2246,11 @@ function GenderOptionsManager() {
 }
 function OrientationOptionsManager() {
   return <CatalogOptionsManager apiPath="orientations" singularLabel="orientação" />
+}
+// 4.8 — private interests live on their own router (never folded into the
+// public catalog namespace), so this wrapper passes an explicit basePath.
+function PrivateInterestsManager() {
+  return <CatalogOptionsManager apiPath="private-interests" basePath="/private-interests/admin" dataKey="interests" singularLabel="interesse privado" showCategory />
 }
 
 /* ─── Boundaries catalog manager (Sprint 2.5.8) ──────────────────────────────── */
@@ -2353,7 +2368,7 @@ function ConfiguracoesTab() {
     <div>
       {/* Subtab bar */}
       <div style={{ display:'flex', gap:6, marginBottom:20 }}>
-        {[['perfis','◎ Perfis'],['generos','⚧ Géneros'],['orientacoes','◇ Orientações'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
+        {[['perfis','◎ Perfis'],['generos','⚧ Géneros'],['orientacoes','◇ Orientações'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['interesses','✷ Interesses privados'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
           <button key={k} onClick={()=>setSubTab(k)} style={{
             background:subTab===k?C.primaryDim:C.surface,
             border:`1.5px solid ${subTab===k?C.primary:C.border}`,
@@ -2399,6 +2414,7 @@ function ConfiguracoesTab() {
       {/* ── Géneros subtab ── */}
       {subTab==='generos' && <GenderOptionsManager />}
       {subTab==='orientacoes' && <OrientationOptionsManager />}
+      {subTab==='interesses' && <PrivateInterestsManager />}
 
       {/* ── Intenções subtab ── */}
       {subTab==='intencoes' && <IntentionsManager />}
