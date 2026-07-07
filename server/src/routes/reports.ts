@@ -12,6 +12,10 @@ const router = Router()
 const reportSchema = z.object({
   reportedUserId: z.string().uuid().optional(),
   reportedMessageId: z.string().uuid().optional(),
+  // 10.8 — event report support: loose reference (no FK, matches
+  // reportedUserId/reportedMessageId's own pattern), lets an attendee
+  // flag a problematic event itself rather than a specific user/message.
+  reportedEventId: z.string().uuid().optional(),
   // 9.1 — disambiguates which table reportedMessageId points at. Optional
   // for backward-compat with existing clients that never set it (none
   // currently report a specific message at all) — when omitted, evidence
@@ -53,6 +57,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
         reporterUserId: req.userId!,
         reportedUserId: data.reportedUserId,
         reportedMessageId: data.reportedMessageId,
+        reportedEventId: data.reportedEventId,
         reason: data.reason,
         details: data.details,
         status: 'PENDING',

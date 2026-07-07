@@ -373,6 +373,8 @@ model User {
   roomRuleApprovals    RoomRuleApproval[]
   consentCheckResponses ConsentCheckResponse[]
   intentAlignmentApprovals IntentAlignmentApproval[]
+  guideArticlesAuthored GuideArticle[]
+  circlesCreatedByMe Circle[] @relation("CircleCreatedByAdmin")
 
   // 5.11 — discovery's candidate query joins on user.status (and
   // effectively adminRole via a null check) for every request.
@@ -417,6 +419,9 @@ model Profile {
   matchesAsTwo     Match[]           @relation("MatchProfileTwo")
   travelModes      TravelMode[]
   safetyCheckins   SafetyCheckin[]
+  organizedEvents  Event[]
+  eventAttendances EventAttendance[]
+  circleMemberships CircleMembership[]
   compatibilityScoresAsSource CompatibilityScore[] @relation("CompatibilityScoreSource")
   compatibilityScoresAsTarget CompatibilityScore[] @relation("CompatibilityScoreTarget")
 
@@ -742,6 +747,15 @@ model PrivacySettings {
   invisibleMode      Boolean          @default(false)
   notificationMode   NotificationMode @default(DISCREET)
   minDistanceKm      Int?
+  // 10.12 — Circle membership is never public by default. showCircleBadge
+  // controls whether OTHER members of a shared Circle can see a small
+  // membership badge on this profile; hideCircleMemberships suppresses
+  // that entirely regardless of any Circle-level visibility. Neither
+  // field feeds discovery/matching — Circle membership is deliberately
+  // never a discovery/compatibility signal (10.12: "não usar sem
+  // consentimento/configuração").
+  showCircleBadge       Boolean       @default(false)
+  hideCircleMemberships Boolean       @default(false)
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 
@@ -1167,6 +1181,7 @@ model Report {
   reportedUserId    String?
   reportedUser      User?        @relation("ReportedUser", fields: [reportedUserId], references: [id])
   reportedMessageId String?
+  reportedEventId   String?   // 10.8 — loose reference, same pattern as reportedMessageId (no FK)
   reason            ReportReason
   details           String?
   status            ReportStatus @default(PENDING)
@@ -1586,17 +1601,63 @@ model OrientationOption {
   @@map("orientation_options")
 }
 
+// 10.2 — controlled catalog, not an admin-editable table: the spec lists
+// an exact fixed set of 9 categories, same shape as ReportReason/
+// ConsentCheckPhase elsewhere in this schema (a closed enum) rather than
+// an open-ended GenderOption/OrientationOption-style DB catalog.
+enum GuideCategory {
+  CONSENT
+  COUPLES
+  OPEN_RELATIONSHIPS
+  POLYAMORY
+  PRIVACY
+  SAFETY
+  PROFILES
+  FIRST_MEETINGS
+  PRIVATE_INTERESTS
+}
+
+// 10.1 — evolves the existing GuideArticle (deliberately NOT a new
+// parallel model, per the spec's explicit instruction). New fields:
+// slug (public routing key, replaces id-based lookup), coverPath
+// (optional cover image, private R2 key like ProfilePhoto.storagePath —
+// signed at read time, never a public URL), authorId (optional — not
+// every article needs an attributed author), publishedAt (the real
+// source of truth going forward — see the note on `published` below),
+// readingTime (minutes, editor-set estimate), locale, seoTitle/
+// seoDescription (optional, only used for the public detail page's
+// <head> tags).
+//
+// published Boolean -> publishedAt DateTime? migration: kept BOTH
+// fields rather than dropping `published` outright. `published` stays
+// as a fast boolean filter (existing index-free WHERE published=true
+// queries keep working unchanged); `publishedAt` is the new source of
+// truth for "when" and is set/cleared by the service layer every time
+// `published` flips (see guideService.ts) rather than being editable
+// directly — a genuinely gradual migration: nothing that already reads
+// `published` breaks, and anything that wants the richer publishedAt
+// timestamp (recency sort, "how long has this been live") can use it
+// immediately.
 model GuideArticle {
-  id        String   @id @default(uuid())
-  title     String
-  category  String
-  summary   String?
-  body      String   @db.Text
-  icon      String?  @default("○")
-  published Boolean  @default(false)
-  sortOrder Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String        @id @default(uuid())
+  slug        String        @unique
+  title       String
+  category    GuideCategory
+  summary     String?
+  body        String        @db.Text
+  icon        String?       @default("○")
+  coverPath   String?
+  authorId    String?
+  author      User?         @relation(fields: [authorId], references: [id])
+  published   Boolean       @default(false)
+  publishedAt DateTime?
+  readingTime Int?
+  locale      String        @default("pt")
+  seoTitle    String?
+  seoDescription String?
+  sortOrder   Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   @@map("guide_articles")
 }
@@ -1612,4 +1673,150 @@ model PushSubscription {
   createdAt DateTime @default(now())
 
   @@map("push_subscriptions")
+}
+
+// ─── Events (Sprint 10) ─────────────────────────────────────────────────────
+// 10.8 — events require Admin approval before going PUBLISHED (DRAFT ->
+// PENDING_REVIEW -> PUBLISHED), regardless of PRIVATE_EVENTS_ENABLED —
+// that flag only gates whether the feature is reachable at all, it is
+// never a substitute for the approval step.
+enum EventStatus {
+  DRAFT
+  PENDING_REVIEW
+  PUBLISHED
+  CANCELLED
+  COMPLETED
+  SUSPENDED
+}
+
+// 10.7 — controls WHEN/TO WHOM the real venue is exposed. Enforced
+// server-side by eventVenuePolicy.ts, never just hidden in the client —
+// see that file's doc comment for exactly what each value strips from
+// the API response and when.
+enum VenueVisibility {
+  PUBLIC_CITY_ONLY
+  APPROVED_ATTENDEES
+  REVEAL_24H_BEFORE
+}
+
+model Event {
+  id                   String          @id @default(uuid())
+  organizerProfileId   String
+  organizerProfile     Profile         @relation(fields: [organizerProfileId], references: [id], onDelete: Cascade)
+  title                String
+  description          String          @db.Text
+  city                 String
+  country              String
+  // Full venue detail (address/name) is intentionally NOT modeled as its
+  // own indexed/queryable field here — see eventVenuePolicy.ts. Stored as
+  // a plain string, never returned to a client that doesn't currently
+  // pass the policy check.
+  venueDetail          String?
+  venueVisibility      VenueVisibility @default(PUBLIC_CITY_ONLY)
+  startsAt             DateTime
+  endsAt               DateTime?
+  capacity             Int?
+  verificationRequired Boolean         @default(true)
+  approvalRequired     Boolean         @default(true)
+  status               EventStatus     @default(DRAFT)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  attendances          EventAttendance[]
+
+  @@index([status])
+  @@index([city])
+  @@map("events")
+}
+
+// 10.6
+enum EventAttendanceStatus {
+  REQUESTED
+  APPROVED
+  DECLINED
+  CANCELLED
+  ATTENDED
+}
+
+model EventAttendance {
+  id          String                 @id @default(uuid())
+  eventId     String
+  event       Event                  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  profileId   String
+  profile     Profile                @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  status      EventAttendanceStatus  @default(REQUESTED)
+  requestedAt DateTime               @default(now())
+  approvedAt  DateTime?
+  cancelledAt DateTime?
+
+  @@unique([eventId, profileId])
+  @@map("event_attendances")
+}
+
+// ─── Circles (Sprint 10) ────────────────────────────────────────────────────
+// 10.9/10.11 — "Circles" is the product name. Admin-curated ONLY this
+// sprint: no user-facing creation route exists at all (see circles.ts) —
+// this is a deliberate security/moderation control, not a temporary
+// limitation left unfinished.
+enum CircleVisibility {
+  DISCOVERABLE
+  PRIVATE
+  INVITE_ONLY
+}
+
+enum CircleStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+model Circle {
+  id              String           @id @default(uuid())
+  slug            String           @unique
+  name            String
+  description     String?          @db.Text
+  city            String?
+  country         String?
+  visibility      CircleVisibility @default(DISCOVERABLE)
+  status          CircleStatus     @default(DRAFT)
+  createdByAdminId String
+  createdByAdmin  User             @relation("CircleCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  memberships     CircleMembership[]
+
+  @@map("circles")
+}
+
+// 10.10 — role is scoped to THIS circle only (LOCAL_MODERATOR), never the
+// global AdminRole enum from middleware/admin.ts — a Circle's local
+// moderator has no admin panel access and no permission beyond this one
+// community, by design (spec: "Não usar global AdminRole para moderator
+// de Circle").
+enum CircleMembershipStatus {
+  REQUESTED
+  APPROVED
+  DECLINED
+  LEFT
+  REMOVED
+}
+enum CircleMemberRole {
+  MEMBER
+  LOCAL_MODERATOR
+}
+
+model CircleMembership {
+  id        String                  @id @default(uuid())
+  circleId  String
+  circle    Circle                  @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  profileId String
+  profile   Profile                 @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  status    CircleMembershipStatus  @default(REQUESTED)
+  role      CircleMemberRole        @default(MEMBER)
+  joinedAt  DateTime                @default(now())
+
+  @@unique([circleId, profileId])
+  @@map("circle_memberships")
 }

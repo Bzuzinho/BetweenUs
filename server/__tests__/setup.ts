@@ -34,6 +34,10 @@ afterEach(async () => {
     // boundaries aren't - it's an admin-managed settings row, not per-test
     // data (tests that need custom weights create their own row explicitly).
     'compatibility_scores',
+    // 10.14 — Sprint 10 per-test tables. event_attendances/circle_memberships
+    // reference profiles so must precede it; events/circles themselves also
+    // precede 'profiles'/'users' respectively for the same FK reason.
+    'event_attendances', 'events', 'circle_memberships', 'circles', 'guide_articles',
     'couple_profiles', 'profiles',
     // 3.9: new Sprint 3 tables — must be cleaned between test suites too
     'legal_documents',

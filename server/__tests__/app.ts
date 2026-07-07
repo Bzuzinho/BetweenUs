@@ -37,6 +37,9 @@ import travelRouter from '../src/routes/travel'
 import roomsRouter from '../src/routes/rooms'
 import privacyRouter from '../src/routes/privacy'
 import safetyRouter from '../src/routes/safety'
+import guideRouter from '../src/routes/guide'
+import eventsRouter from '../src/routes/events'
+import circlesRouter from '../src/routes/circles'
 
 app.use('/api/auth', authRouter)
 app.use('/api/profiles', profileRouter)
@@ -60,6 +63,9 @@ app.use('/api/travel', travelRouter)
 app.use('/api/rooms', roomsRouter)
 app.use('/api/privacy', privacyRouter)
 app.use('/api/safety', safetyRouter)
+app.use('/api/guide', guideRouter)
+app.use('/api/events', eventsRouter)
+app.use('/api/circles', circlesRouter)
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   res.status(err.status || 500).json({ error: err.message })

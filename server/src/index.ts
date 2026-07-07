@@ -154,6 +154,8 @@ import referralsRouter        from './routes/referrals'
 import legalRouter            from './routes/legal'
 import privateInterestsRouter from './routes/privateInterests'
 import agreementsRouter        from './routes/agreements'
+import eventsRouter            from './routes/events'
+import circlesRouter           from './routes/circles'
 
 app.use('/api/auth',          authRouter)
 app.use('/api/profiles',      profileRouter)
@@ -181,6 +183,8 @@ app.use('/api/referrals',     referralsRouter)
 app.use('/api/legal',          legalRouter)
 app.use('/api/private-interests', privateInterestsRouter)
 app.use('/api/agreements',    agreementsRouter)
+app.use('/api/events',         eventsRouter)
+app.use('/api/circles',        circlesRouter)
 
 // 7.8 — Socket.IO authentication. The Sprint 7 audit found NO auth at all
 // on the connection handshake: any socket (authenticated HTTP session or

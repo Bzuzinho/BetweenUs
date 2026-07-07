@@ -1735,7 +1735,15 @@ function EmailDiagnosticPanel() {
 
 
 /* ─── Guide Manager (Between Guide content) ─────────────────────────────────── */
-const GUIDE_CATS = ['Casais','Comunicação','Privacidade','Consentimento','Relações','Segurança','Perfil','Outro']
+// 10.2 — controlled catalog (matches server's GuideCategory enum exactly).
+// GUIDE_CAT_LABELS maps enum value -> PT display label for the admin UI;
+// GUIDE_CATS is the list of enum values the picker cycles through.
+const GUIDE_CAT_LABELS = {
+  CONSENT: 'Consentimento', COUPLES: 'Casais', OPEN_RELATIONSHIPS: 'Relações abertas',
+  POLYAMORY: 'Poliamor', PRIVACY: 'Privacidade', SAFETY: 'Segurança',
+  PROFILES: 'Perfil', FIRST_MEETINGS: 'Primeiros encontros', PRIVATE_INTERESTS: 'Interesses privados',
+}
+const GUIDE_CATS = Object.keys(GUIDE_CAT_LABELS)
 const GUIDE_ICONS = ['○','◎','◉','◌','◑','◈','⊙','∞','✓','⚑']
 
 function AffiliateRuleManager() {
@@ -1819,7 +1827,7 @@ function GuideManager() {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
-  const [form, setForm] = useState({ title:'', category:'Privacidade', summary:'', body:'', icon:'○', published:false, sortOrder:0 })
+  const [form, setForm] = useState({ title:'', category:'PRIVACY', summary:'', body:'', icon:'○', published:false, sortOrder:0, slug:'', locale:'pt', seoTitle:'', seoDescription:'' })
 
   const load = useCallback(() => {
     api.get('/guide/admin/all').then(r => setArticles(r.data.articles||[])).catch(()=>{}).finally(()=>setLoading(false))
@@ -1828,13 +1836,13 @@ function GuideManager() {
   useEffect(() => { load() }, [load])
 
   const openNew = () => {
-    setForm({ title:'', category:'Privacidade', summary:'', body:'', icon:'○', published:false, sortOrder: articles.length })
+    setForm({ title:'', category:'PRIVACY', summary:'', body:'', icon:'○', published:false, sortOrder: articles.length, slug:'', locale:'pt', seoTitle:'', seoDescription:'' })
     setEditing('new')
     setMsg(''); setErr('')
   }
 
   const openEdit = (a) => {
-    setForm({ title:a.title, category:a.category, summary:a.summary||'', body:a.body||'', icon:a.icon||'○', published:a.published, sortOrder:a.sortOrder||0 })
+    setForm({ title:a.title, category:a.category, summary:a.summary||'', body:a.body||'', icon:a.icon||'○', published:a.published, sortOrder:a.sortOrder||0, slug:a.slug||'', locale:a.locale||'pt', seoTitle:a.seoTitle||'', seoDescription:a.seoDescription||'' })
     setEditing(a)
     setMsg(''); setErr('')
   }
@@ -1863,7 +1871,10 @@ function GuideManager() {
   }
 
   const togglePublish = async (a) => {
-    await api.put(`/guide/admin/${a.id}`, { published: !a.published }).catch(()=>{})
+    // 10.3 — explicit publish/unpublish actions (not a raw PUT of the
+    // boolean) so the server's applyPublishState bridge keeps
+    // published/publishedAt in sync in exactly one place.
+    await api.post(`/guide/admin/${a.id}/${a.published ? 'unpublish' : 'publish'}`).catch(()=>{})
     load()
   }
 
@@ -1905,7 +1916,7 @@ function GuideManager() {
               background:form.category===c?C.primaryDim:C.elevated,
               border:`1px solid ${form.category===c?C.primary:C.border}`,
               borderRadius:8, padding:'6px 12px', color:form.category===c?C.primary:C.text2, fontSize:12, cursor:'pointer'
-            }}>{c}</button>
+            }}>{GUIDE_CAT_LABELS[c]}</button>
           ))}
         </div>
       </div>
@@ -1926,6 +1937,23 @@ function GuideManager() {
           style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14 }}/>
       </div>
 
+      {/* Slug / Locale — 10.1: slug is optional on create (auto-generated
+          from the title), editable afterwards; locale defaults to 'pt'. */}
+      <div style={{ display:'flex', gap:10, marginBottom:10 }}>
+        <div style={{ flex:2 }}>
+          <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Slug</div>
+          <input value={form.slug} onChange={e=>setForm(p=>({...p,slug:e.target.value}))}
+            placeholder="gerado automaticamente se vazio"
+            style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14, boxSizing:'border-box' }}/>
+        </div>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Idioma</div>
+          <input value={form.locale} onChange={e=>setForm(p=>({...p,locale:e.target.value}))}
+            placeholder="pt"
+            style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14, boxSizing:'border-box' }}/>
+        </div>
+      </div>
+
       {/* Body */}
       <div style={{ marginBottom:14 }}>
         <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Conteúdo *</div>
@@ -1933,6 +1961,16 @@ function GuideManager() {
           placeholder="Escreve o conteúdo completo do artigo..."
           rows={12}
           style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14, resize:'vertical', lineHeight:1.6 }}/>
+      </div>
+
+      {/* SEO (optional) */}
+      <div style={{ marginBottom:14 }}>
+        <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>SEO título (opcional)</div>
+        <input value={form.seoTitle} onChange={e=>setForm(p=>({...p,seoTitle:e.target.value}))}
+          style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14, marginBottom:10, boxSizing:'border-box' }}/>
+        <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>SEO descrição (opcional)</div>
+        <input value={form.seoDescription} onChange={e=>setForm(p=>({...p,seoDescription:e.target.value}))}
+          style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14, boxSizing:'border-box' }}/>
       </div>
 
       {/* Published toggle */}
@@ -1982,7 +2020,7 @@ function GuideManager() {
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:2 }}>{a.title}</div>
                 <div style={{ fontSize:11, color:C.muted }}>
-                  {a.category} · {a.published ? <span style={{color:C.success}}>● Publicado</span> : <span>○ Rascunho</span>}
+                  {GUIDE_CAT_LABELS[a.category] || a.category} · {a.locale || 'pt'} · {a.published ? <span style={{color:C.success}}>● Publicado</span> : <span>○ Rascunho</span>}
                 </div>
                 {a.summary && <div style={{ fontSize:12, color:C.text2, marginTop:4, lineHeight:1.4 }}>{a.summary}</div>}
               </div>
@@ -1997,6 +2035,213 @@ function GuideManager() {
               <button onClick={() => del(a.id)} style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.muted, fontSize:12, cursor:'pointer' }}>
                 🗑
               </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* ─── Events Manager (10.8 — moderation queue, mandatory approval) ─────────── */
+function EventsManager() {
+  const [events, setEvents] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState('PENDING_REVIEW')
+
+  const load = useCallback(() => {
+    setLoading(true)
+    const url = filter === 'PENDING_REVIEW' ? '/events/admin/queue' : '/events/admin/all'
+    api.get(url).then(r => setEvents(r.data.events || [])).catch(() => {}).finally(() => setLoading(false))
+  }, [filter])
+
+  useEffect(() => { load() }, [load])
+
+  const act = async (id, action) => {
+    await api.post(`/events/admin/${id}/${action}`).catch(() => {})
+    load()
+  }
+
+  const STATUS_LABEL = {
+    DRAFT: 'Rascunho', PENDING_REVIEW: 'Em revisão', PUBLISHED: 'Publicado',
+    CANCELLED: 'Cancelado', COMPLETED: 'Concluído', SUSPENDED: 'Suspenso',
+  }
+  const STATUS_COLOR = {
+    PENDING_REVIEW: C.warning, PUBLISHED: C.success, CANCELLED: C.danger,
+    SUSPENDED: C.danger, DRAFT: C.muted, COMPLETED: C.muted,
+  }
+
+  return (
+    <div>
+      <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.2)`, borderRadius:12, padding:'12px 16px', marginBottom:16, fontSize:13, color:C.primary, lineHeight:1.5 }}>
+        10.8 — todo o evento passa por aprovação manual antes de ficar visível. Nenhuma criação de evento é aberta ou não moderada.
+      </div>
+
+      <div style={{ display:'flex', gap:6, marginBottom:16 }}>
+        {[['PENDING_REVIEW','Fila de revisão'],['ALL','Todos']].map(([k,l]) => (
+          <button key={k} onClick={() => setFilter(k)} style={{
+            background:filter===k?C.primaryDim:C.surface, border:`1.5px solid ${filter===k?C.primary:C.border}`,
+            borderRadius:10, padding:'8px 14px', color:filter===k?C.primary:'#C8D4DC', fontSize:13, cursor:'pointer'
+          }}>{l}</button>
+        ))}
+      </div>
+
+      {loading && <div style={{ color:C.muted, padding:20, textAlign:'center' }}>A carregar…</div>}
+      {!loading && events.length === 0 && (
+        <div style={{ textAlign:'center', padding:'40px 20px', color:C.muted }}>Sem eventos {filter==='PENDING_REVIEW' ? 'pendentes' : ''}.</div>
+      )}
+
+      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+        {events.map(e => (
+          <div key={e.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:'12px 14px' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:10 }}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:14, fontWeight:500, color:C.text }}>{e.title}</div>
+                <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>
+                  {e.city}, {e.country} · {new Date(e.startsAt).toLocaleDateString('pt-PT')} · organizador: {e.organizerProfile?.displayName || e.organizerProfileId}
+                </div>
+              </div>
+              <span style={{ fontSize:11, color:STATUS_COLOR[e.status]||C.muted, border:`1px solid ${C.border}`, borderRadius:8, padding:'3px 8px', flexShrink:0 }}>
+                {STATUS_LABEL[e.status] || e.status}
+              </span>
+            </div>
+            {e.status === 'PENDING_REVIEW' && (
+              <div style={{ display:'flex', gap:6, marginTop:10 }}>
+                <button onClick={() => act(e.id, 'approve')} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:6, padding:'5px 12px', color:C.success, fontSize:12, cursor:'pointer' }}>Aprovar</button>
+                <button onClick={() => act(e.id, 'reject')} style={{ background:C.dangerDim, border:`1px solid ${C.danger}`, borderRadius:6, padding:'5px 12px', color:C.danger, fontSize:12, cursor:'pointer' }}>Rejeitar</button>
+              </div>
+            )}
+            {e.status === 'PUBLISHED' && (
+              <div style={{ display:'flex', gap:6, marginTop:10 }}>
+                <button onClick={() => act(e.id, 'suspend')} style={{ background:C.dangerDim, border:`1px solid ${C.danger}`, borderRadius:6, padding:'5px 12px', color:C.danger, fontSize:12, cursor:'pointer' }}>Suspender</button>
+              </div>
+            )}
+            {e.status === 'SUSPENDED' && (
+              <div style={{ display:'flex', gap:6, marginTop:10 }}>
+                <button onClick={() => act(e.id, 'resume')} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:6, padding:'5px 12px', color:C.success, fontSize:12, cursor:'pointer' }}>Retomar</button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* ─── Circles Manager (10.11 — admin-curated only, no user-facing creation) ── */
+function CirclesManager() {
+  const [circles, setCircles] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState(null)
+  const [form, setForm] = useState({ name:'', description:'', city:'', country:'', visibility:'DISCOVERABLE', status:'DRAFT' })
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  const load = useCallback(() => {
+    api.get('/circles/admin/all').then(r => setCircles(r.data.circles || [])).catch(() => {}).finally(() => setLoading(false))
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const openNew = () => { setForm({ name:'', description:'', city:'', country:'', visibility:'DISCOVERABLE', status:'DRAFT' }); setEditing('new'); setErr('') }
+  const openEdit = (c) => { setForm({ name:c.name, description:c.description||'', city:c.city||'', country:c.country||'', visibility:c.visibility, status:c.status }); setEditing(c); setErr('') }
+
+  const save = async () => {
+    if (!form.name.trim()) return setErr('Nome obrigatório.')
+    setSaving(true); setErr('')
+    try {
+      if (editing === 'new') await api.post('/circles/admin', form)
+      else await api.put(`/circles/admin/${editing.id}`, form)
+      setEditing(null); load()
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Erro ao guardar.')
+    } finally { setSaving(false) }
+  }
+
+  const del = async (id) => {
+    if (!confirm('Eliminar Circle?')) return
+    await api.delete(`/circles/admin/${id}`).catch(() => {})
+    load()
+  }
+
+  const VIS_LABEL = { DISCOVERABLE:'Descoberta pública', PRIVATE:'Privado (link direto)', INVITE_ONLY:'Apenas convite' }
+  const STATUS_LABEL = { DRAFT:'Rascunho', ACTIVE:'Ativo', PAUSED:'Pausado', ARCHIVED:'Arquivado' }
+
+  if (editing !== null) return (
+    <div>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20 }}>
+        <button onClick={() => setEditing(null)} style={{ background:'none', border:'none', color:C.muted, fontSize:20, cursor:'pointer' }}>←</button>
+        <h3 style={{ color:C.text, fontSize:16, fontWeight:500, margin:0, flex:1 }}>{editing === 'new' ? 'Novo Circle' : 'Editar Circle'}</h3>
+        <button onClick={save} disabled={saving} style={{ background:C.primary, border:'none', borderRadius:8, padding:'8px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer', opacity:saving?0.6:1 }}>{saving?'…':'Guardar'}</button>
+      </div>
+      {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+
+      <div style={{ marginBottom:10 }}>
+        <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Nome *</div>
+        <input value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}
+          style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14, boxSizing:'border-box' }}/>
+      </div>
+      <div style={{ marginBottom:10 }}>
+        <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Descrição</div>
+        <textarea value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))} rows={4}
+          style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14, boxSizing:'border-box', resize:'vertical' }}/>
+      </div>
+      <div style={{ display:'flex', gap:10, marginBottom:10 }}>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>Cidade</div>
+          <input value={form.city} onChange={e=>setForm(p=>({...p,city:e.target.value}))}
+            style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14, boxSizing:'border-box' }}/>
+        </div>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:4 }}>País</div>
+          <input value={form.country} onChange={e=>setForm(p=>({...p,country:e.target.value}))}
+            style={{ width:'100%', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:10, padding:'11px 14px', color:C.text, fontSize:14, boxSizing:'border-box' }}/>
+        </div>
+      </div>
+      <div style={{ marginBottom:10 }}>
+        <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>Visibilidade</div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+          {Object.keys(VIS_LABEL).map(v => (
+            <button key={v} onClick={() => setForm(p=>({...p,visibility:v}))} style={{
+              background:form.visibility===v?C.primaryDim:C.elevated, border:`1px solid ${form.visibility===v?C.primary:C.border}`,
+              borderRadius:8, padding:'6px 12px', color:form.visibility===v?C.primary:C.text2, fontSize:12, cursor:'pointer'
+            }}>{VIS_LABEL[v]}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ marginBottom:10 }}>
+        <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>Estado</div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+          {Object.keys(STATUS_LABEL).map(v => (
+            <button key={v} onClick={() => setForm(p=>({...p,status:v}))} style={{
+              background:form.status===v?C.primaryDim:C.elevated, border:`1px solid ${form.status===v?C.primary:C.border}`,
+              borderRadius:8, padding:'6px 12px', color:form.status===v?C.primary:C.text2, fontSize:12, cursor:'pointer'
+            }}>{STATUS_LABEL[v]}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+
+  return (
+    <div>
+      <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.2)`, borderRadius:12, padding:'12px 16px', marginBottom:16, fontSize:13, color:C.primary, lineHeight:1.5 }}>
+        10.11 — Circles só podem ser criados aqui. Não existe nenhuma rota pública de criação, por decisão de segurança e moderação.
+      </div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+        <div style={{ fontSize:15, fontWeight:500, color:C.text }}>{circles.length} Circles</div>
+        <button onClick={openNew} style={{ background:C.primary, border:'none', borderRadius:10, padding:'9px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>+ Novo Circle</button>
+      </div>
+      {loading && <div style={{ color:C.muted, padding:20, textAlign:'center' }}>A carregar…</div>}
+      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+        {circles.map(c => (
+          <div key={c.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:'12px 14px' }}>
+            <div style={{ fontSize:14, fontWeight:500, color:C.text }}>{c.name}</div>
+            <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>
+              {c.slug} · {VIS_LABEL[c.visibility]} · {STATUS_LABEL[c.status]} {c.city ? `· ${c.city}` : ''}
+            </div>
+            <div style={{ display:'flex', gap:6, marginTop:10 }}>
+              <button onClick={() => openEdit(c)} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.text2, fontSize:12, cursor:'pointer' }}>✏️ Editar</button>
+              <button onClick={() => del(c.id)} style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.muted, fontSize:12, cursor:'pointer' }}>🗑</button>
             </div>
           </div>
         ))}
@@ -2557,7 +2802,7 @@ function ConfiguracoesTab() {
     <div>
       {/* Subtab bar */}
       <div style={{ display:'flex', gap:6, marginBottom:20 }}>
-        {[['perfis','◎ Perfis'],['generos','⚧ Géneros'],['orientacoes','◇ Orientações'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['interesses','✷ Interesses privados'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
+        {[['perfis','◎ Perfis'],['generos','⚧ Géneros'],['orientacoes','◇ Orientações'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['interesses','✷ Interesses privados'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['eventos','◇ Eventos'],['circulos','◎ Circles'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
           <button key={k} onClick={()=>setSubTab(k)} style={{
             background:subTab===k?C.primaryDim:C.surface,
             border:`1.5px solid ${subTab===k?C.primary:C.border}`,
@@ -2616,6 +2861,12 @@ function ConfiguracoesTab() {
 
       {/* ── Guia subtab ── */}
       {subTab==='guia' && <GuideManager />}
+
+      {/* ── Eventos subtab (10.8) ── */}
+      {subTab==='eventos' && <EventsManager />}
+
+      {/* ── Circles subtab (10.11) ── */}
+      {subTab==='circulos' && <CirclesManager />}
 
       {/* ── Afiliados subtab ── */}
       {subTab==='afiliados' && <AffiliateRuleManager />}
