@@ -32,6 +32,20 @@ router.get('/genders', requireAuth, async (_req: AuthRequest, res: Response) => 
   }
 })
 
+// GET /api/catalog/orientations — active only. 4.4: mirrors /genders —
+// orientation had no catalog and no UI input at all before this.
+router.get('/orientations', requireAuth, async (_req: AuthRequest, res: Response) => {
+  try {
+    const orientations = await (prisma as any).orientationOption.findMany({
+      where: { active: true },
+      orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }]
+    })
+    res.json({ orientations })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 // GET /api/catalog/boundaries — active only, grouped by category
 router.get('/boundaries', requireAuth, async (_req: AuthRequest, res: Response) => {
   try {
@@ -186,6 +200,8 @@ const genderSchema = z.object({
   active:      z.boolean().optional(),
 })
 
+const orientationSchema = genderSchema // identical shape
+
 // ── Genders ──
 router.get('/admin/genders', requireAdmin('catalog'), async (_req: AuthRequest, res: Response) => {
   const genders = await (prisma as any).genderOption.findMany({ orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }] })
@@ -236,6 +252,61 @@ router.delete('/admin/genders/:id', requireAdmin('catalog'), async (req: AuthReq
   }
   await (prisma as any).genderOption.delete({ where: { id: req.params.id } })
   await logAdminAction(req.userId!, 'DELETE_GENDER_OPTION', 'gender_option', req.params.id, {
+    previousData: { label: opt.label, slug: opt.slug }, ipAddress: req.ip
+  })
+  res.json({ ok: true })
+})
+
+// ── Orientations (4.4) ──
+router.get('/admin/orientations', requireAdmin('catalog'), async (_req: AuthRequest, res: Response) => {
+  const orientations = await (prisma as any).orientationOption.findMany({ orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }] })
+  const withUsage = await Promise.all(orientations.map(async (o: any) => ({
+    ...o, usageCount: await prisma.profile.count({ where: { orientation: o.slug } })
+  })))
+  res.json({ orientations: withUsage })
+})
+
+router.post('/admin/orientations', requireAdmin('catalog'), async (req: AuthRequest, res: Response) => {
+  try {
+    const data = orientationSchema.parse(req.body)
+    const orientation = await (prisma as any).orientationOption.create({ data })
+    await logAdminAction(req.userId!, 'CREATE_ORIENTATION_OPTION', 'orientation_option', orientation.id, { newData: data, ipAddress: req.ip })
+    res.status(201).json(orientation)
+  } catch (err: any) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Já existe uma opção com este slug.' })
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+router.put('/admin/orientations/:id', requireAdmin('catalog'), async (req: AuthRequest, res: Response) => {
+  try {
+    const data = orientationSchema.partial().parse(req.body)
+    const prev = await (prisma as any).orientationOption.findUnique({ where: { id: req.params.id } })
+    const orientation = await (prisma as any).orientationOption.update({ where: { id: req.params.id }, data })
+    await logAdminAction(req.userId!, 'UPDATE_ORIENTATION_OPTION', 'orientation_option', orientation.id, {
+      previousData: prev ? { label: prev.label, active: prev.active } : undefined, newData: data, ipAddress: req.ip
+    })
+    res.json(orientation)
+  } catch (err: any) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Já existe uma opção com este slug.' })
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+router.delete('/admin/orientations/:id', requireAdmin('catalog'), async (req: AuthRequest, res: Response) => {
+  const opt = await (prisma as any).orientationOption.findUnique({ where: { id: req.params.id } })
+  if (!opt) return res.status(404).json({ error: 'Não encontrado.' })
+  const usageCount = await prisma.profile.count({ where: { orientation: opt.slug } })
+  if (usageCount > 0 && req.query.force !== 'true') {
+    return res.status(409).json({
+      error: `Esta opção está em uso por ${usageCount} perfil(is). Desactiva-a em vez de apagar.`,
+      code: 'IN_USE', usageCount
+    })
+  }
+  await (prisma as any).orientationOption.delete({ where: { id: req.params.id } })
+  await logAdminAction(req.userId!, 'DELETE_ORIENTATION_OPTION', 'orientation_option', req.params.id, {
     previousData: { label: opt.label, slug: opt.slug }, ipAddress: req.ip
   })
   res.json({ ok: true })

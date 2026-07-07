@@ -101,6 +101,31 @@ async function main() {
   }
   console.log(`Seeded ${genders.length} gender options`)
 
+  console.log('Seeding orientation options...')
+
+  const orientations = [
+    { slug: 'straight',     label: 'Heterossexual' },
+    { slug: 'gay',          label: 'Gay' },
+    { slug: 'lesbian',      label: 'Lésbica' },
+    { slug: 'bisexual',     label: 'Bissexual' },
+    { slug: 'pansexual',    label: 'Pansexual' },
+    { slug: 'asexual',      label: 'Assexual' },
+    { slug: 'demisexual',   label: 'Demissexual' },
+    { slug: 'queer',        label: 'Queer' },
+    { slug: 'questioning',  label: 'Em descoberta' },
+    { slug: 'other',        label: 'Outra' },
+    { slug: 'prefer_not_to_say', label: 'Prefiro não dizer' },
+  ]
+
+  for (const [index, orientation] of orientations.entries()) {
+    await prisma.orientationOption.upsert({
+      where: { slug: orientation.slug },
+      update: { label: orientation.label },
+      create: { slug: orientation.slug, label: orientation.label, sortOrder: index, active: true },
+    })
+  }
+  console.log(`Seeded ${orientations.length} orientation options`)
+
   console.log('Seeding legal documents (v1.0)...')
   const legalDocs = [
     {

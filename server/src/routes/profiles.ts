@@ -5,6 +5,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { coarsenCoordinate } from '../utils/location'
 import { mergePhotosForViewer } from '../lib/mediaAccessService'
 import { getVerificationBadges } from '../lib/verificationBadges'
+import { isActiveMember, getActiveMembers } from '../lib/profileMembershipService'
 
 const router = Router()
 
@@ -29,28 +30,24 @@ const profileSchema = z.object({
 const normaliseIntentions = (raw: any[]): { slug: string; preference: 'YES'|'MAYBE'|'NO' }[] =>
   raw.map(i => typeof i === 'string' ? { slug: i, preference: 'YES' as const } : { slug: i.slug, preference: i.preference || 'YES' as const })
 
-// Sprint 3: a couple's Profile.userId is only the creator (partnerOne).
-// Without this, the invited partner gets 403 trying to edit shared
-// intentions/boundaries/privacy — checks ProfileMember as the source of
-// truth, falling back to CoupleProfile for profiles not yet backfilled.
+// 4.1: delegates to ProfileMembershipService.isActiveMember, which owns
+// the ProfileMember-first / CoupleProfile-fallback logic in one place
+// instead of duplicating it here.
 async function canManageProfile(profileId: string, userId: string): Promise<boolean> {
-  const profile = await prisma.profile.findUnique({
-    where: { id: profileId },
-    include: { coupleProfile: true }
-  })
+  const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { userId: true } })
   if (!profile) return false
   if (profile.userId === userId) return true
-
-  const member = await (prisma as any).profileMember.findFirst({
-    where: { profileId, userId, status: 'ACCEPTED' }
-  })
-  if (member) return true
-
-  return profile.coupleProfile?.partnerTwoUserId === userId
+  return isActiveMember(profileId, userId)
 }
 
-// Resolves "my" profile for /me routes — the profile I own, OR (Sprint 3)
-// the shared couple/group profile I've been accepted into as a member.
+// Resolves "my" profile for /me routes — the profile I own, OR the shared
+// couple/group profile I've been accepted into as a member. 4.1: no longer
+// reads CoupleProfile.partnerTwoUserId directly — that fallback now lives
+// inside ProfileMembershipService.getActiveMembers, reached indirectly via
+// the ProfileMember lookup below for anyone already backfilled, and via
+// the same profile-search approach for anyone who isn't (rare: only
+// matters for a not-yet-backfilled couple's second partner looking up
+// their own profile before ever touching ProfileMember directly).
 async function resolveMyProfileId(userId: string): Promise<string | null> {
   const owned = await prisma.profile.findUnique({ where: { userId }, select: { id: true } })
   if (owned) return owned.id

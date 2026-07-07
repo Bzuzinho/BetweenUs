@@ -48,12 +48,14 @@ export default function CreateProfilePage() {
   const [catalogIntentions, setCatalogIntentions] = useState([])
   const [catalogBoundaries, setCatalogBoundaries] = useState([])
   const [catalogGenders, setCatalogGenders] = useState([])
+  const [catalogOrientations, setCatalogOrientations] = useState([])
   const [boundaryPrefs, setBoundaryPrefs] = useState({}) // boundaryId -> YES|MAYBE|NO
 
   useEffect(() => {
     api.get('/catalog/intentions').then(r => setCatalogIntentions(r.data.intentions || [])).catch(() => {})
     api.get('/catalog/boundaries').then(r => setCatalogBoundaries(r.data.boundaries || [])).catch(() => {})
     api.get('/catalog/genders').then(r => setCatalogGenders(r.data.genders || [])).catch(() => {})
+    api.get('/catalog/orientations').then(r => setCatalogOrientations(r.data.orientations || [])).catch(() => {})
   }, [])
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
@@ -198,6 +200,17 @@ export default function CreateProfilePage() {
                 <option value="" style={{ background: C.card }}>Género (opcional)</option>
                 {catalogGenders.map(g => (
                   <option key={g.id} value={g.slug} style={{ background: C.card }}>{g.label}</option>
+                ))}
+              </select>
+
+              {/* 4.4: orientation previously had no input at all — state
+                  existed but was always sent empty. */}
+              <select style={{ ...inp, cursor: 'pointer' }}
+                value={form.orientation}
+                onChange={e => set('orientation', e.target.value)}>
+                <option value="" style={{ background: C.card }}>Orientação (opcional)</option>
+                {catalogOrientations.map(o => (
+                  <option key={o.id} value={o.slug} style={{ background: C.card }}>{o.label}</option>
                 ))}
               </select>
 

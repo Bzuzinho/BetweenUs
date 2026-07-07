@@ -2149,14 +2149,14 @@ function IntentionsManager() {
 }
 
 /* ─── Gender options manager (Sprint 2.5.6) ──────────────────────────────────── */
-function GenderOptionsManager() {
+function CatalogOptionsManager({ apiPath, singularLabel }) {
   const [items, setItems] = useState([])
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({ label:'', slug:'', description:'', active:true })
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
 
-  const load = useCallback(() => { api.get('/catalog/admin/genders').then(r => setItems(r.data.genders||[])) }, [])
+  const load = useCallback(() => { api.get(`/catalog/admin/${apiPath}`).then(r => setItems(r.data[apiPath]||[])) }, [])
   useEffect(() => { load() }, [load])
 
   const openNew = () => { setForm({ label:'', slug:'', description:'', active:true }); setEditing('new'); setErr('') }
@@ -2166,21 +2166,21 @@ function GenderOptionsManager() {
     if (!form.label.trim() || !form.slug.trim()) return setErr('Nome e slug obrigatórios.')
     setSaving(true); setErr('')
     try {
-      if (editing === 'new') await api.post('/catalog/admin/genders', form)
-      else await api.put(`/catalog/admin/genders/${editing.id}`, form)
+      if (editing === 'new') await api.post(`/catalog/admin/${apiPath}`, form)
+      else await api.put(`/catalog/admin/${apiPath}/${editing.id}`, form)
       setEditing(null); load()
     } catch (e) { setErr(e.response?.data?.error || 'Erro ao guardar.') } finally { setSaving(false) }
   }
 
-  const toggleActive = async (g) => { await api.put(`/catalog/admin/genders/${g.id}`, { active: !g.active }).catch(()=>{}); load() }
+  const toggleActive = async (g) => { await api.put(`/catalog/admin/${apiPath}/${g.id}`, { active: !g.active }).catch(()=>{}); load() }
 
   const del = async (g) => {
     if (g.usageCount > 0) {
       if (!confirm(`Esta opção está em uso por ${g.usageCount} perfil(is). Desactivar em vez de apagar?`)) return
       return toggleActive({ ...g, active: true })
     }
-    if (!confirm('Apagar esta opção de género?')) return
-    await api.delete(`/catalog/admin/genders/${g.id}`).catch(e => setErr(e.response?.data?.error || 'Erro ao apagar.'))
+    if (!confirm('Apagar esta opção?')) return
+    await api.delete(`/catalog/admin/${apiPath}/${g.id}`).catch(e => setErr(e.response?.data?.error || 'Erro ao apagar.'))
     load()
   }
 
@@ -2188,7 +2188,7 @@ function GenderOptionsManager() {
     <div>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
         <button onClick={()=>setEditing(null)} style={{ background:'none', border:'none', color:C.muted, fontSize:20, cursor:'pointer' }}>←</button>
-        <h3 style={{ color:C.text, fontSize:16, fontWeight:500, margin:0, flex:1 }}>{editing==='new' ? 'Nova opção de género' : 'Editar opção'}</h3>
+        <h3 style={{ color:C.text, fontSize:16, fontWeight:500, margin:0, flex:1 }}>{editing==='new' ? `Nova opção de ${singularLabel}` : 'Editar opção'}</h3>
         <button onClick={save} disabled={saving} style={{ background:C.primary, border:'none', borderRadius:8, padding:'8px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>{saving?'…':'Guardar'}</button>
       </div>
       {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
@@ -2227,6 +2227,15 @@ function GenderOptionsManager() {
       ))}
     </div>
   )
+}
+
+// 4.4: thin wrappers over the generic CatalogOptionsManager — gender and
+// orientation are identical in shape, only the API path/copy differ.
+function GenderOptionsManager() {
+  return <CatalogOptionsManager apiPath="genders" singularLabel="género" />
+}
+function OrientationOptionsManager() {
+  return <CatalogOptionsManager apiPath="orientations" singularLabel="orientação" />
 }
 
 /* ─── Boundaries catalog manager (Sprint 2.5.8) ──────────────────────────────── */
@@ -2344,7 +2353,7 @@ function ConfiguracoesTab() {
     <div>
       {/* Subtab bar */}
       <div style={{ display:'flex', gap:6, marginBottom:20 }}>
-        {[['perfis','◎ Perfis'],['generos','⚧ Géneros'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
+        {[['perfis','◎ Perfis'],['generos','⚧ Géneros'],['orientacoes','◇ Orientações'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
           <button key={k} onClick={()=>setSubTab(k)} style={{
             background:subTab===k?C.primaryDim:C.surface,
             border:`1.5px solid ${subTab===k?C.primary:C.border}`,
@@ -2389,6 +2398,7 @@ function ConfiguracoesTab() {
 
       {/* ── Géneros subtab ── */}
       {subTab==='generos' && <GenderOptionsManager />}
+      {subTab==='orientacoes' && <OrientationOptionsManager />}
 
       {/* ── Intenções subtab ── */}
       {subTab==='intencoes' && <IntentionsManager />}

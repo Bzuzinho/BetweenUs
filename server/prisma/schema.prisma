@@ -843,12 +843,30 @@ model GenderOption {
   slug        String   @unique
   label       String
   description String?
+  localeKey   String?  // 4.3 — optional i18n key, for when client copy moves off hardcoded PT labels
   active      Boolean  @default(true)
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@map("gender_options")
+}
+
+// 4.4 — same shape as GenderOption. orientation on Profile had zero UI to
+// set it (state existed in the create/edit forms, but no <select> ever
+// rendered it) — this plus the client wiring closes that gap.
+model OrientationOption {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  label       String
+  description String?
+  localeKey   String?
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("orientation_options")
 }
 
 model GuideArticle {

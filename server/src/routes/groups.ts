@@ -2,6 +2,8 @@ import { Router, Response } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { inviteMember } from '../lib/profileMembershipService'
+import { assertGroupProfilesEnabled } from '../lib/profileTypePolicy'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -11,6 +13,12 @@ const router = Router()
 // plus any number of initial email invites (trio = 1 invite, poly = several).
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
+    // 4.2: this route had no feature flag at all before — anyone could
+    // create a group profile regardless of whether the team wanted GROUP
+    // rolled out. Defaults enabled (see profileTypePolicy.ts for why).
+    const flagCheck = assertGroupProfilesEnabled()
+    if (!flagCheck.valid) return res.status(403).json({ error: flagCheck.reason })
+
     const { sharedDescription, inviteEmails } = req.body
     const emails: string[] = Array.isArray(inviteEmails) ? inviteEmails.filter(Boolean) : []
 
@@ -97,10 +105,7 @@ router.post('/invite', requireAuth, async (req: AuthRequest, res: Response) => {
     })
     if (already) return res.status(409).json({ error: 'Este email já foi convidado.' })
 
-    const inviteToken = uuidv4()
-    await (prisma as any).profileMember.create({
-      data: { profileId: myMembership.profileId, invitedEmail: email, status: 'PENDING', inviteToken }
-    })
+    const { inviteToken } = await inviteMember(myMembership.profileId, email)
 
     res.status(201).json({ ok: true, inviteUrl: `${CLIENT_URL}/group-invite/${inviteToken}` })
   } catch (err: any) {

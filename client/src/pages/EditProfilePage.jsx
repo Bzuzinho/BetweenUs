@@ -40,6 +40,7 @@ export default function EditProfilePage() {
   const [catalogIntentions, setCatalogIntentions] = useState([])
   const [catalogBoundaries, setCatalogBoundaries] = useState([])
   const [catalogGenders, setCatalogGenders] = useState([])
+  const [catalogOrientations, setCatalogOrientations] = useState([])
   const [boundaryPrefs, setBoundaryPrefs] = useState({}) // boundaryId -> YES|MAYBE|NO
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -50,6 +51,7 @@ export default function EditProfilePage() {
     api.get('/catalog/intentions').then(r => setCatalogIntentions(r.data.intentions || [])).catch(() => {})
     api.get('/catalog/boundaries').then(r => setCatalogBoundaries(r.data.boundaries || [])).catch(() => {})
     api.get('/catalog/genders').then(r => setCatalogGenders(r.data.genders || [])).catch(() => {})
+    api.get('/catalog/orientations').then(r => setCatalogOrientations(r.data.orientations || [])).catch(() => {})
     api.get('/profiles/me').then(r => {
       const p = r.data
       setForm({
@@ -134,6 +136,12 @@ export default function EditProfilePage() {
           <select style={{ ...INP, cursor:'pointer' }} value={form.gender} onChange={e => set('gender', e.target.value)}>
             <option value="" style={{ background:C.surface }}>Preferir não dizer / não definido</option>
             {catalogGenders.map(g => <option key={g.id} value={g.slug} style={{ background:C.surface }}>{g.label}</option>)}
+          </select>
+          {/* 4.4: orientation previously had no input at all in this form either. */}
+          <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Orientação</label>
+          <select style={{ ...INP, cursor:'pointer' }} value={form.orientation} onChange={e => set('orientation', e.target.value)}>
+            <option value="" style={{ background:C.surface }}>Preferir não dizer / não definido</option>
+            {catalogOrientations.map(o => <option key={o.id} value={o.slug} style={{ background:C.surface }}>{o.label}</option>)}
           </select>
           <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Estado relacional</label>
           <select style={{ ...INP, cursor:'pointer' }} value={form.relationshipStatus} onChange={e => set('relationshipStatus', e.target.value)}>

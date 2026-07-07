@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { createLikeOrMatch } from '../lib/matchService'
+import { removeMember } from '../lib/profileMembershipService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -201,6 +202,16 @@ router.delete('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     if (!profile?.coupleProfile) return res.status(404).json({ error: 'Sem perfil de casal.' })
     await prisma.coupleProfile.update({ where: { id: profile.coupleProfile.id }, data: { coupleStatus: 'SEPARATED' } })
     await prisma.profile.update({ where: { id: profile.id }, data: { type: 'INDIVIDUAL' } })
+
+    // 4.1 fix: this used to only flip CoupleProfile.coupleStatus, leaving
+    // ProfileMember rows ACCEPTED — the two models disagreed about who
+    // belonged to the profile after a separation. Remove both partners'
+    // membership; the creator can re-add themselves if they set up a new
+    // couple later (POST /api/couples writes a fresh ProfileMember anyway).
+    const { partnerOneUserId, partnerTwoUserId } = profile.coupleProfile
+    await removeMember(profile.id, partnerOneUserId)
+    if (partnerTwoUserId) await removeMember(profile.id, partnerTwoUserId)
+
     res.json({ ok: true })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })

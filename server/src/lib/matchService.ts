@@ -90,39 +90,15 @@ export const createLikeOrMatch = async (
 }
 
 /**
- * Point 10 (Sprint 3): generalized required-approvers resolver.
- *
- * Works for INDIVIDUAL, COUPLE, and (future) GROUP profiles uniformly by
- * reading ProfileMember. Falls back to the legacy CoupleProfile pair for
- * couples that haven't been backfilled into ProfileMember yet (see
- * scripts/backfillProfileMembers.ts) so nothing breaks mid-migration.
+ * Point 10 (Sprint 3) / 4.1 (Sprint 4): generalized required-approvers
+ * resolver. Now a thin wrapper over ProfileMembershipService — kept as its
+ * own export (rather than having callers import the service directly)
+ * because "required approvers for a match" reads more clearly at the call
+ * sites in couples.ts/matches.ts than "required approvers of a profile".
  */
 export const getRequiredApproverUserIds = async (profileId: string): Promise<string[]> => {
-  const profile = await prisma.profile.findUnique({
-    where: { id: profileId },
-    include: { coupleProfile: true, user: { select: { id: true } } }
-  })
-  if (!profile) return []
-
-  if (profile.type === 'INDIVIDUAL') {
-    return profile.userId ? [profile.userId] : []
-  }
-
-  const members = await (prisma as any).profileMember.findMany({
-    where: { profileId, status: 'ACCEPTED', userId: { not: null } },
-    select: { userId: true }
-  })
-
-  if (members.length > 0) {
-    return members.map((m: any) => m.userId as string)
-  }
-
-  // Legacy fallback — couple not yet backfilled into ProfileMember
-  if (profile.coupleProfile?.coupleStatus === 'ACTIVE') {
-    return [profile.coupleProfile.partnerOneUserId, profile.coupleProfile.partnerTwoUserId].filter(Boolean) as string[]
-  }
-
-  return profile.userId ? [profile.userId] : []
+  const { getRequiredApprovers } = await import('./profileMembershipService')
+  return getRequiredApprovers(profileId)
 }
 
 export const recordPass = async (actorProfileId: string, targetProfileId: string): Promise<void> => {
