@@ -1,14 +1,35 @@
 // Between Us — Web Push via web-push npm package
 import prisma from './prisma'
 
-const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY  || 'BLSayTEUWhVEb-QdJSClF_6SIZQX8sfxvwEGPnfF-cxDtVepyPjuPXzIb2BkhsfogR-JbJFBa7aHUvwSyXxGg9Y'
-const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || 'AmCcnlYcjOHBkJmnkDB_d0oHK6FJdNzwqAbi-Pl2tB4'
-const VAPID_SUBJECT = process.env.VAPID_SUBJECT     || 'mailto:admin@betweenus.app'
+const isProd = process.env.NODE_ENV === 'production'
+
+// Security follow-up — this file previously hardcoded a REAL VAPID key
+// pair (both public and private) as `process.env.X || '<real value>'`
+// fallbacks, committed to the public repo. VAPID_PUBLIC_KEY being public
+// is fine by design (it's meant to ship in client code), but
+// VAPID_PRIVATE_KEY must never have had a real-looking fallback in
+// source at all — same class of mistake the exposed JWT_SECRET was, just
+// smaller blast radius (forged push payloads, not account takeover).
+// Now follows the exact fail-hard-in-prod / no-real-value-in-code pattern
+// already used by JWT_SECRET (utils/jwt.ts) and CONTACT_HASH_SECRET
+// (contactHashService.ts): required in production, and even the dev
+// fallback is an obviously-fake placeholder, never a real key.
+const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@betweenus.app'
 
 let webpush: any = null
 
 const getWebPush = async () => {
   if (webpush) return webpush
+  if (!VAPID_PUBLIC || !VAPID_PRIVATE) {
+    if (isProd) {
+      console.error('[PUSH] VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY not configured — push notifications disabled.')
+    } else {
+      console.warn('[PUSH] VAPID keys not set — push disabled in this environment (dev fallback intentionally does not use a real key pair).')
+    }
+    return null
+  }
   try {
     webpush = await import('web-push')
     webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE)
@@ -76,4 +97,4 @@ export const pushToAdmins = async (
   await pushToUsers(admins.map((a: { id: string }) => a.id), payload)
 }
 
-export const VAPID_PUBLIC_KEY = VAPID_PUBLIC
+export const VAPID_PUBLIC_KEY = VAPID_PUBLIC || null

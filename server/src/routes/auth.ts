@@ -177,18 +177,41 @@ router.post('/logout', async (req: Request, res: Response) => {
 })
 
 // POST /api/auth/refresh
+//
+// Security follow-up (JWT rotation, commit 487b622 exposure) — every
+// failure path here now clears the accessToken/refreshToken cookies
+// before responding. Before this fix, a failed refresh (expired, invalid
+// signature, or — the case that matters most right now — a token signed
+// with an OLD, rotated-out JWT_REFRESH_SECRET) left the stale httpOnly
+// cookies sitting in the browser. That's harmless for the SPA itself
+// (localStorage is the primary token store and the axios interceptor
+// already clears + redirects on refresh failure), but it violates the
+// explicit contract this audit checks for ("refresh token antigo →
+// cookies/tokens locais são limpos") and could bite any non-SPA client
+// (or a future server-rendered path) that relies on the cookie alone.
 router.post('/refresh', async (req: Request, res: Response) => {
   const rt = req.body?.refreshToken || (req as any).cookies?.refreshToken
-  if (!rt) return res.status(401).json({ error: 'Token em falta.' })
+  if (!rt) { clearAuthCookies(res); return res.status(401).json({ error: 'Token em falta.' }) }
   try {
     const { userId } = verifyRefreshToken(rt)
     const redis = await getRedis()
-    if (redis) { const s = await redis.get(`refresh:${userId}`); if (!s || s!==hashToken(rt)) return res.status(401).json({ error:'Token inválido.' }) }
+    if (redis) {
+      const s = await redis.get(`refresh:${userId}`)
+      if (!s || s!==hashToken(rt)) { clearAuthCookies(res); return res.status(401).json({ error:'Token inválido.' }) }
+    }
     const tokens = generateTokens(userId)
     if (redis) await redis.setEx(`refresh:${userId}`, 30*24*60*60, hashToken(tokens.refreshToken))
     setAuthCookies(res, tokens.accessToken, tokens.refreshToken)
     res.json(tokens)
-  } catch { res.status(401).json({ error: 'Token expirado.' }) }
+  } catch {
+    // Covers both TokenExpiredError and JsonWebTokenError (invalid
+    // signature — the exact case a rotated JWT_REFRESH_SECRET produces
+    // for any refresh token issued before the rotation). Either way the
+    // token is unusable, so the response is identical and the stale
+    // cookies are cleared the same way.
+    clearAuthCookies(res)
+    res.status(401).json({ error: 'Token expirado.' })
+  }
 })
 
 // GET /api/auth/me

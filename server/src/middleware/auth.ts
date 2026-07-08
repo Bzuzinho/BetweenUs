@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
-import jwt from 'jsonwebtoken'
 import prisma from '../lib/prisma'
+import { verifyAccessToken } from '../utils/jwt'
 
 export interface AuthRequest extends Request {
   userId?: string
@@ -30,7 +30,14 @@ export const requireAuth = async (
   }
 
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string }
+    // Security follow-up — was directly reading process.env.JWT_SECRET
+    // here, duplicating the secret-resolution logic already centralized
+    // in utils/jwt.ts (which also has the dev-fallback + prod-required
+    // guard). Functionally identical today, but two independent readers
+    // of the same secret is exactly the kind of drift that makes a
+    // rotation harder to reason about — now there is one source of truth
+    // for "how do we verify an access token".
+    const payload = verifyAccessToken(token)
 
     // Point 15: load adminRole + emailVerifiedAt + status in one query
     const user = await prisma.user.findUnique({

@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import api from '../lib/api'
 import { registerPush } from '../lib/push'
+import { reconnectSocketWithToken, disconnectSocket } from '../lib/socket'
 
 const AuthContext = createContext(null)
 
@@ -41,6 +42,10 @@ export function AuthProvider({ children }) {
     if (res.data.accessToken) {
       localStorage.setItem('accessToken', res.data.accessToken)
       localStorage.setItem('refreshToken', res.data.refreshToken)
+      // Security follow-up — a fresh login always means a fresh, valid
+      // token; make sure the socket (possibly still holding a pre-login
+      // or stale token from a previous failed session) reconnects with it.
+      reconnectSocketWithToken()
     }
     // Fetch full user object (includes profile, subscription, adminRole)
     const me = await api.get('/auth/me')
@@ -53,6 +58,7 @@ export function AuthProvider({ children }) {
     if (res.data.accessToken) {
       localStorage.setItem('accessToken', res.data.accessToken)
       if (res.data.refreshToken) localStorage.setItem('refreshToken', res.data.refreshToken)
+      reconnectSocketWithToken()
       setUser(res.data.user)
     }
     return res.data
@@ -64,6 +70,7 @@ export function AuthProvider({ children }) {
     try { await api.post('/auth/logout') } catch {}
     localStorage.removeItem('accessToken')
     localStorage.removeItem('refreshToken')
+    disconnectSocket()
     setUser(null)
   }
 

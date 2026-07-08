@@ -7,6 +7,27 @@ on:
     branches: [main]
 
 jobs:
+  # Security follow-up — secret scanning. Separate, fast job (no DB/Redis
+  # services needed) so a leaked-secret finding blocks the PR/merge
+  # independently of whether the test suite itself passes. Scans full git
+  # history via fetch-depth: 0 (gitleaks needs the real history to check
+  # commits, not just the working tree) — this is exactly the gap that let
+  # the JWT_SECRET/JWT_REFRESH_SECRET exposure in commit 487b622 go
+  # unnoticed until a manual audit (Sprint 11.5) caught it.
+  secret-scan:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+
   test:
     name: Run test suite
     runs-on: ubuntu-latest

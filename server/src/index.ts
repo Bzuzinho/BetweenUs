@@ -8,7 +8,7 @@ import { Server } from 'socket.io'
 import { rateLimit } from 'express-rate-limit'
 import dotenv from 'dotenv'
 import { initSentry, Sentry } from './lib/sentry'
-import { verifyAccessToken } from './utils/jwt'
+import { resolveSocketUserId } from './lib/socketAuth'
 import prisma from './lib/prisma'
 import { isShadowModeEnabled, isIntelligentRecommendationsEnabled } from './lib/recommendationAbTestService'
 import { HEURISTIC_MODEL_VERSION } from './lib/heuristicRecommendationRanker'
@@ -232,10 +232,7 @@ app.use('/api/admin/recommendations', recommendationsRouter)
 // a userId/senderUserId out of the payload the client sent.
 io.use((socket, next) => {
   try {
-    const token = socket.handshake.auth?.token || (socket.handshake.headers.authorization || '').replace(/^Bearer /, '')
-    if (!token) return next(new Error('Unauthorized'))
-    const payload = verifyAccessToken(token)
-    ;(socket.data as any).userId = payload.userId
+    ;(socket.data as any).userId = resolveSocketUserId(socket.handshake)
     next()
   } catch {
     next(new Error('Unauthorized'))
