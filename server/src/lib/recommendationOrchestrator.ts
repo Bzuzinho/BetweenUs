@@ -33,6 +33,25 @@ const logShadowRanking = async (
 ): Promise<void> => {
   try {
     const currentScoreByProfileId = new Map(current.map(c => [c.profile.id, c.betweenScore]))
+
+    // BETA.1 — same OR-of-both-sides isTestData semantics as
+    // recommendationSignalService.recordSignal: the whole batch shares one
+    // viewer, so the viewer's isTestAccount is resolved once; each
+    // candidate is checked individually (a real viewer browsing past a
+    // handful of seeded test profiles should not have their genuine
+    // shadow-ranking rows for the OTHER, real candidates marked as test
+    // data too).
+    const viewerProfile = await prisma.profile.findUnique({
+      where: { id: viewerProfileId }, select: { user: { select: { isTestAccount: true } } }
+    })
+    const viewerIsTest = !!viewerProfile?.user?.isTestAccount
+    const candidateIds = [...new Set(recommended.map(r => r.candidateProfileId))]
+    const testCandidateProfiles = viewerIsTest ? [] : await prisma.profile.findMany({
+      where: { id: { in: candidateIds }, user: { isTestAccount: true } },
+      select: { id: true }
+    })
+    const testCandidateIds = new Set(testCandidateProfiles.map((p: { id: string }) => p.id))
+
     const rows = recommended.map(r => ({
       viewerProfileId,
       candidateProfileId: r.candidateProfileId,
@@ -43,6 +62,7 @@ const logShadowRanking = async (
       algorithmVersion: modelVersion,
       reasonCodes: r.reasonCodes,
       isExploration: r.isExploration,
+      isTestData: viewerIsTest || testCandidateIds.has(r.candidateProfileId),
     }))
     if (rows.length === 0) return
     await (prisma as any).recommendationRankingLog.createMany({ data: rows })

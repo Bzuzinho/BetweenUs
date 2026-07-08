@@ -346,6 +346,21 @@ model User {
   nif               String?    // NIF/contribuinte — account level, private
   accountName       String?    // Real name — private, different from displayName
   avatarPath        String?    // Account avatar URL
+  // BETA.1 — explicit test-account marker for the beta seed dataset. NEVER
+  // inferred from email domain (deliberate spec requirement — a domain
+  // heuristic is trivial to spoof/forget and gives no audit trail). Does
+  // NOT affect eligibility/discovery — a test account can appear in
+  // Discovery like any other (BETA.1.2 is explicit about this); it only
+  // gates admin badge display, the accountFilter on GET /admin/users, the
+  // /admin/dashboard metrics default filter, and RecommendationSignal/
+  // RecommendationRankingLog.isTestData resolution (recordSignal reads
+  // this off the actor/target profile's owning User).
+  isTestAccount     Boolean    @default(false)
+  // Only meaningful when isTestAccount=true — the betaSeed/scenarios.ts
+  // manifest key this account was created for (e.g.
+  // "individual_open_to_couples"). Never shown on the public profile,
+  // only in the admin UserDetail tab and by validateBetaSeed.ts.
+  testScenarioKey   String?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
@@ -379,6 +394,9 @@ model User {
   // 5.11 — discovery's candidate query joins on user.status (and
   // effectively adminRole via a null check) for every request.
   @@index([status])
+  // BETA.1 — GET /admin/users accountFilter (all/real/test) and the
+  // /admin/dashboard metrics default exclusion both filter on this.
+  @@index([isTestAccount])
   @@map("users")
 }
 
@@ -1865,6 +1883,14 @@ model RecommendationSignal {
   // boundaries/private interests. Enforced by recommendationSignalService's
   // narrow, typed metadata inputs (no caller can pass an arbitrary object).
   metadata         Json?
+  // BETA.1 — true when EITHER actorProfileId or targetProfileId belongs to
+  // a User with isTestAccount=true (resolved in recordSignal, see
+  // recommendationSignalService.ts). Rows are still written — never
+  // dropped — so beta testing itself remains debuggable; every real-metric
+  // reader (recommendationAnalysisService, meaningfulConnectionService,
+  // the /admin/recommendations/* routes) filters isTestData:false by
+  // default and only a SUPER_ADMIN-gated includeTestData=true opts back in.
+  isTestData       Boolean                   @default(false)
   createdAt        DateTime                  @default(now())
 
   // Pair lookup (e.g. "has this viewer already passed this candidate
@@ -1919,9 +1945,39 @@ model RecommendationRankingLog {
   algorithmVersion     String
   reasonCodes          String[]
   isExploration        Boolean  @default(false)
+  // BETA.1 — same isTestData semantics as RecommendationSignal.isTestData
+  // above, resolved off viewerProfileId/candidateProfileId's owning User.
+  isTestData           Boolean  @default(false)
   createdAt            DateTime @default(now())
 
   @@index([viewerProfileId, createdAt])
   @@index([algorithmVersion, createdAt])
   @@map("recommendation_ranking_logs")
+}
+
+// ─── Beta Seed / Scenario Data (BETA.1) ─────────────────────────────────────
+// One row per invocation of `npm run db:seed:beta`. Purely observational —
+// nothing in the app reads this to make a decision — it exists so an admin
+// (and validateBetaSeed.ts) can answer "what version ran, when, how many
+// rows did it touch" without grepping logs. seedName/version let multiple
+// scenario sets coexist in the future (e.g. a "beta-v2" superset) without
+// this model needing a schema change.
+enum TestSeedRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model TestSeedRun {
+  id            String            @id @default(uuid())
+  seedName      String
+  version       String
+  startedAt     DateTime          @default(now())
+  completedAt   DateTime?
+  status        TestSeedRunStatus @default(RUNNING)
+  recordCounts  Json?
+  errorMessage  String?
+  createdAt     DateTime          @default(now())
+
+  @@map("test_seed_runs")
 }

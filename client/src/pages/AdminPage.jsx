@@ -1046,7 +1046,13 @@ function UserDetail({ userId, onBack }) {
       <button onClick={onBack} style={{ background:'none', border:'none', color:C.muted, fontSize:22, cursor:'pointer', padding:'4px 0', marginBottom:14 }}>←</button>
 
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, marginBottom:12 }}>
-        <div style={{ fontSize:15, fontWeight:500, color:C.text, marginBottom:3 }}>{u.email}</div>
+        <div style={{ fontSize:15, fontWeight:500, color:C.text, marginBottom:3 }}>
+          {u.email}
+          {u.isTestAccount && <span style={{ color:'#C9956B', fontSize:11, marginLeft:8, background:'rgba(201,149,107,0.15)', borderRadius:4, padding:'2px 7px', fontWeight:600, verticalAlign:'middle' }}>TEST ACCOUNT</span>}
+        </div>
+        {u.isTestAccount && u.testScenarioKey && (
+          <div style={{ fontSize:11, color:C.muted, marginBottom:6 }}>Seed scenario: <span style={{color:'#C9956B'}}>{u.testScenarioKey}</span></div>
+        )}
         <div style={{ fontSize:12, color:C.muted }}>
           {u.status}{u.adminRole&&<span style={{color:C.primary}}> · {u.adminRole}</span>}
           {u.riskScore>0&&<span style={{color:C.danger}}> · risco {u.riskScore}</span>}
@@ -1360,12 +1366,16 @@ function UsersTab() {
   const { user: me } = useAuth()
   const [users, setUsers] = useState([])
   const [search, setSearch] = useState('')
+  const [accountFilter, setAccountFilter] = useState('all') // BETA.1.32 — 'all' | 'real' | 'test'
   const [selectedId, setSelectedId] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
   const load = useCallback(() => {
-    const q = search ? `?search=${encodeURIComponent(search)}` : ''
+    const params = new URLSearchParams()
+    if (search) params.set('search', search)
+    if (accountFilter !== 'all') params.set('accountFilter', accountFilter)
+    const q = params.toString() ? `?${params.toString()}` : ''
     api.get(`/admin/users${q}`).then(r => setUsers(r.data.users||[]))
-  }, [search])
+  }, [search, accountFilter])
   useEffect(() => { load() }, [load])
   if (selectedId) return <UserDetail userId={selectedId} onBack={() => { setSelectedId(null); load() }}/>
   return (
@@ -1373,6 +1383,11 @@ function UsersTab() {
       {showCreate && <CreateUserModal onClose={()=>setShowCreate(false)} onCreated={()=>{setShowCreate(false);load()}}/>}
       <div style={{ display:'flex', gap:10, marginBottom:14 }}>
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Pesquisar email ou nome..." style={{ ...INP, marginBottom:0, flex:1 }}/>
+        <select value={accountFilter} onChange={e=>setAccountFilter(e.target.value)} style={{ ...INP, marginBottom:0, width:'auto', cursor:'pointer' }}>
+          <option value="all" style={{background:C.surface}}>Todas as contas</option>
+          <option value="real" style={{background:C.surface}}>Contas reais</option>
+          <option value="test" style={{background:C.surface}}>Contas de teste</option>
+        </select>
         {me?.adminRole==='SUPER_ADMIN' && (
           <button onClick={()=>setShowCreate(true)} style={{ background:C.primary, border:'none', borderRadius:12, padding:'0 14px', color:'#0A141A', fontWeight:600, fontSize:13, minHeight:46, flexShrink:0, cursor:'pointer' }}>+ Criar</button>
         )}
@@ -1383,6 +1398,7 @@ function UsersTab() {
             <div style={{ fontSize:13, fontWeight:500, color:C.text, marginBottom:3 }}>
               {u.email}
               {u.adminRole && <span style={{ color:C.primary, fontSize:11, marginLeft:8, background:C.primaryDim, borderRadius:4, padding:'1px 6px' }}>{u.adminRole}</span>}
+              {u.isTestAccount && <span style={{ color:'#C9956B', fontSize:11, marginLeft:8, background:'rgba(201,149,107,0.15)', borderRadius:4, padding:'1px 6px', fontWeight:600 }}>TEST</span>}
             </div>
             <div style={{ fontSize:12, color:C.muted }}>
               {u.profile?.displayName||'sem perfil'} · {u.status}

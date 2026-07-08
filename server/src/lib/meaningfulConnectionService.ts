@@ -124,9 +124,25 @@ export const computeMeaningfulConnectionRateForProfile = async (profileId: strin
   return computeMeaningfulConnectionRate(matches.map((m: any) => m.id))
 }
 
-export const computeMeaningfulConnectionRateSince = async (since: Date): Promise<MeaningfulConnectionRate> => {
+// BETA.1 — includeTestData defaults to false: a match where EITHER
+// participant's owning User has isTestAccount=true is excluded from this
+// real-metric read by default (Match itself has no isTestData column —
+// unlike RecommendationSignal/RecommendationRankingLog, which are
+// high-volume enough to warrant a denormalized flag written at capture
+// time — so this filters live via the profile->user relation instead).
+// Only the SUPER_ADMIN-gated admin route below passes includeTestData:true.
+export const computeMeaningfulConnectionRateSince = async (
+  since: Date,
+  options: { includeTestData?: boolean } = {}
+): Promise<MeaningfulConnectionRate> => {
   const matches = await prisma.match.findMany({
-    where: { createdAt: { gte: since } },
+    where: {
+      createdAt: { gte: since },
+      ...(options.includeTestData ? {} : {
+        profileOne: { user: { isTestAccount: false } },
+        profileTwo: { user: { isTestAccount: false } },
+      }),
+    },
     select: { id: true }
   })
   return computeMeaningfulConnectionRate(matches.map((m: any) => m.id))

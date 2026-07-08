@@ -51,11 +51,19 @@ router.post('/gdpr/hard-delete/run', requireAdmin('users'), async (req: AuthRequ
   res.json({ ok: true, results })
 })
 
+// BETA.1 — real-metric dashboard excludes isTestAccount users by default
+// (spec: "métricas reais devem poder excluí-las"). includeTestData=true is
+// SUPER_ADMIN-only (same convention as recommendations.ts's wantsTestData)
+// — ADMIN/others always see the production-honest numbers, with no way to
+// silently blend seeded beta accounts into what looks like real traction.
 router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: Response) => {
   try {
     const today = new Date(); today.setHours(0,0,0,0)
     const week  = new Date(Date.now() - 7  * 24 * 60 * 60 * 1000)
     const month = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    const includeTestData = req.query.includeTestData === 'true' && (req as any).adminRole === 'SUPER_ADMIN'
+    const userFilter = includeTestData ? {} : { isTestAccount: false }
+    const viaUser = includeTestData ? {} : { user: { isTestAccount: false } }
 
     const [
       totalUsers, newToday, newWeek, newMonth,
@@ -65,30 +73,34 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
       totalMessages, pendingReports,
       premiumSubs, coupleSubs,
       suspendedUsers, bannedUsers,
-      pendingVerifications, highRiskUsers
+      pendingVerifications, highRiskUsers,
+      testAccountCount
     ] = await Promise.all([
-      prisma.user.count(),
-      prisma.user.count({ where: { createdAt: { gte: today } } }),
-      prisma.user.count({ where: { createdAt: { gte: week } } }),
-      prisma.user.count({ where: { createdAt: { gte: month } } }),
-      prisma.profile.count(),
-      prisma.profile.count({ where: { status: 'PENDING_REVIEW' } }),
-      prisma.profile.count({ where: { status: 'APPROVED' } }),
-      prisma.profilePhoto.count(),
-      prisma.profilePhoto.count({ where: { moderationStatus: 'PENDING' } }),
-      prisma.match.count(),
-      prisma.match.count({ where: { status: 'ACTIVE' } }),
-      prisma.message.count({ where: { deletedAt: null } }),
-      prisma.report.count({ where: { status: 'PENDING' } }),
-      prisma.subscription.count({ where: { plan: 'PREMIUM', status: 'ACTIVE' } }),
-      prisma.subscription.count({ where: { plan: 'COUPLE_PREMIUM', status: 'ACTIVE' } }),
-      prisma.user.count({ where: { status: 'SUSPENDED' } }),
-      prisma.user.count({ where: { status: 'BANNED' } }),
-      prisma.verification.count({ where: { status: 'PENDING' } }),
-      prisma.user.count({ where: { riskScore: { gte: 50 } } })
+      prisma.user.count({ where: userFilter }),
+      prisma.user.count({ where: { createdAt: { gte: today }, ...userFilter } }),
+      prisma.user.count({ where: { createdAt: { gte: week }, ...userFilter } }),
+      prisma.user.count({ where: { createdAt: { gte: month }, ...userFilter } }),
+      prisma.profile.count({ where: viaUser }),
+      prisma.profile.count({ where: { status: 'PENDING_REVIEW', ...viaUser } }),
+      prisma.profile.count({ where: { status: 'APPROVED', ...viaUser } }),
+      prisma.profilePhoto.count({ where: { profile: viaUser } }),
+      prisma.profilePhoto.count({ where: { moderationStatus: 'PENDING', profile: viaUser } }),
+      prisma.match.count({ where: includeTestData ? {} : { profileOne: viaUser, profileTwo: viaUser } }),
+      prisma.match.count({ where: { status: 'ACTIVE', ...(includeTestData ? {} : { profileOne: viaUser, profileTwo: viaUser }) } }),
+      prisma.message.count({ where: { deletedAt: null, ...(includeTestData ? {} : { sender: userFilter }) } }),
+      prisma.report.count({ where: { status: 'PENDING', ...(includeTestData ? {} : { reporter: userFilter }) } }),
+      prisma.subscription.count({ where: { plan: 'PREMIUM', status: 'ACTIVE', ...viaUser } }),
+      prisma.subscription.count({ where: { plan: 'COUPLE_PREMIUM', status: 'ACTIVE', ...viaUser } }),
+      prisma.user.count({ where: { status: 'SUSPENDED', ...userFilter } }),
+      prisma.user.count({ where: { status: 'BANNED', ...userFilter } }),
+      prisma.verification.count({ where: { status: 'PENDING', ...viaUser } }),
+      prisma.user.count({ where: { riskScore: { gte: 50 }, ...userFilter } }),
+      prisma.user.count({ where: { isTestAccount: true } }),
     ])
 
     res.json({
+      includeTestData,
+      testAccountCount,
       users: { total: totalUsers, newToday, newWeek, newMonth, suspended: suspendedUsers, banned: bannedUsers, highRisk: highRiskUsers },
       profiles: { total: totalProfiles, pending: pendingProfiles, approved: approvedProfiles },
       photos: { total: totalPhotos, pending: pendingPhotos },
@@ -104,10 +116,16 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
 })
 
 // ─── Users list ───────────────────────────────────────────────────────────────
+// BETA.1.32 — accountFilter: 'all' | 'real' | 'test' (default 'all' — this
+// list is an admin support/ops tool, not a real-metrics surface, so unlike
+// /dashboard there's no default exclusion here; the filter is opt-in so an
+// admin can deliberately narrow to one or the other).
 router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
-  const { limit = 20, offset = 0, status, search, sortByRisk } = req.query
+  const { limit = 20, offset = 0, status, search, sortByRisk, accountFilter } = req.query
   const where: any = {}
   if (status) where.status = status
+  if (accountFilter === 'test') where.isTestAccount = true
+  if (accountFilter === 'real') where.isTestAccount = false
   if (search) where.OR = [
     { email: { contains: search as string, mode: 'insensitive' } },
     { profile: { displayName: { contains: search as string, mode: 'insensitive' } } }
@@ -120,6 +138,7 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
       select: {
         id: true, email: true, status: true, adminRole: true, avatarPath: true,
         createdAt: true, lastSeenAt: true, riskScore: true,
+        isTestAccount: true, testScenarioKey: true,
         profile: { select: { id: true, displayName: true, type: true, city: true, status: true } },
         subscription: { select: { plan: true, status: true } },
         verification: { select: { status: true } },
@@ -141,6 +160,8 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
     createdAt: Date
     lastSeenAt: Date | null
     riskScore: number | null
+    isTestAccount: boolean
+    testScenarioKey: string | null
     profile: { id: string; displayName: string; type: string; city: string | null; status: string } | null
     subscription: { plan: string; status: string } | null
     verification: { status: string } | null

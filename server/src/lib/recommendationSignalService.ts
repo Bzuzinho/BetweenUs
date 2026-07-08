@@ -24,6 +24,30 @@ interface SignalMetadata {
   photoId?: string
 }
 
+// BETA.1 — a signal is isTestData when EITHER side of the pair belongs to
+// a User with isTestAccount=true. Deliberately an OR, not an AND: a real
+// user interacting with a seeded test account is still not a genuine
+// production behavior sample (the test account can't have organically
+// "earned" that interaction), so it must not leak into real metrics
+// either. Best-effort like the rest of this file — a lookup failure here
+// must never block the signal write itself, so it degrades to
+// isTestData=false (the safer default for a write that DOES go through;
+// worst case a stray seed-adjacent row is visible to real-metric readers,
+// which the beta seed's own validator/cleanup catches, rather than a
+// genuine production signal silently vanishing from real metrics because
+// of a transient lookup error).
+const resolveIsTestData = async (actorProfileId: string, targetProfileId: string): Promise<boolean> => {
+  try {
+    const [actor, target] = await Promise.all([
+      prisma.profile.findUnique({ where: { id: actorProfileId }, select: { user: { select: { isTestAccount: true } } } }),
+      prisma.profile.findUnique({ where: { id: targetProfileId }, select: { user: { select: { isTestAccount: true } } } }),
+    ])
+    return !!(actor?.user?.isTestAccount || target?.user?.isTestAccount)
+  } catch {
+    return false
+  }
+}
+
 export const recordSignal = async (
   actorProfileId: string,
   targetProfileId: string,
@@ -32,9 +56,12 @@ export const recordSignal = async (
 ): Promise<void> => {
   if (actorProfileId === targetProfileId) return // never signal about oneself
   try {
-    const weight = await getWeightFor(signalType)
+    const [weight, isTestData] = await Promise.all([
+      getWeightFor(signalType),
+      resolveIsTestData(actorProfileId, targetProfileId)
+    ])
     await (prisma as any).recommendationSignal.create({
-      data: { actorProfileId, targetProfileId, signalType, weight, metadata: metadata || undefined }
+      data: { actorProfileId, targetProfileId, signalType, weight, metadata: metadata || undefined, isTestData }
     })
   } catch (err: any) {
     // Best-effort by design — a failed signal write must never break the

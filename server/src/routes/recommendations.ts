@@ -59,19 +59,29 @@ router.put('/weights', requireAuth, requireAdmin('recommendations'), async (req:
   }
 })
 
+// BETA.1 — includeTestData=true is a debug/QA opt-in only: verifying the
+// beta seed's own scenarios produced sane shadow-mode data. It must never
+// be available to ADMIN (which already has the 'recommendations'
+// permission) — only SUPER_ADMIN, checked explicitly here rather than via
+// a second requireAdmin() permission string, same pattern as the
+// SUPER_ADMIN-only GDPR hard-delete routes in admin.ts.
+const wantsTestData = (req: AuthRequest): boolean =>
+  req.query.includeTestData === 'true' && (req as any).adminRole === 'SUPER_ADMIN'
+
 // GET /api/admin/recommendations/shadow-analysis?days=14 — 11.11.
 router.get('/shadow-analysis', requireAuth, requireAdmin('recommendations'), async (req: AuthRequest, res: Response) => {
   try {
     const days = Math.min(90, Math.max(1, Number(req.query.days) || 14))
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+    const includeTestData = wantsTestData(req)
 
     const [rankCorrelation, likeProjection, meaningfulByCohort] = await Promise.all([
-      computeRankCorrelation(HEURISTIC_MODEL_VERSION, since),
-      estimateTopNLikeRate(HEURISTIC_MODEL_VERSION, since),
-      computeMeaningfulConnectionRateByCohort(since),
+      computeRankCorrelation(HEURISTIC_MODEL_VERSION, since, includeTestData),
+      estimateTopNLikeRate(HEURISTIC_MODEL_VERSION, since, 10, includeTestData),
+      computeMeaningfulConnectionRateByCohort(since, undefined, includeTestData),
     ])
 
-    res.json({ sinceDays: days, rankCorrelation, likeProjection, meaningfulConnectionRateByCohort: meaningfulByCohort })
+    res.json({ sinceDays: days, includeTestData, rankCorrelation, likeProjection, meaningfulConnectionRateByCohort: meaningfulByCohort })
   } catch (err: any) {
     console.error('[RECOMMENDATION SHADOW ANALYSIS]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
@@ -83,7 +93,7 @@ router.get('/guardrails', requireAuth, requireAdmin('recommendations'), async (r
   try {
     const days = Math.min(90, Math.max(1, Number(req.query.days) || 14))
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-    const comparison = await computeGuardrailComparison(since)
+    const comparison = await computeGuardrailComparison(since, undefined, wantsTestData(req))
     res.json({ sinceDays: days, ...comparison })
   } catch (err: any) {
     console.error('[RECOMMENDATION GUARDRAILS]', err.message)
@@ -97,8 +107,9 @@ router.get('/meaningful-connection-rate', requireAuth, requireAdmin('recommendat
   try {
     const days = Math.min(365, Math.max(1, Number(req.query.days) || 30))
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-    const rate = await computeMeaningfulConnectionRateSince(since)
-    res.json({ sinceDays: days, ...rate, dataSufficient: isSampleSufficient(rate.totalCount) })
+    const includeTestData = wantsTestData(req)
+    const rate = await computeMeaningfulConnectionRateSince(since, { includeTestData })
+    res.json({ sinceDays: days, includeTestData, ...rate, dataSufficient: isSampleSufficient(rate.totalCount) })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
   }

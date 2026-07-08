@@ -45,9 +45,11 @@ export interface RankCorrelationResult {
   dataSufficient: boolean
 }
 
-export const computeRankCorrelation = async (algorithmVersion: string, since: Date): Promise<RankCorrelationResult> => {
+export const computeRankCorrelation = async (
+  algorithmVersion: string, since: Date, includeTestData = false
+): Promise<RankCorrelationResult> => {
   const rows = await (prisma as any).recommendationRankingLog.findMany({
-    where: { algorithmVersion, createdAt: { gte: since } },
+    where: { algorithmVersion, createdAt: { gte: since }, ...(includeTestData ? {} : { isTestData: false }) },
     select: { currentRank: true, recommendationRank: true }
   })
   const sampleSize = rows.length
@@ -66,9 +68,9 @@ export const computeRankCorrelation = async (algorithmVersion: string, since: Da
 // projection (correlational, not causal — shadow mode never changes what
 // the viewer actually saw), useful only as a directional signal before
 // ever running the real A/B test.
-export const estimateTopNLikeRate = async (algorithmVersion: string, since: Date, topN = 10) => {
+export const estimateTopNLikeRate = async (algorithmVersion: string, since: Date, topN = 10, includeTestData = false) => {
   const rows = await (prisma as any).recommendationRankingLog.findMany({
-    where: { algorithmVersion, createdAt: { gte: since } },
+    where: { algorithmVersion, createdAt: { gte: since }, ...(includeTestData ? {} : { isTestData: false }) },
     select: { viewerProfileId: true, candidateProfileId: true, currentRank: true, recommendationRank: true }
   })
   if (rows.length === 0) return { currentTopNLikeRate: null, recommendationTopNLikeRate: null, sampleSize: 0, dataSufficient: false }
@@ -120,10 +122,17 @@ export interface MeaningfulConnectionRateWithSample extends MeaningfulConnection
 
 export const computeMeaningfulConnectionRateByCohort = async (
   since: Date,
-  experimentKey: string = EXPERIMENT_KEY
+  experimentKey: string = EXPERIMENT_KEY,
+  includeTestData = false
 ): Promise<Record<RecommendationCohort, MeaningfulConnectionRateWithSample>> => {
   const matches = await prisma.match.findMany({
-    where: { createdAt: { gte: since } },
+    where: {
+      createdAt: { gte: since },
+      ...(includeTestData ? {} : {
+        profileOne: { user: { isTestAccount: false } },
+        profileTwo: { user: { isTestAccount: false } },
+      }),
+    },
     select: { id: true, profileOneId: true }
   })
 
@@ -163,14 +172,19 @@ export interface GuardrailMetrics {
 
 const rateOrNull = (count: number, denom: number): number | null => (denom > 0 ? count / denom : null)
 
-const computeGuardrailsForCohort = async (cohort: RecommendationCohort, since: Date, experimentKey: string): Promise<GuardrailMetrics> => {
+const computeGuardrailsForCohort = async (
+  cohort: RecommendationCohort, since: Date, experimentKey: string, includeTestData = false
+): Promise<GuardrailMetrics> => {
   // Bounded scan of recently-active profiles, then filtered in-memory by
   // deterministic cohort assignment — acceptable at this sprint's scale;
   // flagged as a follow-up to move server-side if the active profile
   // count grows large enough for this to matter (same "revisit if it
   // becomes the bottleneck" spirit as discoveryService's POOL_CAP note).
   const activeProfiles = await prisma.profile.findMany({
-    where: { status: 'APPROVED', updatedAt: { gte: since } },
+    where: {
+      status: 'APPROVED', updatedAt: { gte: since },
+      ...(includeTestData ? {} : { user: { isTestAccount: false } }),
+    },
     select: { id: true }
   })
   const cohortProfileIds = activeProfiles.map((p: any) => p.id).filter((id: string) => assignCohort(id, experimentKey) === cohort)
@@ -179,10 +193,11 @@ const computeGuardrailsForCohort = async (cohort: RecommendationCohort, since: D
     return { cohort, profileCount: 0, blockRate: null, reportRate: null, safeExitRate: null, matchAbandonmentRate: null }
   }
 
+  const signalTestFilter = includeTestData ? {} : { isTestData: false }
   const [blockSignals, reportSignals, safeExitSignals, totalMatches, abandonedMatches] = await Promise.all([
-    (prisma as any).recommendationSignal.count({ where: { signalType: 'BLOCK', actorProfileId: { in: cohortProfileIds }, createdAt: { gte: since } } }),
-    (prisma as any).recommendationSignal.count({ where: { signalType: 'REPORT', actorProfileId: { in: cohortProfileIds }, createdAt: { gte: since } } }),
-    (prisma as any).recommendationSignal.count({ where: { signalType: 'SAFE_EXIT', actorProfileId: { in: cohortProfileIds }, createdAt: { gte: since } } }),
+    (prisma as any).recommendationSignal.count({ where: { signalType: 'BLOCK', actorProfileId: { in: cohortProfileIds }, createdAt: { gte: since }, ...signalTestFilter } }),
+    (prisma as any).recommendationSignal.count({ where: { signalType: 'REPORT', actorProfileId: { in: cohortProfileIds }, createdAt: { gte: since }, ...signalTestFilter } }),
+    (prisma as any).recommendationSignal.count({ where: { signalType: 'SAFE_EXIT', actorProfileId: { in: cohortProfileIds }, createdAt: { gte: since }, ...signalTestFilter } }),
     prisma.match.count({ where: { OR: [{ profileOneId: { in: cohortProfileIds } }, { profileTwoId: { in: cohortProfileIds } }], createdAt: { gte: since } } }),
     prisma.match.count({ where: { OR: [{ profileOneId: { in: cohortProfileIds } }, { profileTwoId: { in: cohortProfileIds } }], createdAt: { gte: since }, status: { in: ['REJECTED', 'ENDED'] } } }),
   ])
@@ -220,10 +235,12 @@ export interface GuardrailComparison {
 
 const REGRESSION_THRESHOLD = 1.2 // 20% relative increase
 
-export const computeGuardrailComparison = async (since: Date, experimentKey: string = EXPERIMENT_KEY): Promise<GuardrailComparison> => {
+export const computeGuardrailComparison = async (
+  since: Date, experimentKey: string = EXPERIMENT_KEY, includeTestData = false
+): Promise<GuardrailComparison> => {
   const [control, recommendationV1] = await Promise.all([
-    computeGuardrailsForCohort('CONTROL', since, experimentKey),
-    computeGuardrailsForCohort('RECOMMENDATION_V1', since, experimentKey),
+    computeGuardrailsForCohort('CONTROL', since, experimentKey, includeTestData),
+    computeGuardrailsForCohort('RECOMMENDATION_V1', since, experimentKey, includeTestData),
   ])
 
   const dataSufficient = isSampleSufficient(control.profileCount) && isSampleSufficient(recommendationV1.profileCount)
