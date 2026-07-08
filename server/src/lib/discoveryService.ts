@@ -12,6 +12,7 @@ import prisma from './prisma'
 import * as eligibilityService from './eligibilityService'
 import { evaluateIntentionCompatibility, type ProfileIntentionInput } from './intentionCompatibilityService'
 import { evaluateBoundaryCompatibility } from './boundaryCompatibilityService'
+import { evaluateCandidateConstraints, type ConstraintBoundaryInput, type CandidateStructuralProps } from './candidateConstraintService'
 import { evaluateCompleteness } from './profileCompletenessService'
 import { getOrCalculateScore } from './compatibilityScoreService'
 import { buildExplanation } from './compatibilityExplanationService'
@@ -165,6 +166,25 @@ const toScoreInput = (profile: any): BetweenScoreProfileInput => ({
   activeTravelCities: (profile.travelModes || []).map((t: any) => t.city),
 })
 
+// Discovery validation follow-up — Candidate Constraints (Step 7, ahead of
+// Between Score). `toConstraintBoundaryInputs` mirrors `toBoundaryInputs`
+// but additionally carries `constraintType`, since that's the only field
+// candidateConstraintService.ts actually reads. `toStructuralProps` reuses
+// the exact same "verified" definition already used elsewhere
+// (heuristicRecommendationRanker.ts's isVerified: Verification.status ===
+// 'APPROVED') — never a new one invented for this fix.
+const toConstraintBoundaryInputs = (profile: any): ConstraintBoundaryInput[] =>
+  (profile.boundaries || []).map((pb: any) => ({
+    slug: pb.boundary?.slug, preference: pb.preference,
+    ruleType: pb.boundary?.ruleType || 'MUTUAL_ALIGNMENT',
+    constraintType: pb.boundary?.constraintType || null,
+  })).filter((b: ConstraintBoundaryInput) => !!b.slug)
+
+const toStructuralProps = (profile: any): CandidateStructuralProps => ({
+  profileType: profile.type,
+  isVerified: profile.user?.verification?.status === 'APPROVED',
+})
+
 // ── Cursor (5.4) ─────────────────────────────────────────────────────────
 // Encodes the full sort key (score, createdAt, id) of the last item on a
 // page. Ranking DOES change over time (score depends on both sides'
@@ -199,8 +219,17 @@ export const getCandidates = async (
     where: { id: viewerProfileId },
     include: {
       intentions: { include: { intention: true } },
+      // Discovery validation follow-up — boundary.constraintType is read
+      // via the existing `boundary: true` include (constraintType is a
+      // scalar column on Boundary, no extra include needed).
       boundaries: { include: { boundary: true } },
       travelModes: { where: { active: true } },
+      // Discovery validation follow-up — needed for the reverse direction
+      // of Candidate Constraints: a candidate with e.g. singles_only=YES
+      // must not see the viewer either if the viewer is a COUPLE, and
+      // verified_only needs the viewer's own verification status when the
+      // CANDIDATE is the one with the constraint.
+      user: { select: { verification: { select: { status: true } } } },
     }
   })
   if (!viewerProfile) return { items: [], nextCursor: null }
@@ -235,6 +264,10 @@ export const getCandidates = async (
   const pool = await fetchCandidatePool(viewerProfile, filters, excludeIds)
 
   const viewerScoreInput = toScoreInput(viewerProfile)
+  // Discovery validation follow-up — computed once per request, not per
+  // candidate (the viewer doesn't change across the loop).
+  const viewerConstraintBoundaries = toConstraintBoundaryInputs(viewerProfile)
+  const viewerStructuralProps = toStructuralProps(viewerProfile)
   const likedIds = new Set((myActions as MyActionRow[]).filter((a: MyActionRow) => a.action === 'LIKE').map((a: MyActionRow) => a.targetProfileId))
 
   const scored: Array<{ candidate: any; score: number; breakdown: any; reasonCodes: string[]; explanation: string[] }> = []
@@ -252,6 +285,19 @@ export const getCandidates = async (
     if (!isProfileEligible(completeness.missing)) continue
     // Step 4
     if (!passesVisibilityPolicy(candidate)) continue
+
+    // Step 7 (Discovery validation follow-up) — Candidate Constraints,
+    // evaluated BEFORE intention/boundary compatibility and BEFORE Between
+    // Score, per the pipeline ordering agreed for this fix: Candidate Pool
+    // -> Eligibility -> Visibility -> Blocks -> Contact Blocks ->
+    // CANDIDATE CONSTRAINTS -> Intention Compatibility -> Boundary Mutual
+    // Compatibility -> Between Score. A hard eligibility gate, never a
+    // score input (positive or negative) — see candidateConstraintService.ts.
+    const candidateConstraintBoundaries = toConstraintBoundaryInputs(candidate)
+    const candidateStructuralProps = toStructuralProps(candidate)
+    const constraintOk = evaluateCandidateConstraints(viewerConstraintBoundaries, candidateStructuralProps).compatible
+      && evaluateCandidateConstraints(candidateConstraintBoundaries, viewerStructuralProps).compatible
+    if (!constraintOk) continue
 
     // Steps 8-9 — hard exclusions (both directions), same as discovery.ts
     // had, now centralized here instead of duplicated at the route level.

@@ -73,16 +73,44 @@ const intentionSchema = z.object({
   active:      z.boolean().optional(),
 })
 
+// Discovery validation follow-up — ruleType/constraintType exposed to the
+// admin catalog for the first time (previously only settable via
+// seed.ts/direct DB writes). BOUNDARY_RULE_TYPES/BOUNDARY_CONSTRAINT_TYPES
+// mirror schema.prisma's enums exactly — never invented here.
+const BOUNDARY_RULE_TYPES = ['MUTUAL_ALIGNMENT', 'REQUIRE_TARGET_ACCEPTANCE', 'PERSONAL_PREFERENCE', 'CANDIDATE_CONSTRAINT'] as const
+const BOUNDARY_CONSTRAINT_TYPES = ['EXCLUDE_COUPLES', 'COUPLES_ONLY', 'INDIVIDUALS_ONLY', 'VERIFIED_ONLY'] as const
+
 const boundarySchema = z.object({
   name:           z.string().min(2).max(80),
   slug:           z.string().min(2).max(60).regex(/^[a-z0-9_]+$/, 'Slug deve usar apenas minúsculas, números e underscore.'),
   category:       z.string().min(2).max(60),
   description:    z.string().max(300).optional().nullable(),
   isHardBoundary: z.boolean().optional(),
+  ruleType:       z.enum(BOUNDARY_RULE_TYPES).optional(),
+  constraintType: z.enum(BOUNDARY_CONSTRAINT_TYPES).optional().nullable(),
   sensitive:      z.boolean().optional(),
   sortOrder:      z.number().int().optional(),
   active:         z.boolean().optional(),
 })
+
+// Discovery validation follow-up — CANDIDATE_CONSTRAINT requires a
+// constraintType (otherwise the row is a silent no-op — see
+// candidateConstraintService.ts's `if (!b.constraintType) continue`), and
+// every OTHER ruleType must have constraintType null (it would never be
+// read, but a stray value there is confusing/misleading in the admin UI
+// and could look like it does something when it's dead data). Takes the
+// EFFECTIVE (merged) values — PUT is a partial update, so this must be
+// called after merging the incoming patch onto the existing row, never on
+// the raw patch alone.
+const validateRuleTypeConstraint = (ruleType: string, constraintType: string | null | undefined): string | null => {
+  if (ruleType === 'CANDIDATE_CONSTRAINT' && !constraintType) {
+    return 'ruleType=CANDIDATE_CONSTRAINT exige um constraintType.'
+  }
+  if (ruleType !== 'CANDIDATE_CONSTRAINT' && constraintType) {
+    return `constraintType só é válido com ruleType=CANDIDATE_CONSTRAINT (atual: ${ruleType}).`
+  }
+  return null
+}
 
 // ── Intentions ──
 router.get('/admin/intentions', requireAdmin('catalog'), async (_req: AuthRequest, res: Response) => {
@@ -150,6 +178,9 @@ router.get('/admin/boundaries', requireAdmin('catalog'), async (_req: AuthReques
 router.post('/admin/boundaries', requireAdmin('catalog'), async (req: AuthRequest, res: Response) => {
   try {
     const data = boundarySchema.parse(req.body)
+    const effectiveRuleType = data.ruleType || 'MUTUAL_ALIGNMENT' // matches schema.prisma's @default
+    const constraintErr = validateRuleTypeConstraint(effectiveRuleType, data.constraintType)
+    if (constraintErr) return res.status(400).json({ error: constraintErr })
     const boundary = await (prisma as any).boundary.create({ data })
     await logAdminAction(req.userId!, 'CREATE_BOUNDARY', 'boundary', boundary.id, { newData: data, ipAddress: req.ip })
     res.status(201).json(boundary)
@@ -164,6 +195,15 @@ router.put('/admin/boundaries/:id', requireAdmin('catalog'), async (req: AuthReq
   try {
     const data = boundarySchema.partial().parse(req.body)
     const prev = await (prisma as any).boundary.findUnique({ where: { id: req.params.id } })
+    if (!prev) return res.status(404).json({ error: 'Limite não encontrado.' })
+    // Discovery validation follow-up — validated against the MERGED
+    // (effective) state, not the raw patch: a PUT that only sends
+    // { constraintType: 'VERIFIED_ONLY' } is only valid if the row's
+    // CURRENT (or concurrently-updated) ruleType is CANDIDATE_CONSTRAINT.
+    const effectiveRuleType = data.ruleType ?? prev.ruleType
+    const effectiveConstraintType = data.constraintType !== undefined ? data.constraintType : prev.constraintType
+    const constraintErr = validateRuleTypeConstraint(effectiveRuleType, effectiveConstraintType)
+    if (constraintErr) return res.status(400).json({ error: constraintErr })
     const boundary = await (prisma as any).boundary.update({ where: { id: req.params.id }, data })
     await logAdminAction(req.userId!, 'UPDATE_BOUNDARY', 'boundary', boundary.id, {
       previousData: prev ? { name: prev.name, active: prev.active } : undefined, newData: data, ipAddress: req.ip

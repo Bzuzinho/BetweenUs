@@ -52,6 +52,21 @@ export interface BetweenScoreResult {
 // the general "boundaries" bucket, to avoid double-counting the same
 // selections in two different weights.
 const isConversationPace = (b: BetweenScoreBoundaryInput) => b.category === 'conversation_style'
+// Discovery validation follow-up — CANDIDATE_CONSTRAINT boundaries
+// (no_couples/couples_only/singles_only/verified_only) are eligibility,
+// never a score input, per the explicit product decision that these must
+// not become a positive OR negative contribution to Between Score. They
+// are excluded from the general "boundaries" bucket entirely — the actual
+// hard exclusion happens earlier, in discoveryService.ts via
+// candidateConstraintService.ts, before calculateBetweenScore is ever
+// called for an incompatible pair. isConflict() in
+// boundaryCompatibilityService.ts also independently refuses to treat
+// this ruleType as a conflict (defense in depth), but filtering it out of
+// the score bucket here additionally prevents a same-slug coincidence
+// (e.g. two individuals both independently holding a verified_only
+// ProfileBoundary row) from contributing a spurious commonYes score bonus
+// that has nothing to do with their actual compatibility.
+const isCandidateConstraint = (b: BetweenScoreBoundaryInput) => b.ruleType === 'CANDIDATE_CONSTRAINT'
 
 const relationshipCompatMap: Record<string, string[]> = {
   SINGLE:         ['SINGLE', 'COUPLE_CURIOUS', 'COUPLE_LIBERAL', 'OPEN', 'POLYAMOROUS'],
@@ -114,7 +129,7 @@ export const calculateBetweenScore = async (
   const weights = weightsOverride || await getActiveWeights()
 
   const paceBoundaries = (p: BetweenScoreProfileInput): BetweenScoreBoundaryInput[] => p.boundaries.filter(isConversationPace)
-  const otherBoundaries = (p: BetweenScoreProfileInput): BetweenScoreBoundaryInput[] => p.boundaries.filter(b => !isConversationPace(b))
+  const otherBoundaries = (p: BetweenScoreProfileInput): BetweenScoreBoundaryInput[] => p.boundaries.filter(b => !isConversationPace(b) && !isCandidateConstraint(b))
 
   const intentionResult = evaluateIntentionCompatibility(source.intentions, target.intentions)
   const intentionResultRev = evaluateIntentionCompatibility(target.intentions, source.intentions)

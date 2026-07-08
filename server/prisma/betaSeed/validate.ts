@@ -15,6 +15,7 @@ import { isBlockedEitherWay } from '../../src/lib/blockService'
 import { computeAndCacheStatus } from '../../src/lib/consentCheckService'
 import { resolveVenueForViewer } from '../../src/lib/eventVenuePolicy'
 import { computeMeaningfulConnectionRateSince } from '../../src/lib/meaningfulConnectionService'
+import { evaluateCandidateConstraints } from '../../src/lib/candidateConstraintService'
 import {
   ADMIN_ACCOUNTS, LIFECYCLE_ACCOUNTS, INDIVIDUAL_SCENARIOS, COUPLE_SCENARIOS, GROUP_SCENARIO,
 } from './scenarios'
@@ -206,13 +207,32 @@ const main = async () => {
     const u = await prisma.user.findFirst({ where: { testScenarioKey: key, isTestAccount: true } })
     return profileByUserId(u?.id).then(p => p?.id)
   }
-  await check('discovery', 'individual_marta vê individual_joana no Discovery (score alto)', async () => {
+  // Discovery validation follow-up — this check used to assert Marta sees
+  // Joana in Discovery, but the same dataset also puts them in an ACTIVE
+  // MATCH (match_individual_active, used for Room A/chat tests), and
+  // discoveryService.ts deliberately excludes any profile the viewer has
+  // an active/pending match with (excludeIds built from
+  // prisma.match.findMany, status in PENDING/PENDING_COUPLE_APPROVAL/
+  // ACTIVE) — that's correct product behavior, not a bug, so testing it
+  // here was the wrong assertion. Split into two: a NEW pair with zero
+  // prior interaction proves high-compatibility inclusion actually works,
+  // and an explicit check confirms the active-match exclusion itself
+  // stays intentional (regression guard — never remove that exclusion).
+  await check('discovery', 'HIGH_COMPATIBILITY_DISCOVERY: individual_sofia vê individual_miguel no Discovery (score alto, sem interação prévia)', async () => {
+    const viewer = await profileIdOf('individual_sofia')
+    if (!viewer) return false
+    const result = await getCandidates(viewer, {}, null, 50)
+    const miguelId = await profileIdOf('individual_miguel')
+    const found = result.items.find(i => i.profile.id === miguelId)
+    return { pass: !!found, detail: found ? `betweenScore=${found.betweenScore}` : 'não encontrada' }
+  })
+  await check('discovery', 'ACTIVE_MATCH: individual_marta NUNCA vê individual_joana no Discovery (já têm match ativo — exclusão intencional, não remover)', async () => {
     const viewer = await profileIdOf('individual_marta')
     if (!viewer) return false
     const result = await getCandidates(viewer, {}, null, 50)
     const joanaId = await profileIdOf('individual_joana')
     const found = result.items.find(i => i.profile.id === joanaId)
-    return { pass: !!found, detail: found ? `betweenScore=${found.betweenScore}` : 'não encontrada' }
+    return { pass: !found, detail: found ? 'apareceu — a exclusão de active match quebrou' : 'corretamente ausente (active match)' }
   })
   await check('discovery', 'individual_leonor (no_couples=YES) nunca inclui perfis COUPLE', async () => {
     const viewer = await profileIdOf('individual_leonor')
@@ -250,6 +270,51 @@ const main = async () => {
     if (!alex || !ines) return false
     const blocked = await isBlockedEitherWay(alex, ines)
     return { pass: blocked, detail: `isBlockedEitherWay=${blocked}` }
+  })
+
+  // ── Candidate Constraints (Discovery validation follow-up) ──────────
+  // These four exercise candidateConstraintService.ts directly (pure
+  // function, no DB round trip) rather than depending on a seeded
+  // scenario pair for every rule — couples_only/verified_only don't have
+  // a dedicated named individual in the manifest (see BETA_TEST_ACCOUNTS
+  // for the ones that do: individual_leonor covers no_couples,
+  // individual_tiago covers singles_only). Same pattern already used
+  // below for EventVenuePolicy's pure-function checks.
+  await check('candidate-constraints', 'couples_only=YES exclui candidate INDIVIDUAL', () => {
+    const viewerBoundaries = [{ slug: 'couples_only', preference: 'YES' as const, ruleType: 'CANDIDATE_CONSTRAINT', constraintType: 'COUPLES_ONLY' as const }]
+    const result = evaluateCandidateConstraints(viewerBoundaries, { profileType: 'INDIVIDUAL', isVerified: true })
+    return { pass: !result.compatible, detail: JSON.stringify(result.conflicts) }
+  })
+  await check('candidate-constraints', 'couples_only=YES permite candidate COUPLE', () => {
+    const viewerBoundaries = [{ slug: 'couples_only', preference: 'YES' as const, ruleType: 'CANDIDATE_CONSTRAINT', constraintType: 'COUPLES_ONLY' as const }]
+    const result = evaluateCandidateConstraints(viewerBoundaries, { profileType: 'COUPLE', isVerified: true })
+    return { pass: result.compatible }
+  })
+  await check('candidate-constraints', 'verified_only=YES exclui candidate não verificado', () => {
+    const viewerBoundaries = [{ slug: 'verified_only', preference: 'YES' as const, ruleType: 'CANDIDATE_CONSTRAINT', constraintType: 'VERIFIED_ONLY' as const }]
+    const result = evaluateCandidateConstraints(viewerBoundaries, { profileType: 'INDIVIDUAL', isVerified: false })
+    return { pass: !result.compatible, detail: JSON.stringify(result.conflicts) }
+  })
+  await check('candidate-constraints', 'verified_only=YES permite candidate verificado (individual_rui, Verification APPROVED real)', async () => {
+    const rui = await userByKey('individual_rui')
+    if (!rui) return false
+    const verification = await (prisma as any).verification.findUnique({ where: { userId: rui.id } })
+    const isVerified = verification?.status === 'APPROVED'
+    const viewerBoundaries = [{ slug: 'verified_only', preference: 'YES' as const, ruleType: 'CANDIDATE_CONSTRAINT', constraintType: 'VERIFIED_ONLY' as const }]
+    const result = evaluateCandidateConstraints(viewerBoundaries, { profileType: 'INDIVIDUAL', isVerified })
+    return { pass: isVerified && result.compatible, detail: `verification.status=${verification?.status}` }
+  })
+  await check('candidate-constraints', 'Conflito de Candidate Constraint nunca chega a CompatibilityScore (Leonor x Casal 1)', async () => {
+    const leonor = await profileIdOf('individual_leonor')
+    const couple1 = await profileIdOf('couple_1_third_match')
+    if (!leonor || !couple1) return false
+    // Force a fresh Discovery read so getCandidates has had a chance to
+    // (correctly) skip calling getOrCalculateScore for this pair.
+    await getCandidates(leonor, {}, null, 50)
+    const cached = await (prisma as any).compatibilityScore.findFirst({
+      where: { OR: [{ sourceProfileId: leonor, targetProfileId: couple1 }, { sourceProfileId: couple1, targetProfileId: leonor }] },
+    })
+    return { pass: !cached, detail: cached ? 'CompatibilityScore foi calculado — errado, devia ter sido excluído antes do score' : 'nenhum score cacheado — correto' }
   })
 
   // ── Match invariants ──────────────────────────────────────────────
