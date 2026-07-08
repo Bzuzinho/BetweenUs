@@ -26,7 +26,12 @@
 // a hard boundary conflicts, it doesn't turn a soft boundary into a hard
 // one.
 export type BoundaryPreference = 'YES' | 'MAYBE' | 'NO'
-export type BoundaryRuleType = 'MUTUAL_ALIGNMENT' | 'REQUIRE_TARGET_ACCEPTANCE' | 'PERSONAL_PREFERENCE'
+// Discovery validation follow-up — 'CANDIDATE_CONSTRAINT' added to this
+// union so toBoundaryInputs() (discoveryService.ts) can pass it through
+// without a cast, but isConflict() below NEVER treats it as a same-slug
+// conflict — see that function's comment. It is evaluated exclusively by
+// candidateConstraintService.ts.
+export type BoundaryRuleType = 'MUTUAL_ALIGNMENT' | 'REQUIRE_TARGET_ACCEPTANCE' | 'PERSONAL_PREFERENCE' | 'CANDIDATE_CONSTRAINT'
 
 export interface ProfileBoundaryInput {
   slug: string
@@ -47,6 +52,18 @@ const isConflict = (a: ProfileBoundaryInput, b: ProfileBoundaryInput): boolean =
   if (!a.isHardBoundary) return false
   switch (a.ruleType) {
     case 'PERSONAL_PREFERENCE':
+      return false
+    // Discovery validation follow-up — a CANDIDATE_CONSTRAINT boundary
+    // (no_couples/couples_only/singles_only/verified_only) can NEVER
+    // produce a conflict via this same-slug pairwise path, even if both
+    // profiles happen to hold a ProfileBoundary row on the exact same
+    // slug (e.g. two individuals both independently answering
+    // verified_only). Falling through to the MUTUAL_ALIGNMENT default
+    // below would silently reintroduce the exact bug this ruleType
+    // exists to fix — see candidateConstraintService.ts, the only place
+    // this evaluation is meant to happen (against the candidate's actual
+    // structural properties, not the candidate's own boundary answers).
+    case 'CANDIDATE_CONSTRAINT':
       return false
     case 'REQUIRE_TARGET_ACCEPTANCE':
       return a.preference === 'YES' && b.preference === 'NO'

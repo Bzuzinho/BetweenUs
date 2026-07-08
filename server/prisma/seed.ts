@@ -38,14 +38,24 @@ async function main() {
 
   console.log('Seeding boundaries...')
 
+  // Discovery validation follow-up — no_couples/couples_only/singles_only/
+  // verified_only are CANDIDATE_CONSTRAINT boundaries (compared against
+  // the CANDIDATE's structural properties — Profile.type, verification
+  // status — never against a same-slug boundary the candidate happens to
+  // also hold; see candidateConstraintService.ts for why the previous
+  // MUTUAL_ALIGNMENT default silently never excluded anyone). verified_only
+  // additionally gets isHardBoundary flipped to true here — it was never
+  // actually hard before (a pre-existing, separate bug: the catalog entry
+  // omitted isHardBoundary entirely, so it silently defaulted to false and
+  // never excluded anyone even though the product clearly intends it to).
   const boundaries = [
     // relationship_type
     { slug: 'no_emotional_involvement',      name: 'Sem envolvimento emocional',       category: 'relationship_type' },
     { slug: 'open_to_emotional',             name: 'Aberto a envolvimento emocional',  category: 'relationship_type' },
     { slug: 'recurring_emotional_connection',name: 'Envolvimento emocional recorrente',category: 'relationship_type' },
-    { slug: 'no_couples',                    name: 'Não quero casais',                 category: 'relationship_type', isHardBoundary: true },
-    { slug: 'couples_only',                  name: 'Apenas casais',                    category: 'relationship_type', isHardBoundary: true },
-    { slug: 'singles_only',                  name: 'Apenas solteiros',                 category: 'relationship_type', isHardBoundary: true },
+    { slug: 'no_couples',                    name: 'Não quero casais',                 category: 'relationship_type', isHardBoundary: true, ruleType: 'CANDIDATE_CONSTRAINT', constraintType: 'EXCLUDE_COUPLES' },
+    { slug: 'couples_only',                  name: 'Apenas casais',                    category: 'relationship_type', isHardBoundary: true, ruleType: 'CANDIDATE_CONSTRAINT', constraintType: 'COUPLES_ONLY' },
+    { slug: 'singles_only',                  name: 'Apenas solteiros',                 category: 'relationship_type', isHardBoundary: true, ruleType: 'CANDIDATE_CONSTRAINT', constraintType: 'INDIVIDUALS_ONLY' },
     // meeting_type
     { slug: 'online_only',              name: 'Apenas online',                    category: 'meeting_type' },
     { slug: 'open_to_meeting',          name: 'Aberto a encontro presencial',     category: 'meeting_type' },
@@ -59,7 +69,7 @@ async function main() {
     { slug: 'face_visible_after_match',  name: 'Rosto visível depois do match',     category: 'privacy', sensitive: true },
     { slug: 'private_gallery_requests',  name: 'Aceito pedidos de galeria privada', category: 'privacy', sensitive: true },
     { slug: 'no_known_contacts',         name: 'Sem pessoas conhecidas',            category: 'privacy', sensitive: true },
-    { slug: 'verified_only',             name: 'Apenas perfis verificados',         category: 'privacy' },
+    { slug: 'verified_only',             name: 'Apenas perfis verificados',         category: 'privacy', isHardBoundary: true, ruleType: 'CANDIDATE_CONSTRAINT', constraintType: 'VERIFIED_ONLY' },
     { slug: 'discretion_required',       name: 'Discrição obrigatória',             category: 'privacy' },
     // conversation_style
     { slug: 'talk_first',               name: 'Conversar primeiro',        category: 'conversation_style' },
@@ -70,13 +80,23 @@ async function main() {
   ]
 
   for (const [index, boundary] of boundaries.entries()) {
+    // Discovery validation follow-up — `update:` previously only synced
+    // name/category, meaning re-running this seed against an environment
+    // that already had these rows (Railway) would NEVER apply an
+    // isHardBoundary/ruleType/constraintType/sensitive change to an
+    // existing boundary — silently defeating this very fix. Now synced on
+    // every run, same fields as `create:`, so the seed is a real source of
+    // truth for the whole row, not just new rows.
+    const ruleType = (boundary as any).ruleType || 'MUTUAL_ALIGNMENT'
+    const constraintType = (boundary as any).constraintType || null
+    const isHardBoundary = (boundary as any).isHardBoundary || false
+    const sensitive = (boundary as any).sensitive || false
     await prisma.boundary.upsert({
       where: { slug: boundary.slug },
-      update: { name: boundary.name, category: boundary.category },
+      update: { name: boundary.name, category: boundary.category, isHardBoundary, ruleType: ruleType as any, constraintType: constraintType as any, sensitive },
       create: {
         slug: boundary.slug, name: boundary.name, category: boundary.category,
-        isHardBoundary: (boundary as any).isHardBoundary || false,
-        sensitive: (boundary as any).sensitive || false,
+        isHardBoundary, ruleType: ruleType as any, constraintType: constraintType as any, sensitive,
         sortOrder: index, active: true,
       },
     })

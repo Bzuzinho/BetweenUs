@@ -2902,26 +2902,39 @@ function PrivateInterestsManager() {
 
 /* ─── Boundaries catalog manager (Sprint 2.5.8) ──────────────────────────────── */
 const BOUNDARY_CATEGORIES = ['relationship_type','meeting_type','privacy','conversation_style']
+// Discovery validation follow-up — mirrors schema.prisma's BoundaryRuleType/
+// BoundaryConstraintType enums exactly.
+const BOUNDARY_RULE_TYPES = ['MUTUAL_ALIGNMENT','REQUIRE_TARGET_ACCEPTANCE','PERSONAL_PREFERENCE','CANDIDATE_CONSTRAINT']
+const BOUNDARY_CONSTRAINT_TYPES = ['EXCLUDE_COUPLES','COUPLES_ONLY','INDIVIDUALS_ONLY','VERIFIED_ONLY']
+const RULE_TYPE_LABELS = { MUTUAL_ALIGNMENT:'Alinhamento mútuo', REQUIRE_TARGET_ACCEPTANCE:'Requer aceitação do alvo', PERSONAL_PREFERENCE:'Preferência pessoal', CANDIDATE_CONSTRAINT:'Restrição de candidato' }
+const CONSTRAINT_TYPE_LABELS = { EXCLUDE_COUPLES:'Excluir casais', COUPLES_ONLY:'Apenas casais', INDIVIDUALS_ONLY:'Apenas individuais', VERIFIED_ONLY:'Apenas verificados' }
 
 function BoundariesManager() {
   const [items, setItems] = useState([])
   const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ name:'', slug:'', category:BOUNDARY_CATEGORIES[0], description:'', isHardBoundary:false, sensitive:false, active:true })
+  const [form, setForm] = useState({ name:'', slug:'', category:BOUNDARY_CATEGORIES[0], description:'', isHardBoundary:false, ruleType:'MUTUAL_ALIGNMENT', constraintType:'', sensitive:false, active:true })
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
 
   const load = useCallback(() => { api.get('/catalog/admin/boundaries').then(r => setItems(r.data.boundaries||[])) }, [])
   useEffect(() => { load() }, [load])
 
-  const openNew = () => { setForm({ name:'', slug:'', category:BOUNDARY_CATEGORIES[0], description:'', isHardBoundary:false, sensitive:false, active:true }); setEditing('new'); setErr('') }
-  const openEdit = (b) => { setForm({ name:b.name, slug:b.slug, category:b.category, description:b.description||'', isHardBoundary:b.isHardBoundary, sensitive:b.sensitive, active:b.active }); setEditing(b); setErr('') }
+  const openNew = () => { setForm({ name:'', slug:'', category:BOUNDARY_CATEGORIES[0], description:'', isHardBoundary:false, ruleType:'MUTUAL_ALIGNMENT', constraintType:'', sensitive:false, active:true }); setEditing('new'); setErr('') }
+  const openEdit = (b) => { setForm({ name:b.name, slug:b.slug, category:b.category, description:b.description||'', isHardBoundary:b.isHardBoundary, ruleType:b.ruleType||'MUTUAL_ALIGNMENT', constraintType:b.constraintType||'', sensitive:b.sensitive, active:b.active }); setEditing(b); setErr('') }
 
   const save = async () => {
     if (!form.name.trim() || !form.slug.trim() || !form.category.trim()) return setErr('Nome, slug e categoria obrigatórios.')
+    // Discovery validation follow-up — same cross-field rule the server
+    // enforces (routes/catalog.ts's validateRuleTypeConstraint), checked
+    // client-side too so the admin gets immediate feedback instead of a
+    // round-trip error.
+    if (form.ruleType === 'CANDIDATE_CONSTRAINT' && !form.constraintType) return setErr('Rule Type = Restrição de candidato exige um Constraint Type.')
+    if (form.ruleType !== 'CANDIDATE_CONSTRAINT' && form.constraintType) return setErr('Constraint Type só é válido com Rule Type = Restrição de candidato.')
     setSaving(true); setErr('')
     try {
-      if (editing === 'new') await api.post('/catalog/admin/boundaries', form)
-      else await api.put(`/catalog/admin/boundaries/${editing.id}`, form)
+      const payload = { ...form, constraintType: form.constraintType || null }
+      if (editing === 'new') await api.post('/catalog/admin/boundaries', payload)
+      else await api.put(`/catalog/admin/boundaries/${editing.id}`, payload)
       setEditing(null); load()
     } catch (e) { setErr(e.response?.data?.error || 'Erro ao guardar.') } finally { setSaving(false) }
   }
@@ -2956,7 +2969,20 @@ function BoundariesManager() {
       <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>CATEGORIA *</label>
       <input style={INP} list="boundary-categories" value={form.category} onChange={e=>setForm(p=>({...p,category:e.target.value}))}/>
       <datalist id="boundary-categories">{BOUNDARY_CATEGORIES.map(c => <option key={c} value={c}/>)}</datalist>
-      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>DESCRIÇÃO</label>
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>RULE TYPE</label>
+      <select style={INP} value={form.ruleType} onChange={e=>setForm(p=>({...p, ruleType:e.target.value, constraintType: e.target.value==='CANDIDATE_CONSTRAINT' ? p.constraintType : ''}))}>
+        {BOUNDARY_RULE_TYPES.map(rt => <option key={rt} value={rt}>{RULE_TYPE_LABELS[rt]}</option>)}
+      </select>
+      {form.ruleType === 'CANDIDATE_CONSTRAINT' && (
+        <>
+          <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4, marginTop:10 }}>CONSTRAINT TYPE *</label>
+          <select style={INP} value={form.constraintType} onChange={e=>setForm(p=>({...p,constraintType:e.target.value}))}>
+            <option value="">— selecionar —</option>
+            {BOUNDARY_CONSTRAINT_TYPES.map(ct => <option key={ct} value={ct}>{CONSTRAINT_TYPE_LABELS[ct]}</option>)}
+          </select>
+        </>
+      )}
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4, marginTop:10 }}>DESCRIÇÃO</label>
       <textarea style={{...INP, resize:'vertical'}} rows={2} value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))}/>
       {[['isHardBoundary','Limite rígido (exclui de discovery em conflito)'],['sensitive','Sensível (não expor directamente)'],['active','Activo']].map(([key,label]) => (
         <div key={key} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:C.elevated, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
@@ -2985,6 +3011,7 @@ function BoundariesManager() {
                 {b.name} {!b.active && <span style={{color:C.muted, fontSize:11}}>(inactivo)</span>}
                 {b.isHardBoundary && <span style={{color:C.danger, fontSize:11, marginLeft:6}}>● rígido</span>}
                 {b.sensitive && <span style={{color:C.warning, fontSize:11, marginLeft:6}}>● sensível</span>}
+                {b.ruleType === 'CANDIDATE_CONSTRAINT' && <span style={{color:C.primary, fontSize:11, marginLeft:6}}>● {CONSTRAINT_TYPE_LABELS[b.constraintType] || 'restrição de candidato'}</span>}
               </div>
               <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{b.slug} · usado por {b.usageCount} perfil(is)</div>
               <div style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>

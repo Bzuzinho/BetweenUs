@@ -603,6 +603,32 @@ enum BoundaryRuleType {
   MUTUAL_ALIGNMENT          // A and B must not directly contradict (A=NO + B=YES on the same slug, either direction)
   REQUIRE_TARGET_ACCEPTANCE // A's YES only "counts" if B hasn't explicitly said NO; B being neutral (unset/MAYBE) is not a block
   PERSONAL_PREFERENCE       // informational about the profile itself — never excludes anyone
+  // Discovery validation follow-up — a same-slug pairwise comparison
+  // (bBySlug.get(ai.slug)) can never express "I don't want to see
+  // candidates of type COUPLE", because the candidate has no reason to
+  // ever hold a ProfileBoundary row on the VIEWER's slug about their own
+  // structural type. CANDIDATE_CONSTRAINT boundaries are evaluated
+  // exclusively by candidateConstraintService.ts, against the candidate's
+  // structural properties (Profile.type, verification status) — never via
+  // evaluateBoundaryCompatibility's same-slug matching (isConflict()
+  // explicitly returns false for this ruleType, same as
+  // PERSONAL_PREFERENCE, but for a structurally different reason — see
+  // that file's comment). Only meaningful together with a non-null
+  // Boundary.constraintType.
+  CANDIDATE_CONSTRAINT
+}
+
+// Discovery validation follow-up — the fixed, small set of candidate-
+// structural checks a CANDIDATE_CONSTRAINT boundary can express. Kept as
+// explicit, narrow, structured cases (not a generic
+// field/operator/values rules engine) per the explicit instruction not to
+// build a general rules engine into this hotfix. Only used when
+// Boundary.ruleType = CANDIDATE_CONSTRAINT.
+enum BoundaryConstraintType {
+  EXCLUDE_COUPLES   // viewer YES -> candidate.type == COUPLE is excluded. GROUP is NOT excluded by this one.
+  COUPLES_ONLY      // viewer YES -> candidate.type != COUPLE is excluded (this DOES exclude GROUP — documented, not silent, see candidateConstraintService.ts)
+  INDIVIDUALS_ONLY  // viewer YES -> candidate.type != INDIVIDUAL is excluded (this DOES exclude GROUP — documented, not silent)
+  VERIFIED_ONLY     // viewer YES -> candidate's Verification.status != APPROVED is excluded (reuses the same "verified" definition as heuristicRecommendationRanker.ts's isVerified(), never a new one)
 }
 
 model Boundary {
@@ -618,6 +644,13 @@ model Boundary {
   // this keeps behaving exactly as before rather than silently losing its
   // exclusion power.
   ruleType       BoundaryRuleType  @default(MUTUAL_ALIGNMENT)
+  // Discovery validation follow-up — only meaningful (and only ever read)
+  // when ruleType = CANDIDATE_CONSTRAINT. Admin catalog (routes/catalog.ts)
+  // enforces that combination at the API boundary: CANDIDATE_CONSTRAINT
+  // requires a non-null constraintType, every other ruleType requires it
+  // to be null — never both null+CANDIDATE_CONSTRAINT or both
+  // non-null+something-else.
+  constraintType BoundaryConstraintType?
   sensitive      Boolean           @default(false) // Sprint 2.5.8 — not exposed directly in UI
   sortOrder      Int               @default(0)
   active         Boolean           @default(true)
