@@ -57,7 +57,7 @@ async function upsertIntentions(profileId: string, intentions: { slug: string; p
   const records = await prisma.intention.findMany({ where: { slug: { in: intentions.map(i => i.slug) } } })
   await prisma.profileIntention.deleteMany({ where: { profileId } })
   await prisma.profileIntention.createMany({
-    data: records.map(ir => {
+    data: (records as { id: string; slug: string }[]).map((ir: { id: string; slug: string }) => {
       const match = intentions.find(i => i.slug === ir.slug)
       return { profileId, intentionId: ir.id, preference: match?.preference || 'YES' }
     })
@@ -305,11 +305,14 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     viewerProfileId
   })
 
-  // 11.1 — PROFILE_VIEW signal, fire-and-forget. recordSignal already
-  // no-ops when actor===target (viewing your own profile).
+  // 11.1/11.5.6 — PROFILE_VIEW signal, fire-and-forget, deduped to at
+  // most one per (viewer, target) pair per UTC day (see
+  // recordProfileViewSignal) so repeated GET /profiles/:id calls from the
+  // same viewer in one session don't inflate this signal. Also no-ops
+  // when actor===target (viewing your own profile).
   if (viewerProfileId) {
-    import('../lib/recommendationSignalService').then(({ recordSignal }) => {
-      recordSignal(viewerProfileId, profile.id, 'PROFILE_VIEW').catch(() => {})
+    import('../lib/recommendationSignalService').then(({ recordProfileViewSignal }) => {
+      recordProfileViewSignal(viewerProfileId, profile.id).catch(() => {})
     }).catch(() => {})
   }
 

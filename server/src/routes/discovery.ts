@@ -148,13 +148,23 @@ router.post('/:id/block', requireAuth, async (req: AuthRequest, res: Response) =
   try {
     const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
     if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    // 11.5.6 — dedup: only fire BLOCK signal on genuine transition into
+    // BLOCK (matches LIKE/PASS pattern) — a repeat POST .../block (double
+    // click, client retry) must not inflate blockRate, which feeds
+    // directly into the guardrail comparison's recommendDisable decision.
+    const priorAction = await prisma.profileAction.findUnique({
+      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
+      select: { action: true }
+    })
     await prisma.profileAction.upsert({
       where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
       update: { action: 'BLOCK' },
       create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id, action: 'BLOCK' }
     })
-    const { recordSignal } = await import('../lib/recommendationSignalService')
-    recordSignal(viewer.profile.id, req.params.id, 'BLOCK').catch(() => {})
+    if (priorAction?.action !== 'BLOCK') {
+      const { recordSignal } = await import('../lib/recommendationSignalService')
+      recordSignal(viewer.profile.id, req.params.id, 'BLOCK').catch(() => {})
+    }
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
 })

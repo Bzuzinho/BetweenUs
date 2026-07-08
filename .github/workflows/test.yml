@@ -47,9 +47,18 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
 
-      - name: Install dependencies
+      - name: Install backend dependencies
         working-directory: server
         run: npm ci
+
+      # 11.5.4 — Prisma schema validity, checked before generate so a
+      # malformed schema fails fast with a schema-specific error instead of
+      # a confusing generate/type-check failure downstream.
+      - name: Validate Prisma schema
+        working-directory: server
+        run: npx prisma validate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betweenus_test
 
       - name: Generate Prisma client
         working-directory: server
@@ -63,7 +72,16 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betweenus_test
 
-      - name: Run tests
+      # 11.5.4 — backend TypeScript baseline. Runs against the REAL
+      # generated Prisma Client (unlike a sandbox with no network access to
+      # Prisma's engine binaries, where the client falls back to an
+      # unresolved `any` stub and produces unrelated implicit-any noise) —
+      # this is the authoritative "0 errors" check for the project.
+      - name: Backend typecheck (tsc --noEmit)
+        working-directory: server
+        run: npm run typecheck
+
+      - name: Run backend tests
         working-directory: server
         run: npm test
         env:
@@ -76,3 +94,14 @@ jobs:
           CONTACT_HASH_SECRET: ci-contact-hash-secret
           CLIENT_URL: http://localhost:3000
           ADMIN_EMAILS: admin@test.com
+
+      # 11.5.4 — client has no TypeScript/test suite (plain JS/JSX + Vite);
+      # `vite build` is the meaningful "does this compile" signal for it,
+      # equivalent in spirit to the backend typecheck step above.
+      - name: Install frontend dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Frontend build
+        working-directory: client
+        run: npm run build

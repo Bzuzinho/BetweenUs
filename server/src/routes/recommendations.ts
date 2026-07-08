@@ -19,6 +19,7 @@ import {
   computeRankCorrelation, estimateTopNLikeRate, computeMeaningfulConnectionRateByCohort, computeGuardrailComparison
 } from '../lib/recommendationAnalysisService'
 import { computeMeaningfulConnectionRateSince } from '../lib/meaningfulConnectionService'
+import { isSampleSufficient } from '../lib/recommendationAnalysisService'
 
 const router = Router()
 
@@ -97,7 +98,7 @@ router.get('/meaningful-connection-rate', requireAuth, requireAdmin('recommendat
     const days = Math.min(365, Math.max(1, Number(req.query.days) || 30))
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
     const rate = await computeMeaningfulConnectionRateSince(since)
-    res.json({ sinceDays: days, ...rate })
+    res.json({ sinceDays: days, ...rate, dataSufficient: isSampleSufficient(rate.totalCount) })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
   }

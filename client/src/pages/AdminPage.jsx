@@ -2254,6 +2254,19 @@ function CirclesManager() {
    Read + weight-tuning only. The actual on/off switches
    (INTELLIGENT_RECOMMENDATIONS_SHADOW_MODE / _ENABLED) are env vars, not
    toggleable here by design — see recommendations.ts's header comment. ── */
+// 11.5.8 — Admin Recommendations UX states. "—" alone reads as an error to
+// an admin who doesn't know the internals; every empty/insufficient state
+// gets an explicit sentence instead, and a single banner at the top gives
+// the one-line answer to "is this ready to look at yet?" before the admin
+// has to read four separate cards to figure that out themselves.
+const RECOMMENDATION_STATE_COPY = {
+  NO_DATA: { label: 'SEM DADOS', color: 'muted', text: 'O modo shadow ainda não gravou nenhuma decisão de ranking. Isto é normal logo após o deploy — ainda não há dados para mostrar.' },
+  COLLECTING_DATA: { label: 'A RECOLHER DADOS', color: 'primary', text: 'O modo shadow está a recolher dados em produção. Ainda não há amostra suficiente para uma leitura fiável.' },
+  INSUFFICIENT_SAMPLE: { label: 'AMOSTRA INSUFICIENTE', color: 'primary', text: 'Não há dados suficientes para comparar os cohorts com confiança. Os números abaixo são apenas diagnóstico — não devem motivar uma decisão ainda.' },
+  READY_FOR_REVIEW: { label: 'PRONTO PARA REVISÃO', color: 'success', text: 'Amostra suficiente em ambos os cohorts e sem sinais de alerta nos guardrails. Pode ser revisto com confiança.' },
+  GUARDRAIL_CONCERN: { label: 'ALERTA DE GUARDRAIL', color: 'danger', text: 'Amostra suficiente, mas pelo menos um guardrail de segurança piorou no cohort RECOMMENDATION_V1. Ver detalhes abaixo.' },
+}
+
 function RecommendationsManager() {
   const [status, setStatus] = useState(null)
   const [weights, setWeights] = useState(null)
@@ -2293,10 +2306,40 @@ function RecommendationsManager() {
 
   const pct = (v) => v == null ? '—' : `${(v * 100).toFixed(1)}%`
 
+  // 11.5.8 — overall state derivation. Order matters: check most-specific
+  // (no data at all) before the more nuanced ones.
+  const rankSample = shadow?.rankCorrelation?.sampleSize ?? 0
+  const guardrailsSufficient = guardrails?.dataSufficient === true
+  const guardrailConcern = guardrailsSufficient && guardrails?.recommendDisable === true
+
+  let overallState = 'NO_DATA'
+  if (rankSample === 0 && (guardrails?.sample?.control ?? 0) === 0 && (guardrails?.sample?.recommendation ?? 0) === 0) {
+    overallState = 'NO_DATA'
+  } else if (guardrailConcern) {
+    overallState = 'GUARDRAIL_CONCERN'
+  } else if (guardrailsSufficient) {
+    overallState = 'READY_FOR_REVIEW'
+  } else if (guardrails?.reason === 'INSUFFICIENT_SAMPLE') {
+    overallState = 'INSUFFICIENT_SAMPLE'
+  } else {
+    overallState = 'COLLECTING_DATA'
+  }
+  const stateCopy = RECOMMENDATION_STATE_COPY[overallState]
+  const stateColor = { muted: C.muted, primary: C.primary, success: C.success, danger: C.danger }[stateCopy.color]
+
   return (
     <div>
-      <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.2)`, borderRadius:12, padding:'12px 16px', marginBottom:20, fontSize:13, color:C.primary, lineHeight:1.5 }}>
+      <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.2)`, borderRadius:12, padding:'12px 16px', marginBottom:14, fontSize:13, color:C.primary, lineHeight:1.5 }}>
         Layer 3 (RecommendationRanker) nunca introduz um perfil excluído pelo eligibility pipeline — só reordena/anota o que o Discovery já produziu. Flags de on/off são variáveis de ambiente (não editáveis aqui), por decisão de segurança.
+      </div>
+
+      {/* 11.5.8 — top-level state banner */}
+      <div style={{ background:C.surface, border:`1.5px solid ${stateColor}`, borderRadius:12, padding:'12px 16px', marginBottom:20, fontSize:13 }}>
+        <div style={{ fontWeight:700, color:stateColor, marginBottom:4 }}>{stateCopy.label}</div>
+        <div style={{ color:C.text2, lineHeight:1.5 }}>{stateCopy.text}</div>
+        {!status?.shadowModeEnabled && (
+          <div style={{ marginTop:6, color:C.muted }}>A recomendação ranking não está ativa para nenhum utilizador — só afeta o que este painel mostra.</div>
+        )}
       </div>
 
       {/* Status */}
@@ -2304,7 +2347,7 @@ function RecommendationsManager() {
         <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:10 }}>Estado</div>
         <div style={{ display:'flex', gap:16, flexWrap:'wrap', fontSize:13 }}>
           <div>Shadow mode: <strong style={{ color: status?.shadowModeEnabled ? C.success : C.muted }}>{status?.shadowModeEnabled ? 'ATIVO' : 'inativo'}</strong></div>
-          <div>A/B test: <strong style={{ color: status?.intelligentRecommendationsEnabled ? C.success : C.muted }}>{status?.intelligentRecommendationsEnabled ? 'ATIVO' : 'inativo'}</strong></div>
+          <div>A/B test: <strong style={{ color: status?.intelligentRecommendationsEnabled ? C.success : C.muted }}>{status?.intelligentRecommendationsEnabled ? 'ATIVO (ranking real é aplicado a utilizadores)' : 'inativo — recomendação de ranking não é aplicada a nenhum utilizador'}</strong></div>
           <div>Modelo: <span style={{ color:C.text2 }}>{status?.modelVersion}</span></div>
         </div>
       </div>
@@ -2333,20 +2376,39 @@ function RecommendationsManager() {
       {/* Shadow analysis */}
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18, marginBottom:16 }}>
         <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:10 }}>Shadow analysis (últimos {shadow?.sinceDays ?? 14} dias)</div>
-        <div style={{ display:'flex', gap:20, flexWrap:'wrap', fontSize:13, color:C.text2 }}>
-          <div>Rank correlation: <strong style={{color:C.text}}>{shadow?.rankCorrelation != null ? shadow.rankCorrelation.toFixed(2) : 'sem dados'}</strong></div>
-          <div>Like rate (top 10 atual): <strong style={{color:C.text}}>{pct(shadow?.likeProjection?.currentTopNLikeRate)}</strong></div>
-          <div>Like rate (top 10 recomendado): <strong style={{color:C.text}}>{pct(shadow?.likeProjection?.recommendationTopNLikeRate)}</strong></div>
-        </div>
+        {rankSample === 0 ? (
+          <div style={{ fontSize:13, color:C.muted }}>O modo shadow está a recolher dados. Ainda não há pares de ranking suficientes para calcular estas métricas.</div>
+        ) : (
+          <>
+            <div style={{ display:'flex', gap:20, flexWrap:'wrap', fontSize:13, color:C.text2 }}>
+              <div>
+                Rank correlation: <strong style={{color:C.text}}>{shadow.rankCorrelation.correlation != null ? shadow.rankCorrelation.correlation.toFixed(2) : '—'}</strong>
+                {!shadow.rankCorrelation.dataSufficient && <span style={{ color:C.muted, fontSize:11 }}> (amostra pequena: {rankSample})</span>}
+              </div>
+              <div>Like rate (top 10 atual): <strong style={{color:C.text}}>{pct(shadow?.likeProjection?.currentTopNLikeRate)}</strong></div>
+              <div>Like rate (top 10 recomendado): <strong style={{color:C.text}}>{pct(shadow?.likeProjection?.recommendationTopNLikeRate)}</strong></div>
+            </div>
+            {shadow?.likeProjection?.dataSufficient === false && (
+              <div style={{ marginTop:8, fontSize:11, color:C.muted }}>Amostra ainda pequena (n={shadow.likeProjection.sampleSize}) — like rate acima é apenas indicativo.</div>
+            )}
+          </>
+        )}
         <div style={{ marginTop:12, fontSize:12, color:C.muted }}>
-          Meaningful Connection Rate — CONTROL: <strong style={{color:C.text2}}>{pct(shadow?.meaningfulConnectionRateByCohort?.CONTROL?.rate)}</strong>{' '}
-          · RECOMMENDATION_V1: <strong style={{color:C.text2}}>{pct(shadow?.meaningfulConnectionRateByCohort?.RECOMMENDATION_V1?.rate)}</strong>
+          Meaningful Connection Rate — CONTROL: <strong style={{color:C.text2}}>{pct(shadow?.meaningfulConnectionRateByCohort?.CONTROL?.rate)}</strong>
+          {shadow?.meaningfulConnectionRateByCohort?.CONTROL?.dataSufficient === false && ' (amostra pequena)'}
+          {' '}· RECOMMENDATION_V1: <strong style={{color:C.text2}}>{pct(shadow?.meaningfulConnectionRateByCohort?.RECOMMENDATION_V1?.rate)}</strong>
+          {shadow?.meaningfulConnectionRateByCohort?.RECOMMENDATION_V1?.dataSufficient === false && ' (amostra pequena)'}
         </div>
       </div>
 
       {/* Guardrails */}
-      <div style={{ background:C.surface, border:`1px solid ${guardrails?.recommendDisable ? C.danger : C.border}`, borderRadius:16, padding:18 }}>
+      <div style={{ background:C.surface, border:`1px solid ${guardrailConcern ? C.danger : C.border}`, borderRadius:16, padding:18 }}>
         <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:10 }}>Guardrails A/B (últimos {guardrails?.sinceDays ?? 14} dias)</div>
+        {!guardrailsSufficient && (
+          <div style={{ marginBottom:12, fontSize:12, color:C.muted }}>
+            Amostra insuficiente para uma comparação fiável (CONTROL: {guardrails?.sample?.control ?? 0}, RECOMMENDATION_V1: {guardrails?.sample?.recommendation ?? 0}). Os valores abaixo são apenas diagnóstico.
+          </div>
+        )}
         <table style={{ width:'100%', fontSize:12, color:C.text2, borderCollapse:'collapse' }}>
           <thead>
             <tr style={{ textAlign:'left', color:C.muted }}>
@@ -2359,14 +2421,14 @@ function RecommendationsManager() {
           </thead>
           <tbody>
             <tr>
-              <td style={{ padding:'4px 8px' }}>CONTROL</td>
+              <td style={{ padding:'4px 8px' }}>CONTROL (n={guardrails?.control?.profileCount ?? 0})</td>
               <td style={{ padding:'4px 8px' }}>{pct(guardrails?.control?.blockRate)}</td>
               <td style={{ padding:'4px 8px' }}>{pct(guardrails?.control?.reportRate)}</td>
               <td style={{ padding:'4px 8px' }}>{pct(guardrails?.control?.safeExitRate)}</td>
               <td style={{ padding:'4px 8px' }}>{pct(guardrails?.control?.matchAbandonmentRate)}</td>
             </tr>
             <tr>
-              <td style={{ padding:'4px 8px' }}>RECOMMENDATION_V1</td>
+              <td style={{ padding:'4px 8px' }}>RECOMMENDATION_V1 (n={guardrails?.recommendationV1?.profileCount ?? 0})</td>
               <td style={{ padding:'4px 8px' }}>{pct(guardrails?.recommendationV1?.blockRate)}</td>
               <td style={{ padding:'4px 8px' }}>{pct(guardrails?.recommendationV1?.reportRate)}</td>
               <td style={{ padding:'4px 8px' }}>{pct(guardrails?.recommendationV1?.safeExitRate)}</td>
@@ -2374,7 +2436,7 @@ function RecommendationsManager() {
             </tr>
           </tbody>
         </table>
-        {guardrails?.recommendDisable && (
+        {guardrailConcern && (
           <div style={{ marginTop:12, background:C.dangerDim, border:`1px solid ${C.danger}`, borderRadius:8, padding:'10px 12px', fontSize:12, color:C.danger }}>
             ⚠ Recomendação: considerar desativar INTELLIGENT_RECOMMENDATIONS_ENABLED.
             {guardrails.concerns.map((c, i) => <div key={i} style={{ marginTop:4 }}>{c}</div>)}

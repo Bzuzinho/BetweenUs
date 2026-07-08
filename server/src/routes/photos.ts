@@ -3,7 +3,7 @@ import multer from 'multer'
 import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
 import { uploadPrivateFile, deleteFile } from '../lib/storage'
-import { resolvePhotoForViewer, isStorageKey } from '../lib/mediaAccessService'
+import { resolvePhotoForViewer, isStorageKey, PhotoRecord } from '../lib/mediaAccessService'
 import { processImage, detectRealImageType } from '../lib/imageProcessing'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { notifyAdmins } from '../lib/notify'
@@ -122,7 +122,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     // 3.1: owner always gets CLEAN — sign storagePath fresh on every read
     // instead of exposing the permanent (pre-Sprint-3) or private (post-
     // Sprint-3) storage value directly.
-    const photos = await Promise.all(profile.photos.map(async photo => {
+    const photos = await Promise.all(profile.photos.map(async (photo: PhotoRecord) => {
       const resolved = await resolvePhotoForViewer(photo, {
         ownerUserId: req.userId!,
         viewerUserId: req.userId!,
@@ -293,13 +293,17 @@ router.put('/access-requests/:id', requireAuth, async (req: AuthRequest, res: Re
 
   const photo = request.photo as any
 
-  // 11.1 — PHOTO_ACCESS_GRANTED, only fired the moment a request actually
-  // becomes APPROVED (never on DECLINED, never re-fired on an already-
-  // approved request). Owner is the actor (they extended access), the
-  // requester is the target — reflects positively on the person who was
-  // trusted enough to be granted access.
+  // 11.1/11.5.6 — PHOTO_ACCESS_GRANTED, only fired the moment a request
+  // actually TRANSITIONS INTO APPROVED (never on DECLINED, never re-fired
+  // if the request was already APPROVED before this call — `wasAlready
+  // Approved` below, captured from the `request` row fetched at the top
+  // of this handler, BEFORE either the SINGLE_MEMBER update or the shared-
+  // media recordApproval call that follows). Owner is the actor (they
+  // extended access), the requester is the target — reflects positively
+  // on the person who was trusted enough to be granted access.
+  const wasAlreadyApproved = request.status === 'APPROVED'
   const maybeRecordGrantSignal = async (finalStatus: string) => {
-    if (finalStatus !== 'APPROVED') return
+    if (finalStatus !== 'APPROVED' || wasAlreadyApproved) return
     try {
       const requesterProfile = await prisma.profile.findUnique({ where: { userId: request.requesterId }, select: { id: true } })
       if (requesterProfile) {

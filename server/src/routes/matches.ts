@@ -54,7 +54,16 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       orderBy: { matchedAt: 'desc' }
     })
 
-    const formatted = matches.map(m => {
+    interface MatchListRow {
+      id: string
+      matchedAt: Date
+      profileOneId: string
+      profileTwoId: string
+      profileOne: { id: string; displayName: string; city: string | null; type: string; photos: any[] }
+      profileTwo: { id: string; displayName: string; city: string | null; type: string; photos: any[] }
+      conversation: { id: string; messages: { body: string; createdAt: Date; readAt: Date | null; senderUserId: string }[] } | null
+    }
+    const formatted = (matches as MatchListRow[]).map((m: MatchListRow) => {
       const isOne = m.profileOneId === profileId
       const other = isOne ? m.profileTwo : m.profileOne
       const lastMsg = m.conversation?.messages[0]

@@ -38,7 +38,7 @@ export const getPendingReacceptance = async (userId: string): Promise<PendingRea
   const pending: PendingReacceptance[] = []
   for (const doc of latestDocs) {
     if (!doc.requiresReacceptance) continue
-    const accepted = userConsents.find(c => c.consentType === doc.consentType)
+    const accepted = userConsents.find((c: { consentType: string; version: number }) => c.consentType === doc.consentType)
     if (!accepted || accepted.version !== doc.version) {
       pending.push({
         consentType: doc.consentType,

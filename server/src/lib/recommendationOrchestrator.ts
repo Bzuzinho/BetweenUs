@@ -64,39 +64,53 @@ export const applyRecommendations = async (
   }
 
   const cohort = effectiveCohort(viewerProfileId)
-  const ranker = createHeuristicRanker({ pinnedFilters })
-  const ranked = await ranker.rank(viewerProfileId, items, { source: 'DISCOVERY_FEED' })
 
-  // Shadow logging happens whenever either flag is on — once V1 is truly
-  // serving a cohort, this table is also how 11.11's shadow-analysis
-  // metrics keep being computed going forward, not just during the
-  // observe-only period.
-  logShadowRanking(viewerProfileId, items, ranked, ranker.modelVersion).catch(() => {})
+  // 11.5.5 — "falha do ranker não quebra discovery": everything from here
+  // down is experimental (Layer 3) and sits on top of the already-valid
+  // `items` Layers 1+2 produced. A bug anywhere in ranking/diversity/
+  // exploration must degrade to "serve the current ranking untouched",
+  // never bubble up as a 500 to the Discovery endpoint — this is the same
+  // fail-open discipline logShadowRanking already applies to the logging
+  // side, extended to cover the ranking computation itself.
+  try {
+    const ranker = createHeuristicRanker({ pinnedFilters })
+    const ranked = await ranker.rank(viewerProfileId, items, { source: 'DISCOVERY_FEED' })
 
-  // Shadow mode alone (not yet enabled): compute + log, but the response
-  // is untouched — this is the entire point of shadow mode (11.5:
-  // "Discovery continua a usar ranking atual").
-  if (!enabled || cohort === 'CONTROL') {
-    return { items, cohort, recommendationApplied: false }
+    // Shadow logging happens whenever either flag is on — once V1 is truly
+    // serving a cohort, this table is also how 11.11's shadow-analysis
+    // metrics keep being computed going forward, not just during the
+    // observe-only period. Already independently fail-safe (try/catch
+    // inside logShadowRanking + a .catch() here as a second layer).
+    logShadowRanking(viewerProfileId, items, ranked, ranker.modelVersion).catch(() => {})
+
+    // Shadow mode alone (not yet enabled): compute + log, but the response
+    // is untouched — this is the entire point of shadow mode (11.5:
+    // "Discovery continua a usar ranking atual").
+    if (!enabled || cohort === 'CONTROL') {
+      return { items, cohort, recommendationApplied: false }
+    }
+
+    // RECOMMENDATION_V1 cohort with the experiment enabled: actually
+    // reorder. `ranked` only ever references candidateProfileId values that
+    // came from `items` in the first place (see heuristicRecommendationRanker
+    // — it maps eligibleCandidates 1:1, never invents an id), so this lookup
+    // can never resolve to something outside the original eligible set.
+    const byProfileId = new Map(items.map(i => [i.profile.id, i]))
+    const reordered: DiscoveryCandidateItem[] = ranked
+      .map(r => {
+        const original = byProfileId.get(r.candidateProfileId)
+        if (!original) return null // defensive; structurally unreachable
+        return {
+          ...original,
+          betweenScore: original.betweenScore, // Between Score itself never changes — only order/reasons do
+          reasons: explainRecommendationReasons(r.reasonCodes),
+        }
+      })
+      .filter((x): x is DiscoveryCandidateItem => x !== null)
+
+    return { items: reordered, cohort, recommendationApplied: true }
+  } catch (err: any) {
+    console.error('[RECOMMENDATION RANKER] falling back to current ranking:', err.message)
+    return { items, cohort: 'CONTROL', recommendationApplied: false }
   }
-
-  // RECOMMENDATION_V1 cohort with the experiment enabled: actually
-  // reorder. `ranked` only ever references candidateProfileId values that
-  // came from `items` in the first place (see heuristicRecommendationRanker
-  // — it maps eligibleCandidates 1:1, never invents an id), so this lookup
-  // can never resolve to something outside the original eligible set.
-  const byProfileId = new Map(items.map(i => [i.profile.id, i]))
-  const reordered: DiscoveryCandidateItem[] = ranked
-    .map(r => {
-      const original = byProfileId.get(r.candidateProfileId)
-      if (!original) return null // defensive; structurally unreachable
-      return {
-        ...original,
-        betweenScore: original.betweenScore, // Between Score itself never changes — only order/reasons do
-        reasons: explainRecommendationReasons(r.reasonCodes),
-      }
-    })
-    .filter((x): x is DiscoveryCandidateItem => x !== null)
-
-  return { items: reordered, cohort, recommendationApplied: true }
 }

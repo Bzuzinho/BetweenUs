@@ -44,6 +44,33 @@ export const recordSignal = async (
   }
 }
 
+// 11.5.6 — deduplication policy for high-frequency, low-intent signals.
+// "GET /profiles/:id chamado 5 vezes pelo frontend não deve necessariamente
+// criar 5 PROFILE_VIEW relevantes" — policy: at most one PROFILE_VIEW
+// signal per (actor, target) pair per calendar day (UTC). Implemented as a
+// createdAt range check rather than a metadata-JSON-path match (simpler,
+// works identically across DB backends, and this signal never needs
+// per-view metadata beyond identifying "did this pair already view today").
+const startOfUtcDay = (d: Date): Date => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+
+export const recordProfileViewSignal = async (actorProfileId: string, targetProfileId: string): Promise<void> => {
+  if (actorProfileId === targetProfileId) return
+  try {
+    const todayStart = startOfUtcDay(new Date())
+    const already = await (prisma as any).recommendationSignal.findFirst({
+      where: {
+        actorProfileId, targetProfileId, signalType: 'PROFILE_VIEW',
+        createdAt: { gte: todayStart }
+      },
+      select: { id: true }
+    })
+    if (already) return
+    await recordSignal(actorProfileId, targetProfileId, 'PROFILE_VIEW')
+  } catch (err: any) {
+    console.error('[RECOMMENDATION SIGNAL] PROFILE_VIEW dedup check failed:', err.message)
+  }
+}
+
 // 11.1 — SUSTAINED_CONVERSATION is computed from metadata, never inferred
 // from message content: "conversation on at least 3 distinct days".
 // Idempotent per conversation — only ever recorded once per conversation

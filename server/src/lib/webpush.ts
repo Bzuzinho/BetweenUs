@@ -73,7 +73,7 @@ export const pushToAdmins = async (
     },
     select: { id: true }
   })
-  await pushToUsers(admins.map(a => a.id), payload)
+  await pushToUsers(admins.map((a: { id: string }) => a.id), payload)
 }
 
 export const VAPID_PUBLIC_KEY = VAPID_PUBLIC

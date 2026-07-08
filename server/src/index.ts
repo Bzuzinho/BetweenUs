@@ -9,6 +9,9 @@ import { rateLimit } from 'express-rate-limit'
 import dotenv from 'dotenv'
 import { initSentry, Sentry } from './lib/sentry'
 import { verifyAccessToken } from './utils/jwt'
+import prisma from './lib/prisma'
+import { isShadowModeEnabled, isIntelligentRecommendationsEnabled } from './lib/recommendationAbTestService'
+import { HEURISTIC_MODEL_VERSION } from './lib/heuristicRecommendationRanker'
 
 dotenv.config()
 
@@ -125,6 +128,36 @@ app.get('/health/email', async (req, res) => {
   } catch (err: any) {
     res.json({ status: 'error', message: err.message, config,
       hint: 'Check Resend dashboard → API Keys → SMTP credentials' })
+  }
+})
+
+// 11.5.5 — Intelligent Recommendations diagnostic endpoint, same
+// unauthenticated "cheap ops visibility" pattern as /health/email. Exposes
+// only flags/config + a table-reachability check — no signal data, no
+// user/profile ids, nothing sensitive (unlike the admin-only
+// /api/admin/recommendations/* routes, which need auth because they show
+// real cohort metrics).
+app.get('/health/recommendations', async (_req, res) => {
+  const shadowModeEnabled = isShadowModeEnabled()
+  const intelligentRecommendationsEnabled = isIntelligentRecommendationsEnabled()
+  const retentionDays = Number(process.env.RECOMMENDATION_LOG_RETENTION_DAYS || 90)
+
+  try {
+    // Cheap reachability check for the ranking-log table shadow mode
+    // writes to — a count, never a write, so this endpoint can't itself
+    // pollute the log it's checking.
+    const logTableReachable = await (prisma as any).recommendationRankingLog.count().then(() => true).catch(() => false)
+    res.json({
+      status: 'ok',
+      shadowModeEnabled,
+      intelligentRecommendationsEnabled,
+      modelVersion: HEURISTIC_MODEL_VERSION,
+      logTableReachable,
+      retentionDays,
+      productionRecommendedConfig: { shadowModeEnabled: true, intelligentRecommendationsEnabled: false },
+    })
+  } catch (err: any) {
+    res.json({ status: 'error', message: err.message, shadowModeEnabled, intelligentRecommendationsEnabled })
   }
 })
 

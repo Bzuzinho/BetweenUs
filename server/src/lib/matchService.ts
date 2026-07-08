@@ -47,16 +47,27 @@ export const createLikeOrMatch = async (
       return { kind: 'ERROR', message: 'Ação não disponível.' }
     }
 
-    // Register the like (idempotent)
+    // Register the like (idempotent) — capture the PRIOR action first so
+    // the signal below only fires on a genuine transition INTO 'LIKE',
+    // not on every repeat call with the same actor/target (11.5.6 dedup
+    // policy: one LIKE signal per actor/target action, matching how the
+    // underlying ProfileAction row itself is idempotent).
+    const priorAction = await prisma.profileAction.findUnique({
+      where: { actorProfileId_targetProfileId: { actorProfileId, targetProfileId } },
+      select: { action: true }
+    })
     await prisma.profileAction.upsert({
       where: { actorProfileId_targetProfileId: { actorProfileId, targetProfileId } },
       update: { action: 'LIKE' },
       create: { actorProfileId, targetProfileId, action: 'LIKE' }
     })
 
-    // 11.1 — behavioral signal, best-effort, never blocks the like itself.
-    const { recordSignal } = await import('./recommendationSignalService')
-    recordSignal(actorProfileId, targetProfileId, 'LIKE').catch(() => {})
+    // 11.1/11.5.6 — behavioral signal, best-effort, never blocks the like
+    // itself. Only fired the first time this pair transitions into LIKE.
+    if (priorAction?.action !== 'LIKE') {
+      const { recordSignal } = await import('./recommendationSignalService')
+      recordSignal(actorProfileId, targetProfileId, 'LIKE').catch(() => {})
+    }
 
     // Check reciprocity
     const theirLike = await prisma.profileAction.findFirst({
@@ -100,8 +111,14 @@ export const createLikeOrMatch = async (
     if (!result.ok || !result.match) return { kind: 'ERROR', message: result.error || 'Erro ao criar match.' }
 
     // 11.1 — MATCH is mutual by nature: one signal row per direction.
-    recordSignal(actorProfileId, targetProfileId, 'MATCH').catch(() => {})
-    recordSignal(targetProfileId, actorProfileId, 'MATCH').catch(() => {})
+    // (Already naturally deduped — this code path only runs once, right
+    // after the match is first created above; the `existing` check earlier
+    // returns before here on any subsequent call for the same pair.)
+    {
+      const { recordSignal } = await import('./recommendationSignalService')
+      recordSignal(actorProfileId, targetProfileId, 'MATCH').catch(() => {})
+      recordSignal(targetProfileId, actorProfileId, 'MATCH').catch(() => {})
+    }
 
     return requiresDoubleConsent
       ? { kind: 'MATCH_PENDING_COUPLE_APPROVAL', matchId: result.match.id }
@@ -125,11 +142,21 @@ export const getRequiredApproverUserIds = async (profileId: string): Promise<str
 }
 
 export const recordPass = async (actorProfileId: string, targetProfileId: string): Promise<void> => {
+  // 11.5.6 — same "only on genuine transition" dedup as LIKE, applied here
+  // too for consistency/bounded row growth even though PASS is excluded
+  // from the global aggregate (see comment below) so a duplicate row
+  // would be harmless for ranking — it would still be wasted writes if a
+  // client retried this call.
+  const priorAction = await prisma.profileAction.findUnique({
+    where: { actorProfileId_targetProfileId: { actorProfileId, targetProfileId } },
+    select: { action: true }
+  })
   await prisma.profileAction.upsert({
     where: { actorProfileId_targetProfileId: { actorProfileId, targetProfileId } },
     update: { action: 'PASS' },
     create: { actorProfileId, targetProfileId, action: 'PASS' }
   })
+  if (priorAction?.action === 'PASS') return
   // 11.1/11.7 — recorded for completeness, but deliberately EXCLUDED from
   // the global aggregate a candidate's other viewers see (see
   // recommendationSignalService's GLOBAL_AGGREGATE_TYPES comment) — a

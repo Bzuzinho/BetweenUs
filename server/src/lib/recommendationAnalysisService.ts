@@ -14,6 +14,18 @@ import prisma from './prisma'
 import { computeMeaningfulConnectionRate, type MeaningfulConnectionRate } from './meaningfulConnectionService'
 import { assignCohort, type RecommendationCohort, EXPERIMENT_KEY } from './recommendationAbTestService'
 
+// ── Sample-size guard (11.5.7) ──────────────────────────────────────────────
+// Below this many data points, we do not let any metric here produce a
+// confident-sounding claim (a correlation, a rate comparison, a disable
+// recommendation). Configurable via env so ops can tune the bar without a
+// code change, same pattern as SAFETY_ALERT_OVERDUE_HOURS elsewhere in this
+// codebase. Deliberately ONE shared threshold across correlation/like-rate/
+// guardrails/MCR-by-cohort rather than four separate knobs — keeps the
+// admin UI's "is this reliable yet?" question answerable with one number.
+export const RECOMMENDATION_MIN_SAMPLE_SIZE = Number(process.env.RECOMMENDATION_MIN_SAMPLE_SIZE || 30)
+
+export const isSampleSufficient = (n: number): boolean => n >= RECOMMENDATION_MIN_SAMPLE_SIZE
+
 // ── Rank correlation (11.11) ────────────────────────────────────────────────
 // Spearman rank correlation between currentRank and recommendationRank
 // across logged pairs — a value near +1 means the ranker mostly agrees
@@ -27,12 +39,23 @@ const spearman = (pairs: Array<{ a: number; b: number }>): number | null => {
   return 1 - (6 * dSquaredSum) / (n * (n * n - 1))
 }
 
-export const computeRankCorrelation = async (algorithmVersion: string, since: Date): Promise<number | null> => {
+export interface RankCorrelationResult {
+  correlation: number | null
+  sampleSize: number
+  dataSufficient: boolean
+}
+
+export const computeRankCorrelation = async (algorithmVersion: string, since: Date): Promise<RankCorrelationResult> => {
   const rows = await (prisma as any).recommendationRankingLog.findMany({
     where: { algorithmVersion, createdAt: { gte: since } },
     select: { currentRank: true, recommendationRank: true }
   })
-  return spearman(rows.map((r: any) => ({ a: r.currentRank, b: r.recommendationRank })))
+  const sampleSize = rows.length
+  return {
+    correlation: spearman(rows.map((r: any) => ({ a: r.currentRank, b: r.recommendationRank }))),
+    sampleSize,
+    dataSufficient: isSampleSufficient(sampleSize),
+  }
 }
 
 // ── Click/like projection (11.11) ───────────────────────────────────────────
@@ -48,7 +71,7 @@ export const estimateTopNLikeRate = async (algorithmVersion: string, since: Date
     where: { algorithmVersion, createdAt: { gte: since } },
     select: { viewerProfileId: true, candidateProfileId: true, currentRank: true, recommendationRank: true }
   })
-  if (rows.length === 0) return { currentTopNLikeRate: null, recommendationTopNLikeRate: null, sampleSize: 0 }
+  if (rows.length === 0) return { currentTopNLikeRate: null, recommendationTopNLikeRate: null, sampleSize: 0, dataSufficient: false }
 
   const currentTopN = rows.filter((r: any) => r.currentRank <= topN)
   const recommendationTopN = rows.filter((r: any) => r.recommendationRank <= topN)
@@ -71,7 +94,7 @@ export const estimateTopNLikeRate = async (algorithmVersion: string, since: Date
     likeRateFor(currentTopN), likeRateFor(recommendationTopN)
   ])
 
-  return { currentTopNLikeRate, recommendationTopNLikeRate, sampleSize: rows.length }
+  return { currentTopNLikeRate, recommendationTopNLikeRate, sampleSize: rows.length, dataSufficient: isSampleSufficient(rows.length) }
 }
 
 // ── Current top-10 vs recommended top-10 (11.11) ────────────────────────────
@@ -91,10 +114,14 @@ export const compareTopN = async (viewerProfileId: string, algorithmVersion: str
 // split (11.12) — this is deliberate: shadow-mode analysis should measure
 // "what would happen to the actual cohorts" before those cohorts ever see
 // a different ranking, not some other ad-hoc grouping.
+export interface MeaningfulConnectionRateWithSample extends MeaningfulConnectionRate {
+  dataSufficient: boolean
+}
+
 export const computeMeaningfulConnectionRateByCohort = async (
   since: Date,
   experimentKey: string = EXPERIMENT_KEY
-): Promise<Record<RecommendationCohort, MeaningfulConnectionRate>> => {
+): Promise<Record<RecommendationCohort, MeaningfulConnectionRateWithSample>> => {
   const matches = await prisma.match.findMany({
     where: { createdAt: { gte: since } },
     select: { id: true, profileOneId: true }
@@ -110,7 +137,10 @@ export const computeMeaningfulConnectionRateByCohort = async (
     computeMeaningfulConnectionRate(byCohort.CONTROL),
     computeMeaningfulConnectionRate(byCohort.RECOMMENDATION_V1),
   ])
-  return { CONTROL: control, RECOMMENDATION_V1: v1 }
+  return {
+    CONTROL: { ...control, dataSufficient: isSampleSufficient(control.totalCount) },
+    RECOMMENDATION_V1: { ...v1, dataSufficient: isSampleSufficient(v1.totalCount) },
+  }
 }
 
 // ── A/B guardrails (11.12) ──────────────────────────────────────────────────
@@ -170,9 +200,20 @@ const computeGuardrailsForCohort = async (cohort: RecommendationCohort, since: D
 export interface GuardrailComparison {
   control: GuardrailMetrics
   recommendationV1: GuardrailMetrics
+  // 11.5.7 — sample-size guard: both cohorts must clear
+  // RECOMMENDATION_MIN_SAMPLE_SIZE before this comparison is treated as
+  // reliable. Below that, we still COMPUTE concerns (useful as an early
+  // diagnostic in logs/dashboards) but recommendDisable is forced false —
+  // "evitar decisões baseadas em 3 ou 4 eventos" is a hard rule, not a
+  // suggestion, so it lives here rather than trusting every caller to
+  // remember to check dataSufficient before acting on recommendDisable.
+  dataSufficient: boolean
+  reason: 'INSUFFICIENT_SAMPLE' | null
+  sample: { control: number; recommendation: number }
   // true when any V1 guardrail is meaningfully worse (>20% relative
-  // increase) than its CONTROL counterpart — a recommendation to disable
-  // the test via INTELLIGENT_RECOMMENDATIONS_ENABLED, not an automatic action.
+  // increase) than its CONTROL counterpart AND both cohorts have enough
+  // data to trust that comparison — a recommendation to disable the test
+  // via INTELLIGENT_RECOMMENDATIONS_ENABLED, not an automatic action.
   recommendDisable: boolean
   concerns: string[]
 }
@@ -184,6 +225,8 @@ export const computeGuardrailComparison = async (since: Date, experimentKey: str
     computeGuardrailsForCohort('CONTROL', since, experimentKey),
     computeGuardrailsForCohort('RECOMMENDATION_V1', since, experimentKey),
   ])
+
+  const dataSufficient = isSampleSufficient(control.profileCount) && isSampleSufficient(recommendationV1.profileCount)
 
   const concerns: string[] = []
   const checks: Array<[keyof GuardrailMetrics, string]> = [
@@ -198,5 +241,12 @@ export const computeGuardrailComparison = async (since: Date, experimentKey: str
     }
   }
 
-  return { control, recommendationV1, recommendDisable: concerns.length > 0, concerns }
+  return {
+    control, recommendationV1,
+    dataSufficient,
+    reason: dataSufficient ? null : 'INSUFFICIENT_SAMPLE',
+    sample: { control: control.profileCount, recommendation: recommendationV1.profileCount },
+    recommendDisable: dataSufficient && concerns.length > 0,
+    concerns,
+  }
 }

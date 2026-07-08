@@ -132,8 +132,22 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
   // URL — sign it for the list view. (Was also never selected here before,
   // so u.avatarPath in AdminPage.jsx's user list was always undefined —
   // same class of dead-field bug as the discovery photos/score ones.)
-  const usersWithAvatars = await Promise.all(users.map(async u => ({
-    ...u, avatarPath: await signAvatarUrl((u as any).avatarPath)
+  interface AdminUserListRow {
+    id: string
+    email: string
+    status: string
+    adminRole: string | null
+    avatarPath: string | null
+    createdAt: Date
+    lastSeenAt: Date | null
+    riskScore: number | null
+    profile: { id: string; displayName: string; type: string; city: string | null; status: string } | null
+    subscription: { plan: string; status: string } | null
+    verification: { status: string } | null
+    _count: { reportsMade: number; reportsReceived: number }
+  }
+  const usersWithAvatars = await Promise.all((users as AdminUserListRow[]).map(async (u: AdminUserListRow) => ({
+    ...u, avatarPath: await signAvatarUrl(u.avatarPath)
   })))
   res.json({ users: usersWithAvatars, total })
 })
@@ -491,10 +505,16 @@ router.get('/profiles', requireAdmin('profiles'), async (req: AuthRequest, res: 
     prisma.profile.count({ where })
   ])
   // 3.1: thumbnail per row — admin list view, moderation context (CLEAN)
-  const profilesWithPhotos = await Promise.all(profiles.map(async p => ({
+  interface AdminProfileListRow {
+    id: string
+    userId: string
+    photos: any[]
+    [key: string]: any
+  }
+  const profilesWithPhotos = await Promise.all((profiles as AdminProfileListRow[]).map(async (p: AdminProfileListRow) => ({
     ...p,
     photos: await mergePhotosForViewer(p.photos, {
-      ownerUserId: (p as any).userId,
+      ownerUserId: p.userId,
       viewerUserId: null,
       viewerProfileId: null,
       isAdminModeration: true
@@ -545,7 +565,11 @@ router.get('/photos', requireAdmin('photos'), async (req: AuthRequest, res: Resp
   const total = await prisma.profilePhoto.count({ where: { moderationStatus: status as any } })
   // 3.1: moderators must see the actual (unblurred) photo regardless of its
   // moderationStatus/visibilityLevel — that's the whole point of review.
-  const resolvedPhotos = await Promise.all(photos.map(async p => ({
+  interface AdminPhotoListRow {
+    storagePath: string
+    [key: string]: any
+  }
+  const resolvedPhotos = await Promise.all((photos as AdminPhotoListRow[]).map(async (p: AdminPhotoListRow) => ({
     ...p,
     storagePath: (await signMediaUrl(p.storagePath)) || p.storagePath,
     blurredPath: undefined
@@ -1203,7 +1227,7 @@ async function notifyAdmins(title: string, body: string, excludeUserId?: string)
     where: { adminRole: { in: ['SUPER_ADMIN', 'ADMIN'] as any[] }, NOT: excludeUserId ? { id: excludeUserId } : undefined },
     select: { id: true }
   })
-  const notifs = admins.map(a => ({
+  const notifs = admins.map((a: { id: string }) => ({
     userId: a.id, type: 'service_event', title, body,
     data: JSON.stringify({ tab: 'audit' })
   }))

@@ -81,7 +81,7 @@ export const signMediaUrl = async (
   }
 }
 
-interface PhotoRecord {
+export interface PhotoRecord {
   id: string
   profileId: string
   storagePath: string

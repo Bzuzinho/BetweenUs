@@ -114,7 +114,7 @@ const fetchProfilesThatBlockedViewer = async (viewerProfileId: string): Promise<
     where: { targetProfileId: viewerProfileId, action: 'BLOCK' },
     select: { actorProfileId: true }
   })
-  return new Set(rows.map(r => r.actorProfileId))
+  return new Set(rows.map((r: { actorProfileId: string }) => r.actorProfileId))
 }
 
 // ── Step 6: Contact Blocks ───────────────────────────────────────────────
@@ -221,18 +221,21 @@ export const getCandidates = async (
     select: { profileOneId: true, profileTwoId: true }
   })
 
+  type MyActionRow = { targetProfileId: string; action: string }
+  type MyMatchRow = { profileOneId: string; profileTwoId: string }
+
   const excludeIds = new Set<string>([
     viewerProfileId,
-    ...myActions.filter(a => ['BLOCK', 'PASS'].includes(a.action)).map(a => a.targetProfileId),
+    ...(myActions as MyActionRow[]).filter((a: MyActionRow) => ['BLOCK', 'PASS'].includes(a.action)).map((a: MyActionRow) => a.targetProfileId),
     ...blockedByProfileIds,
   ])
-  myMatches.forEach(m => excludeIds.add(m.profileOneId === viewerProfileId ? m.profileTwoId : m.profileOneId))
+  ;(myMatches as MyMatchRow[]).forEach((m: MyMatchRow) => excludeIds.add(m.profileOneId === viewerProfileId ? m.profileTwoId : m.profileOneId))
 
   // Step 1
   const pool = await fetchCandidatePool(viewerProfile, filters, excludeIds)
 
   const viewerScoreInput = toScoreInput(viewerProfile)
-  const likedIds = new Set(myActions.filter(a => a.action === 'LIKE').map(a => a.targetProfileId))
+  const likedIds = new Set((myActions as MyActionRow[]).filter((a: MyActionRow) => a.action === 'LIKE').map((a: MyActionRow) => a.targetProfileId))
 
   const scored: Array<{ candidate: any; score: number; breakdown: any; reasonCodes: string[]; explanation: string[] }> = []
 

@@ -85,6 +85,6 @@ export const getKeyVersionStats = async (): Promise<KeyVersionStats[]> => {
     _count: { _all: true }
   })
   return grouped
-    .map(g => ({ keyVersion: g.keyVersion, count: g._count._all }))
-    .sort((a, b) => a.keyVersion - b.keyVersion)
+    .map((g: { keyVersion: number; _count: { _all: number } }): KeyVersionStats => ({ keyVersion: g.keyVersion, count: g._count._all }))
+    .sort((a: KeyVersionStats, b: KeyVersionStats) => a.keyVersion - b.keyVersion)
 }
