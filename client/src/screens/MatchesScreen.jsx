@@ -185,9 +185,24 @@ function ChatRoom({ match, onBack }) {
           await api.post(`/privacy/block/${match.profile?.id}`)
           onBack()
           break
-        case 'revoke_photos':
-          await api.post(`/consent/check`, { matchId: match.id, phase: 'PHOTO_REQUEST' })
+        case 'revoke_photos': {
+          // 8.5 — was misleadingly just creating a brand new PHOTO_REQUEST
+          // check (which asks the OTHER side, doesn't revoke anything of
+          // yours). Now: find the most recent check (PHOTO_REQUEST or
+          // FACE_REVEAL) on this match where I've already said yes, and
+          // actually revoke that answer. If there's nothing to revoke yet,
+          // fall back to opening a PHOTO_REQUEST check instead.
+          const { data } = await api.get(`/consent/match/${match.id}`)
+          const mine = (data.checks || [])
+            .filter(c => ['PHOTO_REQUEST', 'FACE_REVEAL'].includes(c.phase))
+            .flatMap(c => (c.responses || []).filter(r => r.userId === user?.id && r.status === 'ACCEPTED').map(r => ({ checkId: c.id })))
+          if (mine.length > 0) {
+            await api.post(`/consent/check/${mine[0].checkId}/revoke`)
+          } else {
+            await api.post(`/consent/check`, { matchId: match.id, phase: 'PHOTO_REQUEST' })
+          }
           break
+        }
         case 'exit':
           onBack()
           break

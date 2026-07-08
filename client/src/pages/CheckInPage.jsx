@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../lib/api'
+import GuideRecommendations from '../components/GuideRecommendations'
 
 const C = {
   bg:'#0A141A', surface:'#102129', elevated:'#172C36',
@@ -123,6 +124,8 @@ export default function CheckInPage() {
             4. Se não confirmares até algumas horas depois da hora marcada, o teu contacto recebe um alerta por email.
           </div>
         </div>
+
+        <GuideRecommendations context="SAFETY_CHECKIN" title="Antes do encontro" />
 
         {success && (
           <div style={{ background: `${C.success}15`, border: `1px solid ${C.success}44`,

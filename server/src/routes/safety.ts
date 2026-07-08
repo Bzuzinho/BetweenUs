@@ -1,17 +1,15 @@
 import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { resolveMyProfileId } from '../lib/profileMembershipService'
+import { scheduleCheckin, confirmSafe, cancelCheckin } from '../lib/safetyCheckinService'
 
 const router = Router()
 
-const toStatus = (c: any) => {
-  if (c.alertSent) return 'ALERT_SENT'
-  if (c.cancelledAt) return 'CANCELLED'
-  if (c.confirmedAt) return 'CONFIRMED'
-  return 'SCHEDULED'
-}
 const maskEmail = (email?: string | null) =>
   email ? email.replace(/(.{2}).+(@.+)/, '$1***$2') : null
+
+const serialize = (c: any) => ({ ...c, safetyEmail: maskEmail(c.safetyEmail) })
 
 // POST /api/safety/checkin — create safety checkin
 router.post('/checkin', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -19,24 +17,20 @@ router.post('/checkin', requireAuth, async (req: AuthRequest, res: Response) => 
     const { matchId, scheduledAt, locationHint, safetyEmail } = req.body
     if (!scheduledAt) return res.status(400).json({ error: 'Hora do encontro obrigatória.' })
 
-    const profile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
-    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    // 9.5 — was Profile.userId-only, same bug class fixed across every
+    // prior sprint (silently excluded a couple/group's non-creator member).
+    const profileId = await resolveMyProfileId(req.userId!)
+    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
 
-    const checkin = await (prisma as any).safetyCheckin.create({
-      data: {
-        profileId: profile.id,
-        matchId: matchId || null,
-        scheduledAt: new Date(scheduledAt),
-        locationHint: locationHint || null,
-        safetyEmail: safetyEmail || null,
-      }
+    const checkin = await scheduleCheckin(profileId, {
+      matchId: matchId || null, scheduledAt: new Date(scheduledAt), locationHint, safetyEmail
     })
 
     res.status(201).json({
       ok: true,
-      checkin: { ...checkin, status: toStatus(checkin), safetyEmail: maskEmail(checkin.safetyEmail) },
+      checkin: serialize(checkin),
       message: safetyEmail
-        ? 'Check-in registado. O teu contacto recebe um alerta se não confirmares a tempo.'
+        ? 'Check-in registado. O teu contacto recebe uma notificação se não confirmares a tempo. O Between Us não contacta as autoridades.'
         : 'Check-in registado.'
     })
   } catch (err: any) {
@@ -50,13 +44,12 @@ router.put('/checkin/:id/confirm', requireAuth, async (req: AuthRequest, res: Re
   try {
     const existing = await (prisma as any).safetyCheckin.findUnique({ where: { id: req.params.id } })
     if (!existing) return res.status(404).json({ error: 'Check-in não encontrado.' })
-    const profile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
-    if (!profile || existing.profileId !== profile.id) return res.status(403).json({ error: 'Sem permissão.' })
+    const profileId = await resolveMyProfileId(req.userId!)
+    if (!profileId || existing.profileId !== profileId) return res.status(403).json({ error: 'Sem permissão.' })
 
-    const checkin = await (prisma as any).safetyCheckin.update({
-      where: { id: req.params.id }, data: { confirmedAt: new Date() }
-    })
-    res.json({ ok: true, checkin: { ...checkin, status: toStatus(checkin) }, message: 'Check-in confirmado. Fica bem! 💚' })
+    const result = await confirmSafe(req.params.id)
+    if (!result.ok) return res.status(400).json({ error: result.error })
+    res.json({ ok: true, checkin: serialize(result.checkin), message: 'Check-in confirmado. Fica bem! 💚' })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
   }
@@ -67,13 +60,12 @@ router.put('/checkin/:id/cancel', requireAuth, async (req: AuthRequest, res: Res
   try {
     const existing = await (prisma as any).safetyCheckin.findUnique({ where: { id: req.params.id } })
     if (!existing) return res.status(404).json({ error: 'Check-in não encontrado.' })
-    const profile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
-    if (!profile || existing.profileId !== profile.id) return res.status(403).json({ error: 'Sem permissão.' })
+    const profileId = await resolveMyProfileId(req.userId!)
+    if (!profileId || existing.profileId !== profileId) return res.status(403).json({ error: 'Sem permissão.' })
 
-    const checkin = await (prisma as any).safetyCheckin.update({
-      where: { id: req.params.id }, data: { cancelledAt: new Date() }
-    })
-    res.json({ ok: true, checkin: { ...checkin, status: toStatus(checkin) }, message: 'Check-in cancelado.' })
+    const result = await cancelCheckin(req.params.id)
+    if (!result.ok) return res.status(400).json({ error: result.error })
+    res.json({ ok: true, checkin: serialize(result.checkin), message: 'Check-in cancelado.' })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
   }
@@ -82,15 +74,15 @@ router.put('/checkin/:id/cancel', requireAuth, async (req: AuthRequest, res: Res
 // GET /api/safety/checkins/me
 router.get('/checkins/me', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const profile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
-    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    const profileId = await resolveMyProfileId(req.userId!)
+    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
 
     const checkins = await (prisma as any).safetyCheckin.findMany({
-      where: { profileId: profile.id },
+      where: { profileId },
       orderBy: { scheduledAt: 'desc' },
       take: 10
     })
-    res.json({ checkins: checkins.map((c: any) => ({ ...c, status: toStatus(c), safetyEmail: maskEmail(c.safetyEmail) })) })
+    res.json({ checkins: checkins.map(serialize) })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
   }

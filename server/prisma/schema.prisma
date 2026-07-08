@@ -50,6 +50,30 @@ enum ProfileStatus {
   SUSPENDED
 }
 
+// 4.5 — Sprint 4 evaluated migrating this to a data-driven catalog table
+// (like Gender/Orientation/Intention/Boundary) and decided AGAINST it for
+// now:
+//   - Unlike gender/orientation, relationship status genuinely drives
+//     behavior today (discovery.ts calcScore's compatMap keys off these
+//     exact enum values). A data-driven catalog would need that
+//     compatibility matrix to also become data-driven to avoid the
+//     classic trap of "admin renames a row, matching logic silently
+//     breaks" — a bigger change than a label-editing catalog.
+//   - The spec's own caution applies directly: "não introduzir
+//     complexidade sem impacto claro no produto." Admin being able to
+//     edit a label/description/sortOrder here has real but modest value;
+//     it doesn't yet justify decoupling the compatibility logic from the
+//     enum.
+// Also evaluated adding OPEN_RELATIONSHIP, HIERARCHICAL_POLY,
+// NON_HIERARCHICAL_POLY, SOLO_POLY as new values. Not added: OPEN already
+// exists and overlaps OPEN_RELATIONSHIP conceptually, and the poly
+// variants are a "relationship model" distinction (how poly, structurally)
+// layered on top of "relationship status" (single/committed/married/etc)
+// — conflating the two into one flat enum is exactly what the spec asks
+// to avoid ("separar relationship status de relationship model"). The
+// clean way to add poly-structure detail is a SEPARATE field/catalog, not
+// more enum values here — deferred until there's a concrete product need
+// for it, per the same anti-complexity caution above.
 enum RelationshipStatus {
   SINGLE
   COMMITTED
@@ -118,12 +142,30 @@ enum CoupleStatus {
   DISABLED
 }
 
+// 6.5 — formalizes "who must approve a match" as an explicit policy rather
+// than the implicit "every ACCEPTED member" behavior
+// ProfileMembershipService.getRequiredApprovers already had. COUPLE always
+// behaves as ALL (enforced in code, not by this field being immutable -
+// see approvalPolicyService.ts's comment on why). MAJORITY/DESIGNATED exist
+// for GROUP's future use ("feature futura" per the spec) - not implemented
+// as real alternate behavior yet.
+enum ApprovalPolicy {
+  ALL
+  MAJORITY
+  DESIGNATED
+}
+
 enum MessageType {
   TEXT
   IMAGE
   SYSTEM
   CONSENT_REQUEST
   PHOTO_UNLOCK_REQUEST
+  // 7.6 — added for RoomMessage's richer message vocabulary. Also valid on
+  // Conversation's Message (shared enum) though no current code path there
+  // produces them.
+  RULE_UPDATE
+  SAFETY
 }
 
 enum ConversationType {
@@ -157,6 +199,34 @@ enum ReportStatus {
   ESCALATED
 }
 
+// 9.1 — evidence captured at report-submission time, deliberately
+// snapshotted rather than referencing live rows: a MESSAGE_SNAPSHOT must
+// stay readable to moderation even if the underlying Message/RoomMessage
+// is later soft-deleted (by the sender, by TTL expiry, or by the cleanup
+// job) or the sender's account is altered. `data` is a restricted subset
+// of fields (see reportEvidenceService.ts), never a full dump of
+// unrelated content.
+enum EvidenceType {
+  MESSAGE_SNAPSHOT
+  PROFILE_SNAPSHOT
+  MEDIA_REFERENCE
+  ROOM_CONTEXT
+  SYSTEM_EVENT
+}
+
+// 9.5 — replaces the ad-hoc toStatus() derivation (alertSent/cancelledAt/
+// confirmedAt booleans with no formal notion of "in between" states) with
+// an explicit, service-written status. Old boolean fields stay for
+// read-compat with anything already querying them directly.
+enum SafetyCheckinStatus {
+  SCHEDULED
+  WAITING_CONFIRMATION
+  SAFE_CONFIRMED
+  OVERDUE
+  ESCALATED
+  CANCELLED
+}
+
 enum SubscriptionPlan {
   FREE
   PREMIUM
@@ -179,6 +249,20 @@ enum VerificationStatus {
   EXPIRED
 }
 
+// 3.4 — was a free-form String defaulting to "selfie"; no taxonomy, no
+// public badge exposure. Kept 1-per-user cardinality (Verification.userId
+// stays @unique) to avoid destabilizing UserActivationService/
+// EligibilityService, both built in Sprint 2.5 around a single verification
+// record per user. True multi-type verification (tracking SELFIE and
+// ID_DOCUMENT simultaneously for one user) would need Verification.userId
+// to become non-unique + those two services updated accordingly — flagged
+// as follow-up, out of proportion to what this sprint asked for.
+enum VerificationType {
+  SELFIE
+  ID_DOCUMENT
+  VIDEO
+}
+
 enum ConsentType {
   TERMS
   PRIVACY_POLICY
@@ -194,6 +278,9 @@ enum NotificationMode {
   SILENT
 }
 
+// 8.3 — ConsentCheck.status stays a CACHED aggregate, recomputed by
+// consentCheckService from ConsentCheckResponse rows. It is never written
+// directly from a route in response to one person's answer — see 8.2/8.3.
 enum ConsentCheckStatus {
   PENDING
   ACCEPTED
@@ -210,6 +297,27 @@ enum ConsentCheckPhase {
   VIDEO_CALL
   MEETING_PROPOSAL
   SAFETY_CHECKIN
+}
+
+// 8.2 — per-responder answer to a ConsentCheck. NOT_YET is an explicit,
+// distinct answer ("not ready yet") — it must never be treated as
+// ACCEPTED, and it is distinct from PENDING (no answer at all/silence).
+// REVOKED is only reachable from ACCEPTED (see consentCheckService).
+enum ConsentResponseStatus {
+  PENDING
+  ACCEPTED
+  NOT_YET
+  DECLINED
+  REVOKED
+}
+
+// 8.10 — mirrors RoomRuleSet's DRAFT/ACTIVE/SUPERSEDED-style version
+// lifecycle: at most one ACTIVE IntentAlignment per room at a time.
+enum IntentAlignmentStatus {
+  DRAFT
+  WAITING_APPROVAL
+  ACTIVE
+  ARCHIVED
 }
 
 enum PhotoAccessStatus {
@@ -238,6 +346,21 @@ model User {
   nif               String?    // NIF/contribuinte — account level, private
   accountName       String?    // Real name — private, different from displayName
   avatarPath        String?    // Account avatar URL
+  // BETA.1 — explicit test-account marker for the beta seed dataset. NEVER
+  // inferred from email domain (deliberate spec requirement — a domain
+  // heuristic is trivial to spoof/forget and gives no audit trail). Does
+  // NOT affect eligibility/discovery — a test account can appear in
+  // Discovery like any other (BETA.1.2 is explicit about this); it only
+  // gates admin badge display, the accountFilter on GET /admin/users, the
+  // /admin/dashboard metrics default filter, and RecommendationSignal/
+  // RecommendationRankingLog.isTestData resolution (recordSignal reads
+  // this off the actor/target profile's owning User).
+  isTestAccount     Boolean    @default(false)
+  // Only meaningful when isTestAccount=true — the betaSeed/scenarios.ts
+  // manifest key this account was created for (e.g.
+  // "individual_open_to_couples"). Never shown on the public profile,
+  // only in the admin UserDetail tab and by validateBetaSeed.ts.
+  testScenarioKey   String?
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
 
@@ -259,7 +382,21 @@ model User {
   adminActionsReceived  AdminAction[]        @relation("AdminTarget")
   betaInvites          BetaInvite[]         @relation("InviteCreator")
   betaInviteUsed       BetaInvite?          @relation("InviteUser")
+  onboardingProgress   OnboardingProgress?
+  travelModeApprovals  TravelModeApproval[]
+  photoAccessApprovals PhotoAccessApproval[]
+  roomRuleApprovals    RoomRuleApproval[]
+  consentCheckResponses ConsentCheckResponse[]
+  intentAlignmentApprovals IntentAlignmentApproval[]
+  guideArticlesAuthored GuideArticle[]
+  circlesCreatedByMe Circle[] @relation("CircleCreatedByAdmin")
 
+  // 5.11 — discovery's candidate query joins on user.status (and
+  // effectively adminRole via a null check) for every request.
+  @@index([status])
+  // BETA.1 — GET /admin/users accountFilter (all/real/test) and the
+  // /admin/dashboard metrics default exclusion both filter on this.
+  @@index([isTestAccount])
   @@map("users")
 }
 
@@ -292,6 +429,7 @@ model Profile {
   photos           ProfilePhoto[]
   intentions       ProfileIntention[]
   boundaries       ProfileBoundary[]
+  privateInterests ProfilePrivateInterest[]
   privacySettings  PrivacySettings?
   actionsGiven     ProfileAction[]   @relation("ActionActor")
   actionsReceived  ProfileAction[]   @relation("ActionTarget")
@@ -299,8 +437,28 @@ model Profile {
   matchesAsTwo     Match[]           @relation("MatchProfileTwo")
   travelModes      TravelMode[]
   safetyCheckins   SafetyCheckin[]
-  consentChecks    ConsentCheck[]
+  organizedEvents  Event[]
+  eventAttendances EventAttendance[]
+  circleMemberships CircleMembership[]
+  compatibilityScoresAsSource CompatibilityScore[] @relation("CompatibilityScoreSource")
+  compatibilityScoresAsTarget CompatibilityScore[] @relation("CompatibilityScoreTarget")
 
+  agreements ProfileAgreement[]
+
+  // 6.5 — ApprovalPolicy formalizes what was already implicit behavior:
+  // ProfileMembershipService.getRequiredApprovers already returns every
+  // ACCEPTED member, which IS "ALL" - this makes that explicit and gives
+  // GROUP a place to diverge later without touching COUPLE's semantics.
+  // COUPLE ignores this field and always behaves as ALL (see
+  // approvalPolicyService.ts) - stored mainly for GROUP's future use and
+  // for admin visibility (6.10).
+  approvalPolicy ApprovalPolicy @default(ALL)
+
+  // 5.11 — discovery's candidate-pool query filters on status+type together
+  // on every request; before this there was no index on either column at
+  // all, meaning a full table scan of profiles for every single discovery
+  // request regardless of profile count.
+  @@index([status, type])
   @@map("profiles")
 }
 
@@ -338,8 +496,45 @@ model ProfileMember {
   invitedAt    DateTime            @default(now())
   respondedAt  DateTime?
 
+  agreementAnswers ProfileAgreementAnswer[]
+
   @@unique([profileId, userId])
   @@map("profile_members")
+}
+
+// 4.10 — lets the Create Profile wizard survive a refresh/tab-close
+// without losing progress. Deliberately ONE per-user draft row holding a
+// JSON blob, not a normalized table per field: this is throwaway scratch
+// data that gets superseded the moment the real Profile is created, not
+// something any other part of the app needs to query or join against.
+// The wizard itself still lives entirely in CreateProfilePage.jsx as a
+// single "collect everything, then POST /profiles once" flow — this only
+// adds save/resume on top of that, not a step-by-step backend-driven flow
+// (the /onboarding/step and /onboarding/steps routes below predate the
+// current wizard, are not called by any frontend code, and are left as-is
+// rather than removed or repurposed in this sprint).
+model OnboardingProgress {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  step      Int      @default(1)
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("onboarding_progress")
+}
+
+// 6.8 — memberScope/depictedMemberIds are new. Deliberately manual, set by
+// the uploader at upload time (or edited after) — never facial recognition
+// or any automated detection, per the spec's explicit instruction.
+// depictedMemberIds holds ProfileMember ids, not User ids, consistent with
+// ProfileMembershipService being the membership source of truth everywhere
+// else in this codebase.
+enum MediaMemberScope {
+  SINGLE_MEMBER     // depicts only the uploader — default, matches all pre-Sprint-6 photos
+  MULTIPLE_MEMBERS  // depicts 2+ specific, identified members of a COUPLE/GROUP profile
+  SHARED_PROFILE    // couple/group photo not clearly of specific individuals (e.g. a joint photo, a symbol/object) — still requires all active members' consent to grant, same as MULTIPLE_MEMBERS
 }
 
 model ProfilePhoto {
@@ -354,6 +549,8 @@ model ProfilePhoto {
   isPrimary        Boolean          @default(false)
   sortOrder        Int              @default(0)
   exifStripped     Boolean          @default(false)
+  memberScope      MediaMemberScope @default(SINGLE_MEMBER)
+  depictedMemberIds String[]        @default([])
   createdAt        DateTime         @default(now())
 
   accessRequests   PhotoAccessRequest[]
@@ -366,6 +563,16 @@ model Intention {
   name        String
   slug        String             @unique
   description String?
+  category    String?            // Sprint 2.5.7 — optional grouping for admin catalog UI
+  sensitive   Boolean            @default(false) // 4.6 — mirrors Boundary.sensitive; not shown as bluntly in UI copy
+  // 4.6 — some intentions are two sides of the same interaction across
+  // profile types (a couple's "seek a third person" and an individual's
+  // "open to couples seeking me" are the same real-world thing from two
+  // perspectives). Points at the OTHER intention's slug, not a hard FK —
+  // this is compatibility metadata for IntentionCompatibilityService, not
+  // a structural relationship the rest of the schema needs to enforce.
+  complementarySlug String?
+  sortOrder   Int                @default(0)
   active      Boolean            @default(true)
   profiles    ProfileIntention[]
 
@@ -384,14 +591,38 @@ model ProfileIntention {
   @@map("profile_intentions")
 }
 
+// 4.7 — before this, isHardBoundary was a blanket rule: any hard boundary
+// where A=NO/B=YES excluded the pair, applied identically to every hard
+// boundary regardless of what it actually means. That's fine for
+// "no_couples" (a genuine mutual-alignment conflict) but wrong for
+// something like a hypothetical "show my face before match" boundary,
+// which is the profile's OWN visibility preference, not a claim about
+// what the other person must be OK with — it should never exclude anyone.
+// ruleType lets BoundaryCompatibilityService tell those apart.
+enum BoundaryRuleType {
+  MUTUAL_ALIGNMENT          // A and B must not directly contradict (A=NO + B=YES on the same slug, either direction)
+  REQUIRE_TARGET_ACCEPTANCE // A's YES only "counts" if B hasn't explicitly said NO; B being neutral (unset/MAYBE) is not a block
+  PERSONAL_PREFERENCE       // informational about the profile itself — never excludes anyone
+}
+
 model Boundary {
-  id          String            @id @default(uuid())
-  name        String
-  slug        String            @unique
-  category    String
-  description String?
-  active      Boolean           @default(true)
-  profiles    ProfileBoundary[]
+  id             String            @id @default(uuid())
+  name           String
+  slug           String            @unique
+  category       String
+  description    String?
+  isHardBoundary Boolean           @default(false) // Sprint 2.5.8 — hard conflicts should exclude from discovery
+  // 4.7 — only meaningful when isHardBoundary=true. Defaults to
+  // MUTUAL_ALIGNMENT (the only behavior that existed before this field),
+  // so any existing or future hard boundary that doesn't explicitly set
+  // this keeps behaving exactly as before rather than silently losing its
+  // exclusion power.
+  ruleType       BoundaryRuleType  @default(MUTUAL_ALIGNMENT)
+  sensitive      Boolean           @default(false) // Sprint 2.5.8 — not exposed directly in UI
+  sortOrder      Int               @default(0)
+  active         Boolean           @default(true)
+  profiles       ProfileBoundary[]
+  agreementAnswers ProfileAgreementAnswer[]
 
   @@map("boundaries")
 }
@@ -408,6 +639,121 @@ model ProfileBoundary {
   @@map("profile_boundaries")
 }
 
+// 6.1 — Modo Acordo: replaces the pre-Sprint-6 fake version (any one
+// partner directly PUT-ing Profile.intentions/boundaries, no individual
+// answers, no waiting for the other member, no conflict detection - see
+// the Sprint 6 audit note in couples.ts) with a real per-member-answer,
+// conservative-merge mechanic.
+//
+// One ProfileAgreement row per "round" of the couple's shared answers -
+// version increments only when a member starts a NEW round after a LOCKED
+// or EXPIRED one, not on every individual answer (those just update
+// ProfileAgreementAnswer rows within the current version).
+enum ProfileAgreementStatus {
+  DRAFT             // created, no member has answered anything yet
+  WAITING_MEMBERS   // at least one member has answered, not all have
+  ALIGNED           // all active members answered every question, no conflicts
+  CONFLICT          // all active members answered, at least one real disagreement
+  LOCKED            // explicitly locked (e.g. required before certain actions) - answers frozen
+  EXPIRED           // past expiresAt - membership changed or admin/product policy invalidated it
+}
+
+model ProfileAgreement {
+  id        String                 @id @default(uuid())
+  profileId String
+  profile   Profile                @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  version   Int                    @default(1)
+  status    ProfileAgreementStatus @default(DRAFT)
+  lockedAt  DateTime?
+  expiresAt DateTime?
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+
+  answers   ProfileAgreementAnswer[]
+
+  @@unique([profileId, version])
+  @@map("profile_agreements")
+}
+
+// Exactly one of boundaryId / agreementQuestionId is set, never both, never
+// neither - enforced in ProfileAgreementService, not at the DB level
+// (Postgres unique constraints don't reliably dedupe across nullable
+// columns anyway, so uniqueness-per-member-per-question is also handled in
+// the service via find-then-upsert, same pattern ProfileBoundary/
+// ProfileIntention already use elsewhere in this schema).
+model ProfileAgreementAnswer {
+  id                  String             @id @default(uuid())
+  agreementId         String
+  agreement           ProfileAgreement   @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+  profileMemberId     String
+  profileMember       ProfileMember      @relation(fields: [profileMemberId], references: [id], onDelete: Cascade)
+  boundaryId          String?
+  boundary            Boundary?          @relation(fields: [boundaryId], references: [id])
+  agreementQuestionId String?
+  agreementQuestion   AgreementQuestion? @relation(fields: [agreementQuestionId], references: [id])
+  preference          BoundaryPreference
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([agreementId, profileMemberId])
+  @@map("profile_agreement_answers")
+}
+
+// 6.2 — questions specific to how the COUPLE operates as a unit (their own
+// internal process), not compatibility preferences compared against a
+// third party's Boundary selections. BOTH_VALIDATE_MATCH is the clear
+// example from the spec's own list: everything else in that list
+// (NO_EMOTIONAL_INVOLVEMENT, ONE_TIME_ONLY, VERIFIED_ONLY, SINGLES_ONLY/
+// COUPLES_ONLY, NO_KNOWN_PEOPLE, NO_FACE_AT_START, TALK_FIRST, etc.) already
+// exists as a Boundary slug from Sprint 2.5.8's seed and is reused via
+// ProfileAgreementAnswer.boundaryId instead of being duplicated here.
+model AgreementQuestion {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  label       String
+  description String?
+  category    String?
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  answers     ProfileAgreementAnswer[]
+
+  @@map("agreement_questions")
+}
+
+// 4.8 — Private Interests ("fetiches privados"). Deliberately a SEPARATE
+// model from Intention/Boundary, not another category within them: these
+// selections must never be shown publicly in detail, only ever as an
+// aggregate count ("4 private interests aligned"), and only after some
+// future explicit-consent reveal flow — nothing here should make it easy
+// to accidentally expose which specific interests someone selected.
+model PrivateInterest {
+  id          String                   @id @default(uuid())
+  slug        String                   @unique
+  label       String
+  category    String?
+  description String?
+  active      Boolean                  @default(true)
+  sortOrder   Int                      @default(0)
+  profiles    ProfilePrivateInterest[]
+
+  @@map("private_interests")
+}
+
+model ProfilePrivateInterest {
+  id         String             @id @default(uuid())
+  profileId  String
+  profile    Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  interestId String
+  interest   PrivateInterest    @relation(fields: [interestId], references: [id])
+  preference BoundaryPreference // reuses YES/MAYBE/NO — same shape as ProfileBoundary, no need for a fourth preference enum
+
+  @@unique([profileId, interestId])
+  @@map("profile_private_interests")
+}
+
 model PrivacySettings {
   id                 String           @id @default(uuid())
   profileId          String           @unique
@@ -419,6 +765,15 @@ model PrivacySettings {
   invisibleMode      Boolean          @default(false)
   notificationMode   NotificationMode @default(DISCREET)
   minDistanceKm      Int?
+  // 10.12 — Circle membership is never public by default. showCircleBadge
+  // controls whether OTHER members of a shared Circle can see a small
+  // membership badge on this profile; hideCircleMemberships suppresses
+  // that entirely regardless of any Circle-level visibility. Neither
+  // field feeds discovery/matching — Circle membership is deliberately
+  // never a discovery/compatibility signal (10.12: "não usar sem
+  // consentimento/configuração").
+  showCircleBadge       Boolean       @default(false)
+  hideCircleMemberships Boolean       @default(false)
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 
@@ -435,6 +790,11 @@ model ProfileAction {
   createdAt       DateTime   @default(now())
 
   @@unique([actorProfileId, targetProfileId])
+  // 5.11/5.3 — discovery now also needs "who has BLOCKed the viewer"
+  // (reverse direction, previously never checked at all - see the 5.3
+  // audit note in discoveryService.ts) and "who has LIKEd the viewer",
+  // both filtered by targetProfileId + action.
+  @@index([targetProfileId, action])
   @@map("profile_actions")
 }
 
@@ -454,6 +814,13 @@ model Match {
   privateRoom  PrivateRoom?
   consentChecks ConsentCheck[]
 
+  // 5.11 — the composite unique above gives a usable index for
+  // profileOneId-only lookups (it's the leftmost column), but NOT for
+  // profileTwoId-only lookups (e.g. discovery's "am I already matched with
+  // this candidate" OR-clause, matches.ts's inbox query) - those need
+  // their own index or they full-scan.
+  @@index([profileTwoId])
+  @@index([status])
   @@unique([profileOneId, profileTwoId])
   @@map("matches")
 }
@@ -502,55 +869,210 @@ model Message {
   @@map("messages")
 }
 
+// 7.2 — replaces the old free-string roomType. INDIVIDUAL_PAIR/COUPLE_SINGLE/
+// COUPLE_COUPLE/POLY_GROUP are composition-based (derived from the actual
+// participants), CUSTOM is the fallback for standalone rooms created by a
+// user picking a vibe/label rather than rooms derived from a match. Old
+// string values (TRIO, SWING_GROUP, POLYAMORY, COUPLE_PLUS_ONE,
+// COUPLE_PLUS_COUPLE) are backfilled per-row from actual membership by the
+// 7.2 migration script, not a blind string map — see
+// scripts/migratePrivateRoomEnums.ts.
+enum PrivateRoomType {
+  INDIVIDUAL_PAIR
+  COUPLE_SINGLE
+  COUPLE_COUPLE
+  POLY_GROUP
+  CUSTOM
+}
+
+// 7.3 — see PrivateRoomStateMachine for the transition table. DRAFT: just
+// created, no active rule set yet. WAITING_CONSENT: a rule set version
+// exists but not everyone has accepted it — new messages are blocked.
+// ACTIVE: everyone has accepted the current rule set. PAUSED: manually
+// paused by a member. CLOSED: terminal, room archived. SAFETY_LOCKED: an
+// admin/safety action froze the room (distinct from CLOSED — reversible
+// via UNLOCK, and distinct from a member-initiated PAUSE).
+enum PrivateRoomStatus {
+  DRAFT
+  WAITING_CONSENT
+  ACTIVE
+  PAUSED
+  CLOSED
+  SAFETY_LOCKED
+}
+
+// 7.5 — OWNER: creator of a standalone room (POST /rooms); match-derived
+// rooms (PrivateRoomService.createFromMatch) deliberately assign no OWNER
+// — the room is peer-symmetric, no single participant should have
+// unilateral control over a room born from a match between equals.
+// MODERATOR_SYSTEM: reserved for a future system/admin moderation
+// presence in the room; never assigned to a normal member automatically
+// (explicit spec requirement — "Não dar permissões de moderação de
+// conteúdo a owner normal").
+enum RoomMemberRole {
+  OWNER
+  MEMBER
+  MODERATOR_SYSTEM
+}
+
+// 7.5 — separate from role. The old code overloaded role itself with an
+// 'invited' string value (no role yet, just a placeholder) which doesn't
+// fit a real RoomMemberRole enum - INVITED members have no role opinion
+// yet. Mirrors ProfileMember's own status/isCreator separation.
+enum RoomMemberStatus {
+  INVITED
+  ACCEPTED
+}
+
+// 7.7 — the room-level default applied to new messages that don't specify
+// their own expiresAt. Purely a convenience TTL preset, not a security
+// boundary - see the cleanup job's own comment on why this must never be
+// marketed as screenshot protection.
+enum MessageTtlPreset {
+  NONE
+  ONE_HOUR
+  ONE_DAY
+  SEVEN_DAYS
+}
+
+// 7.4 — DRAFT: being assembled, not yet requiring consent. ACTIVE: the
+// room's current live rule set (at most one per room at a time).
+// SUPERSEDED: replaced by a newer version once every member re-accepts.
+enum RoomRuleSetStatus {
+  DRAFT
+  ACTIVE
+  SUPERSEDED
+}
+
 model PrivateRoom {
   id          String              @id @default(uuid())
   matchId     String?             @unique   // optional — rooms can exist without a match
   match       Match?              @relation(fields: [matchId], references: [id], onDelete: Cascade)
   title       String?
-  roomType    String              @default("CUSTOM")
+  roomType    PrivateRoomType     @default(CUSTOM)
   description String?
+  // 7.4 — kept temporarily for read-compat with any client still rendering
+  // the old flat list; RoomRuleSet/RoomRule are now the source of truth.
+  // Not written to by any Sprint 7 code path.
   rules       String[]
-  status      String              @default("ACTIVE")
+  status      PrivateRoomStatus   @default(DRAFT)
+  defaultMessageTtl MessageTtlPreset @default(NONE)
+  closedAt        DateTime?
+  safetyLockedAt  DateTime?
   createdAt   DateTime            @default(now())
   members     PrivateRoomMember[]
   messages    RoomMessage[]
+  ruleSets    RoomRuleSet[]
+  intentAlignments IntentAlignment[]
 
   @@map("private_rooms")
 }
 
+// 7.6 — RoomMessage V2: body is now optional (IMAGE/SYSTEM messages carry
+// no text), messageType classifies the message, mediaId points at a
+// private storage key (photos flow through the same signed-URL access
+// pattern as ProfilePhoto — see mediaAccessService), expiresAt/readAt
+// mirror Message's already-existing fields on Conversation so the same
+// cleanup job can treat both uniformly.
 model RoomMessage {
-  id          String      @id @default(uuid())
-  roomId      String
-  room        PrivateRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  id           String          @id @default(uuid())
+  roomId       String
+  room         PrivateRoom     @relation(fields: [roomId], references: [id], onDelete: Cascade)
   senderUserId String
-  sender      User        @relation("RoomMessageSender", fields: [senderUserId], references: [id])
-  body        String
-  createdAt   DateTime    @default(now())
-  deletedAt   DateTime?
+  sender       User            @relation("RoomMessageSender", fields: [senderUserId], references: [id])
+  body         String?
+  messageType  MessageType     @default(TEXT)
+  mediaId      String?
+  expiresAt    DateTime?
+  readAt       DateTime?
+  createdAt    DateTime        @default(now())
+  deletedAt    DateTime?
 
+  @@index([roomId, createdAt])
   @@map("room_messages")
 }
 
 model PrivateRoomMember {
-  id            String      @id @default(uuid())
+  id            String           @id @default(uuid())
   privateRoomId String
-  privateRoom   PrivateRoom @relation(fields: [privateRoomId], references: [id], onDelete: Cascade)
+  privateRoom   PrivateRoom      @relation(fields: [privateRoomId], references: [id], onDelete: Cascade)
   userId        String
-  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role          String      @default("member")
-  joinedAt      DateTime    @default(now())
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role          RoomMemberRole   @default(MEMBER)
+  status        RoomMemberStatus @default(ACCEPTED)
+  joinedAt      DateTime         @default(now())
   leftAt        DateTime?
 
   @@unique([privateRoomId, userId])
   @@map("private_room_members")
 }
 
+// 7.4 — a versioned, room-wide rule set. At most one ACTIVE per room;
+// creating a new version (material rule change) moves the prior ACTIVE
+// set to SUPERSEDED and the room to WAITING_CONSENT until every active
+// member re-accepts the new version (see roomRuleService.ts).
+model RoomRuleSet {
+  id              String            @id @default(uuid())
+  roomId          String
+  room            PrivateRoom       @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  version         Int
+  status          RoomRuleSetStatus @default(DRAFT)
+  createdByUserId String
+  createdAt       DateTime          @default(now())
+  activatedAt     DateTime?
+  rules           RoomRule[]
+  approvals       RoomRuleApproval[]
+
+  @@unique([roomId, version])
+  @@map("room_rule_sets")
+}
+
+// ruleType is a free-string category (same conventionally-fixed-but-not-
+// enum-enforced pattern as Boundary.category) — e.g. CONSENT, PRIVACY,
+// COMMUNICATION, MEETING, SAFETY — so new categories don't need a schema
+// change.
+model RoomRule {
+  id        String      @id @default(uuid())
+  ruleSetId String
+  ruleSet   RoomRuleSet @relation(fields: [ruleSetId], references: [id], onDelete: Cascade)
+  ruleType  String
+  label     String
+  value     String?
+  sortOrder Int         @default(0)
+
+  @@map("room_rules")
+}
+
+// One row per (ruleSet, member) who has weighed in. Keyed directly on
+// userId (not profileMemberId) — PrivateRoomMember itself is already
+// user-level, not profile-member-level (a couple's two members already
+// show up as two separate PrivateRoomMember rows once a room is created
+// from a match), so there's no extra indirection needed here.
+model RoomRuleApproval {
+  id         String      @id @default(uuid())
+  ruleSetId  String
+  ruleSet    RoomRuleSet @relation(fields: [ruleSetId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  acceptedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime    @default(now())
+
+  @@unique([ruleSetId, userId])
+  @@map("room_rule_approvals")
+}
+
+// 8.2 — ConsentCheck is now the REQUEST/PHASE record only ("is there an
+// open ask to move to FACE_REVEAL on this match"), not a per-person state.
+// Each required participant gets their own ConsentCheckResponse row (see
+// below) — status here is a cached aggregate only, see ConsentCheckStatus.
+// profileId was removed: a check is no longer "owned" by one side's
+// profile, it applies to the whole match (per-person state lives on the
+// responses instead).
 model ConsentCheck {
   id          String             @id @default(uuid())
   matchId     String
   match       Match              @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  profileId   String
-  profile     Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
   phase       ConsentCheckPhase
   status      ConsentCheckStatus @default(PENDING)
   initiatedBy String
@@ -558,7 +1080,91 @@ model ConsentCheck {
   expiresAt   DateTime?
   createdAt   DateTime           @default(now())
 
+  responses   ConsentCheckResponse[]
+
   @@map("consent_checks")
+}
+
+// 8.2 — one row per required participant per ConsentCheck. This is the
+// actual source of truth consentCheckService aggregates from — see the
+// comment on ConsentCheck.status. respondedAt is set the moment status
+// moves away from PENDING (ACCEPTED/NOT_YET/DECLINED); revokedAt is set
+// only on the ACCEPTED -> REVOKED transition.
+model ConsentCheckResponse {
+  id             String                @id @default(uuid())
+  consentCheckId String
+  consentCheck   ConsentCheck          @relation(fields: [consentCheckId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status         ConsentResponseStatus @default(PENDING)
+  respondedAt    DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@unique([consentCheckId, userId])
+  @@map("consent_check_responses")
+}
+
+// 8.8/8.9 — "Shared Intentions" (product name) / IntentAlignment
+// (technical name). Explicitly NOT a legal contract — see 8.8. Scoped to
+// a PrivateRoom, structurally distinct from RoomRuleSet (in-room
+// behaviour) and ConsentCheck (permission for one phase/action) — see
+// 8.11: never mix these three concepts in the UI or in queries.
+model IntentAlignment {
+  id              String                 @id @default(uuid())
+  privateRoomId   String
+  privateRoom     PrivateRoom            @relation(fields: [privateRoomId], references: [id], onDelete: Cascade)
+  version         Int
+  status          IntentAlignmentStatus  @default(DRAFT)
+  createdByUserId String
+  createdAt       DateTime               @default(now())
+  activatedAt     DateTime?
+  archivedAt      DateTime?
+
+  items       IntentAlignmentItem[]
+  approvals   IntentAlignmentApproval[]
+
+  @@map("intent_alignments")
+}
+
+// 8.9 — key/value/label kept generic (String) rather than a fixed struct,
+// consistent with ProfileAgreementAnswer's pattern — see
+// lib/intentAlignmentFields.ts for the catalog of known keys/allowed
+// values/labels this sprint ships with (connection_goal,
+// meeting_openness, emotional_openness, recurrence, confidentiality,
+// communication_pace). Not DB-enforced so the catalog can grow without a
+// migration, same tradeoff already made for AgreementQuestion answers.
+model IntentAlignmentItem {
+  id          String          @id @default(uuid())
+  alignmentId String
+  alignment   IntentAlignment @relation(fields: [alignmentId], references: [id], onDelete: Cascade)
+  key         String
+  value       String
+  label       String?
+
+  @@unique([alignmentId, key])
+  @@map("intent_alignment_items")
+}
+
+// 8.10 — per-member approval of a DRAFT/WAITING_APPROVAL version. A
+// declinedAt (rather than only approvedAt/revokedAt) lets one explicit
+// "no" archive the proposal immediately without ever activating it, while
+// the previous ACTIVE alignment is left completely untouched — see
+// intentAlignmentService.ts.
+model IntentAlignmentApproval {
+  id          String          @id @default(uuid())
+  alignmentId String
+  alignment   IntentAlignment @relation(fields: [alignmentId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  approvedAt  DateTime?
+  declinedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime        @default(now())
+
+  @@unique([alignmentId, userId])
+  @@map("intent_alignment_approvals")
 }
 
 model SafetyCheckin {
@@ -573,6 +1179,15 @@ model SafetyCheckin {
   alertSent       Boolean   @default(false)
   locationHint    String?
   createdAt       DateTime  @default(now())
+  // 9.5/9.6 — explicit state machine field, written only through
+  // SafetyCheckinStateMachine.transition(). requestSentAt/overdueAt/
+  // escalatedAt record WHEN each job-driven transition happened, so each
+  // of the three jobs (request/overdue/escalation) can query
+  // "haven't done X yet" without re-deriving it from timing math each run.
+  status          SafetyCheckinStatus @default(SCHEDULED)
+  requestSentAt   DateTime?
+  overdueAt       DateTime?
+  escalatedAt     DateTime?
 
   @@map("safety_checkins")
 }
@@ -584,6 +1199,7 @@ model Report {
   reportedUserId    String?
   reportedUser      User?        @relation("ReportedUser", fields: [reportedUserId], references: [id])
   reportedMessageId String?
+  reportedEventId   String?   // 10.8 — loose reference, same pattern as reportedMessageId (no FK)
   reason            ReportReason
   details           String?
   status            ReportStatus @default(PENDING)
@@ -592,7 +1208,47 @@ model Report {
   createdAt         DateTime     @default(now())
   reviewedAt        DateTime?
 
+  evidence             ReportEvidence[]
+  moderationAssessments ModerationAssessment[]
+
   @@map("reports")
+}
+
+// 9.1 — snapshotted evidence, not a live reference. `data` holds the
+// restricted field subset for the given `type` (see
+// reportEvidenceService.ts's SNAPSHOT builders) — e.g. for
+// MESSAGE_SNAPSHOT: { messageId, body, senderUserId, sentAt, roomId }.
+// Deliberately no relation to Message/RoomMessage: the whole point is
+// that this keeps reading correctly after the source row is soft-deleted.
+model ReportEvidence {
+  id        String       @id @default(uuid())
+  reportId  String
+  report    Report       @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  type      EvidenceType
+  data      Json
+  createdAt DateTime     @default(now())
+
+  @@map("report_evidence")
+}
+
+// 9.8 — one row per assessment RUN (a report could be re-assessed after
+// new evidence arrives), never mutated after creation — an audit trail of
+// what the AI said and when, kept fully separate from the human decision
+// (Report.status / AdminAction), per 9.11's "guardar AI recommendation;
+// human decision" as two distinct, comparable records rather than one
+// overwriting the other.
+model ModerationAssessment {
+  id           String   @id @default(uuid())
+  reportId     String
+  report       Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  provider     String
+  model        String
+  promptVersion String
+  result       Json
+  confidence   Float
+  createdAt    DateTime @default(now())
+
+  @@map("moderation_assessments")
 }
 
 model Subscription {
@@ -617,7 +1273,7 @@ model Verification {
   id                 String             @id @default(uuid())
   userId             String             @unique
   user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type               String             @default("selfie")
+  type               VerificationType   @default(SELFIE)
   status             VerificationStatus @default(PENDING)
   provider           String?
   selfieStoragePath  String?            // URL of the selfie in R2 — deleted after review
@@ -643,30 +1299,144 @@ model UserConsent {
   @@map("user_consents")
 }
 
+// 3.3 — source of truth for what "version" in UserConsent.version actually
+// refers to. Before this, version was a free string (hardcoded "1.0" at
+// registration) with nothing behind it — no way to know what changed
+// between versions, and no way to trigger reacceptance when the text
+// changes. Content lives here now (LegalPage.jsx fetches it, falling back
+// to its previous hardcoded copy if the API is unreachable).
+model LegalDocument {
+  id                   String      @id @default(uuid())
+  consentType          ConsentType
+  version              String
+  title                String
+  content              String
+  publishedAt          DateTime    @default(now())
+  requiresReacceptance Boolean     @default(true)
+  createdAt            DateTime    @default(now())
+
+  @@unique([consentType, version])
+  @@map("legal_documents")
+}
+
 model BlockedContactHash {
   id          String   @id @default(uuid())
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   contactHash String
   type        String
+  // 3.5 — which HMAC secret produced this hash. Rotating
+  // CONTACT_HASH_SECRET orphans every hash computed under the old key
+  // (HMAC is one-way — there's no way to "re-encrypt" without the original
+  // plaintext, which we never store on purpose). keyVersion lets
+  // ContactHashService know which secret to use when re-verifying an old
+  // row, and lets admins see migration progress after a rotation.
+  keyVersion  Int      @default(1)
   createdAt   DateTime @default(now())
 
   @@unique([userId, contactHash])
   @@map("blocked_contact_hashes")
 }
 
-model TravelMode {
-  id        String   @id @default(uuid())
-  profileId String
-  profile   Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  city      String
-  country   String?
-  startDate DateTime
-  endDate   DateTime
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
+// 6.7 — status/createdByUserId/approvals are new. For INDIVIDUAL profiles
+// a trip is created straight into SCHEDULED (nothing to approve — there's
+// only one member). For COUPLE/GROUP, creating a trip starts it at
+// WAITING_MEMBER_APPROVAL: the creator alone cannot announce availability
+// for the whole profile, matching the spec's explicit "não permitir um
+// membro anunciar disponibilidade dos dois sozinho".
+enum TravelModeStatus {
+  WAITING_MEMBER_APPROVAL
+  SCHEDULED
+  CANCELLED
+}
 
+model TravelMode {
+  id              String           @id @default(uuid())
+  profileId       String
+  profile         Profile          @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  city            String
+  country         String?
+  startDate       DateTime
+  endDate         DateTime
+  active          Boolean          @default(true)
+  status          TravelModeStatus @default(SCHEDULED)
+  createdByUserId String?
+  createdAt       DateTime         @default(now())
+
+  approvals TravelModeApproval[]
+
+  // 5.11 — DiscoveryService's location/travel step (5.2 pipeline step 10)
+  // looks up each candidate's active travel rows; before this TravelMode
+  // had zero indexes and, more importantly, zero callers at all outside
+  // its own CRUD routes.
+  @@index([profileId, active])
   @@map("travel_modes")
+}
+
+// 6.7 — one row per required approver (every ACCEPTED ProfileMember at
+// creation time), mirroring CoupleMatchApproval's shape. A trip only
+// reaches SCHEDULED once every row here has approvedAt set.
+model TravelModeApproval {
+  id           String    @id @default(uuid())
+  travelModeId String
+  travelMode   TravelMode @relation(fields: [travelModeId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  approvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@unique([travelModeId, userId])
+  @@map("travel_mode_approvals")
+}
+
+// 5.5 — CompatibilityScore: persisted, versioned score cache. Replaces
+// "recompute Between Score on every discovery request, keep nothing"
+// (the pre-Sprint-5 behavior) with a real cache that can be invalidated
+// surgically (5.8) instead of thrown away wholesale.
+//
+// Deliberately DIRECTIONAL, not symmetric: sourceProfileId->targetProfileId
+// and targetProfileId->sourceProfileId are two separate rows and CAN differ
+// (e.g. REQUIRE_TARGET_ACCEPTANCE boundaries, or intention preferences that
+// aren't mirrored on both sides) - this must never be assumed symmetric.
+model CompatibilityScore {
+  id               String    @id @default(uuid())
+  sourceProfileId  String
+  sourceProfile    Profile   @relation("CompatibilityScoreSource", fields: [sourceProfileId], references: [id], onDelete: Cascade)
+  targetProfileId  String
+  targetProfile    Profile   @relation("CompatibilityScoreTarget", fields: [targetProfileId], references: [id], onDelete: Cascade)
+  score            Int
+  algorithmVersion String
+  breakdown        Json
+  reasons          Json
+  calculatedAt     DateTime  @default(now())
+  expiresAt        DateTime?
+
+  @@unique([sourceProfileId, targetProfileId, algorithmVersion])
+  @@index([targetProfileId])
+  @@map("compatibility_scores")
+}
+
+// 5.6 — BETWEEN_SCORE_V2 weights, admin-editable, never hardcoded in a
+// route. Same single-row-per-version pattern as ReferralRule. Weights are
+// stored as 0-1 fractions and are expected to sum to 1.0, but that's a
+// convention this table doesn't enforce at the DB level (validated by
+// BetweenScoreConfigService instead) - matches how ReferralRule also
+// trusts its own service layer rather than DB constraints for business
+// rules.
+model BetweenScoreConfig {
+  id                        String   @id @default(uuid())
+  algorithmVersion          String   @unique
+  weightIntentions          Float    @default(0.30)
+  weightBoundaries          Float    @default(0.30)
+  weightRelationshipContext Float    @default(0.15)
+  weightDiscretion          Float    @default(0.10)
+  weightLocation            Float    @default(0.10)
+  weightConversationPace    Float    @default(0.05)
+  active                    Boolean  @default(true)
+  updatedAt                 DateTime @updatedAt
+  updatedByUserId           String?
+
+  @@map("between_score_configs")
 }
 
 model AdminAction {
@@ -718,8 +1488,34 @@ model PhotoAccessRequest {
   respondedAt  DateTime?
   createdAt    DateTime           @default(now())
 
+  // 6.8 — only populated/consulted for MULTIPLE_MEMBERS/SHARED_PROFILE
+  // photos: one row per depicted member whose consent is required. For a
+  // SINGLE_MEMBER photo (the pre-Sprint-6 default), this stays empty and
+  // `status` alone still means what it always meant — the owner's own
+  // decision, no per-member approval layer needed.
+  approvals    PhotoAccessApproval[]
+
   @@unique([photoId, requesterId])
   @@map("photo_access_requests")
+}
+
+// 6.8 — mirrors CoupleMatchApproval/TravelModeApproval's shape: one row per
+// required approver (each depicted member's user, resolved via
+// ProfileMembershipService), the request's overall `status` only becomes
+// APPROVED once every row here has approvedAt set (see
+// sharedMediaConsentService.ts).
+model PhotoAccessApproval {
+  id                   String    @id @default(uuid())
+  photoAccessRequestId String
+  request              PhotoAccessRequest @relation(fields: [photoAccessRequestId], references: [id], onDelete: Cascade)
+  userId               String
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  approvedAt           DateTime?
+  rejectedAt           DateTime?
+  createdAt            DateTime  @default(now())
+
+  @@unique([photoAccessRequestId, userId])
+  @@map("photo_access_approvals")
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────
@@ -788,17 +1584,98 @@ model ReferralRule {
   @@map("referral_rules")
 }
 
+// ─── Gender catalog (Sprint 2.5.6) ────────────────────────────────────────────
+// Profile.gender stays a free String (not a FK) to avoid a hard migration risk
+// on existing data/custom values already stored — this is the admin-managed
+// catalog of *suggested* options; the slug is what gets stored in Profile.gender.
+model GenderOption {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  label       String
+  description String?
+  localeKey   String?  // 4.3 — optional i18n key, for when client copy moves off hardcoded PT labels
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("gender_options")
+}
+
+// 4.4 — same shape as GenderOption. orientation on Profile had zero UI to
+// set it (state existed in the create/edit forms, but no <select> ever
+// rendered it) — this plus the client wiring closes that gap.
+model OrientationOption {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  label       String
+  description String?
+  localeKey   String?
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("orientation_options")
+}
+
+// 10.2 — controlled catalog, not an admin-editable table: the spec lists
+// an exact fixed set of 9 categories, same shape as ReportReason/
+// ConsentCheckPhase elsewhere in this schema (a closed enum) rather than
+// an open-ended GenderOption/OrientationOption-style DB catalog.
+enum GuideCategory {
+  CONSENT
+  COUPLES
+  OPEN_RELATIONSHIPS
+  POLYAMORY
+  PRIVACY
+  SAFETY
+  PROFILES
+  FIRST_MEETINGS
+  PRIVATE_INTERESTS
+}
+
+// 10.1 — evolves the existing GuideArticle (deliberately NOT a new
+// parallel model, per the spec's explicit instruction). New fields:
+// slug (public routing key, replaces id-based lookup), coverPath
+// (optional cover image, private R2 key like ProfilePhoto.storagePath —
+// signed at read time, never a public URL), authorId (optional — not
+// every article needs an attributed author), publishedAt (the real
+// source of truth going forward — see the note on `published` below),
+// readingTime (minutes, editor-set estimate), locale, seoTitle/
+// seoDescription (optional, only used for the public detail page's
+// <head> tags).
+//
+// published Boolean -> publishedAt DateTime? migration: kept BOTH
+// fields rather than dropping `published` outright. `published` stays
+// as a fast boolean filter (existing index-free WHERE published=true
+// queries keep working unchanged); `publishedAt` is the new source of
+// truth for "when" and is set/cleared by the service layer every time
+// `published` flips (see guideService.ts) rather than being editable
+// directly — a genuinely gradual migration: nothing that already reads
+// `published` breaks, and anything that wants the richer publishedAt
+// timestamp (recency sort, "how long has this been live") can use it
+// immediately.
 model GuideArticle {
-  id        String   @id @default(uuid())
-  title     String
-  category  String
-  summary   String?
-  body      String   @db.Text
-  icon      String?  @default("○")
-  published Boolean  @default(false)
-  sortOrder Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String        @id @default(uuid())
+  slug        String        @unique
+  title       String
+  category    GuideCategory
+  summary     String?
+  body        String        @db.Text
+  icon        String?       @default("○")
+  coverPath   String?
+  authorId    String?
+  author      User?         @relation(fields: [authorId], references: [id])
+  published   Boolean       @default(false)
+  publishedAt DateTime?
+  readingTime Int?
+  locale      String        @default("pt")
+  seoTitle    String?
+  seoDescription String?
+  sortOrder   Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   @@map("guide_articles")
 }
@@ -814,4 +1691,293 @@ model PushSubscription {
   createdAt DateTime @default(now())
 
   @@map("push_subscriptions")
+}
+
+// ─── Events (Sprint 10) ─────────────────────────────────────────────────────
+// 10.8 — events require Admin approval before going PUBLISHED (DRAFT ->
+// PENDING_REVIEW -> PUBLISHED), regardless of PRIVATE_EVENTS_ENABLED —
+// that flag only gates whether the feature is reachable at all, it is
+// never a substitute for the approval step.
+enum EventStatus {
+  DRAFT
+  PENDING_REVIEW
+  PUBLISHED
+  CANCELLED
+  COMPLETED
+  SUSPENDED
+}
+
+// 10.7 — controls WHEN/TO WHOM the real venue is exposed. Enforced
+// server-side by eventVenuePolicy.ts, never just hidden in the client —
+// see that file's doc comment for exactly what each value strips from
+// the API response and when.
+enum VenueVisibility {
+  PUBLIC_CITY_ONLY
+  APPROVED_ATTENDEES
+  REVEAL_24H_BEFORE
+}
+
+model Event {
+  id                   String          @id @default(uuid())
+  organizerProfileId   String
+  organizerProfile     Profile         @relation(fields: [organizerProfileId], references: [id], onDelete: Cascade)
+  title                String
+  description          String          @db.Text
+  city                 String
+  country              String
+  // Full venue detail (address/name) is intentionally NOT modeled as its
+  // own indexed/queryable field here — see eventVenuePolicy.ts. Stored as
+  // a plain string, never returned to a client that doesn't currently
+  // pass the policy check.
+  venueDetail          String?
+  venueVisibility      VenueVisibility @default(PUBLIC_CITY_ONLY)
+  startsAt             DateTime
+  endsAt               DateTime?
+  capacity             Int?
+  verificationRequired Boolean         @default(true)
+  approvalRequired     Boolean         @default(true)
+  status               EventStatus     @default(DRAFT)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  attendances          EventAttendance[]
+
+  @@index([status])
+  @@index([city])
+  @@map("events")
+}
+
+// 10.6
+enum EventAttendanceStatus {
+  REQUESTED
+  APPROVED
+  DECLINED
+  CANCELLED
+  ATTENDED
+}
+
+model EventAttendance {
+  id          String                 @id @default(uuid())
+  eventId     String
+  event       Event                  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  profileId   String
+  profile     Profile                @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  status      EventAttendanceStatus  @default(REQUESTED)
+  requestedAt DateTime               @default(now())
+  approvedAt  DateTime?
+  cancelledAt DateTime?
+
+  @@unique([eventId, profileId])
+  @@map("event_attendances")
+}
+
+// ─── Circles (Sprint 10) ────────────────────────────────────────────────────
+// 10.9/10.11 — "Circles" is the product name. Admin-curated ONLY this
+// sprint: no user-facing creation route exists at all (see circles.ts) —
+// this is a deliberate security/moderation control, not a temporary
+// limitation left unfinished.
+enum CircleVisibility {
+  DISCOVERABLE
+  PRIVATE
+  INVITE_ONLY
+}
+
+enum CircleStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+model Circle {
+  id              String           @id @default(uuid())
+  slug            String           @unique
+  name            String
+  description     String?          @db.Text
+  city            String?
+  country         String?
+  visibility      CircleVisibility @default(DISCOVERABLE)
+  status          CircleStatus     @default(DRAFT)
+  createdByAdminId String
+  createdByAdmin  User             @relation("CircleCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  memberships     CircleMembership[]
+
+  @@map("circles")
+}
+
+// 10.10 — role is scoped to THIS circle only (LOCAL_MODERATOR), never the
+// global AdminRole enum from middleware/admin.ts — a Circle's local
+// moderator has no admin panel access and no permission beyond this one
+// community, by design (spec: "Não usar global AdminRole para moderator
+// de Circle").
+enum CircleMembershipStatus {
+  REQUESTED
+  APPROVED
+  DECLINED
+  LEFT
+  REMOVED
+}
+enum CircleMemberRole {
+  MEMBER
+  LOCAL_MODERATOR
+}
+
+model CircleMembership {
+  id        String                  @id @default(uuid())
+  circleId  String
+  circle    Circle                  @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  profileId String
+  profile   Profile                 @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  status    CircleMembershipStatus  @default(REQUESTED)
+  role      CircleMemberRole        @default(MEMBER)
+  joinedAt  DateTime                @default(now())
+
+  @@unique([circleId, profileId])
+  @@map("circle_memberships")
+}
+
+// ─── Intelligent Recommendations (Sprint 11) ───────────────────────────────
+// LAYER 3 of the ranking architecture (eligibility -> Between Score ->
+// Recommendation Ranker). Every model below is additive/observational —
+// nothing here is read by DiscoveryService's eligibility pipeline (5.2/5.3),
+// and the ranker itself (recommendationRanker.ts) only ever accepts the
+// exact DiscoveryCandidateItem[] that pipeline already produced. See that
+// file's header comment for how the absolute rule ("ranker nunca introduz
+// um perfil excluído pelo eligibility pipeline") is enforced structurally,
+// not just by convention.
+//
+// actorProfileId/targetProfileId below are deliberately LOOSE references
+// (no @relation/FK), same pattern as Report.reportedEventId (10.8) — a
+// signal table can be extremely high write volume (PROFILE_VIEW fires on
+// nearly every discovery card render), so it avoids both the FK overhead
+// and adding two more back-relation arrays to the already-large Profile
+// model. GDPR consequence: hardDeleteJob.ts must explicitly sweep these
+// rows by profileId (added in 11.6/11.14) since there is no cascade.
+enum RecommendationSignalType {
+  PROFILE_VIEW
+  LIKE
+  MAYBE
+  PASS
+  MATCH
+  CONVERSATION_STARTED
+  SUSTAINED_CONVERSATION
+  PHOTO_ACCESS_GRANTED
+  SAFE_EXIT
+  BLOCK
+  REPORT
+}
+
+model RecommendationSignal {
+  id               String                    @id @default(uuid())
+  actorProfileId   String
+  targetProfileId  String
+  signalType       RecommendationSignalType
+  weight           Float
+  // 11.1 — "não registar body de mensagens". metadata only ever carries
+  // small non-identifying counters (e.g. { distinctDayCount: 3 } for
+  // SUSTAINED_CONVERSATION, or { conversationId } to dedupe
+  // CONVERSATION_STARTED) — never message content, never raw
+  // boundaries/private interests. Enforced by recommendationSignalService's
+  // narrow, typed metadata inputs (no caller can pass an arbitrary object).
+  metadata         Json?
+  // BETA.1 — true when EITHER actorProfileId or targetProfileId belongs to
+  // a User with isTestAccount=true (resolved in recordSignal, see
+  // recommendationSignalService.ts). Rows are still written — never
+  // dropped — so beta testing itself remains debuggable; every real-metric
+  // reader (recommendationAnalysisService, meaningfulConnectionService,
+  // the /admin/recommendations/* routes) filters isTestData:false by
+  // default and only a SUPER_ADMIN-gated includeTestData=true opts back in.
+  isTestData       Boolean                   @default(false)
+  createdAt        DateTime                  @default(now())
+
+  // Pair lookup (e.g. "has this viewer already passed this candidate
+  // recently") and per-candidate aggregation (targetProfileId, signalType)
+  // are the two access patterns recommendationSignalService actually runs.
+  @@index([actorProfileId, targetProfileId])
+  @@index([targetProfileId, signalType])
+  @@map("recommendation_signals")
+}
+
+// 11.2 — versioned, admin-editable signal weights. Same single-row-per-
+// version shape as BetweenScoreConfig (betweenScoreConfigService.ts) —
+// deliberately NOT hardcoded constants, since the spec explicitly says
+// "não assumir pesos finais". Defaults below are the spec's own worked
+// example, nothing more authoritative than a starting point.
+model RecommendationSignalWeightConfig {
+  id                            String   @id @default(uuid())
+  configVersion                 String   @unique
+  active                        Boolean  @default(true)
+  weightProfileView             Float    @default(0.2)
+  weightLike                    Float    @default(1)
+  weightMaybe                   Float    @default(0.3)
+  weightPass                    Float    @default(-1)
+  weightMatch                   Float    @default(3)
+  weightConversationStarted     Float    @default(4)
+  weightSustainedConversation   Float    @default(8)
+  weightPhotoAccessGranted      Float    @default(2)
+  weightSafeExit                Float    @default(-8)
+  weightBlock                   Float    @default(-10)
+  weightReport                  Float    @default(-15)
+  updatedByUserId               String?
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+
+  @@map("recommendation_signal_weight_configs")
+}
+
+// 11.5 — shadow-mode ranking log. Written ONLY when
+// INTELLIGENT_RECOMMENDATIONS_SHADOW_MODE (or the eventual A/B test) is on;
+// Discovery's actual response to the client is never derived from this
+// table. currentRank/currentScore are DiscoveryService's existing
+// (score desc, createdAt desc, id asc) order — the ranker never influences
+// them, this table only OBSERVES both orders side by side.
+model RecommendationRankingLog {
+  id                   String   @id @default(uuid())
+  viewerProfileId      String
+  candidateProfileId   String
+  currentRank          Int
+  recommendationRank   Int
+  currentScore         Float
+  recommendationScore  Float
+  algorithmVersion     String
+  reasonCodes          String[]
+  isExploration        Boolean  @default(false)
+  // BETA.1 — same isTestData semantics as RecommendationSignal.isTestData
+  // above, resolved off viewerProfileId/candidateProfileId's owning User.
+  isTestData           Boolean  @default(false)
+  createdAt            DateTime @default(now())
+
+  @@index([viewerProfileId, createdAt])
+  @@index([algorithmVersion, createdAt])
+  @@map("recommendation_ranking_logs")
+}
+
+// ─── Beta Seed / Scenario Data (BETA.1) ─────────────────────────────────────
+// One row per invocation of `npm run db:seed:beta`. Purely observational —
+// nothing in the app reads this to make a decision — it exists so an admin
+// (and validateBetaSeed.ts) can answer "what version ran, when, how many
+// rows did it touch" without grepping logs. seedName/version let multiple
+// scenario sets coexist in the future (e.g. a "beta-v2" superset) without
+// this model needing a schema change.
+enum TestSeedRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model TestSeedRun {
+  id            String            @id @default(uuid())
+  seedName      String
+  version       String
+  startedAt     DateTime          @default(now())
+  completedAt   DateTime?
+  status        TestSeedRunStatus @default(RUNNING)
+  recordCounts  Json?
+  errorMessage  String?
+  createdAt     DateTime          @default(now())
+
+  @@map("test_seed_runs")
 }

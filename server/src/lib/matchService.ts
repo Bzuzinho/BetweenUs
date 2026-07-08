@@ -1,4 +1,6 @@
 import prisma from './prisma'
+import { canTransition, type MatchEvent, type MatchState } from './matchStateMachine'
+import { dispatch, type DomainEventType } from './domainEvents'
 
 export type LikeResult =
   | { kind: 'PASS_RECORDED' }
@@ -36,12 +38,36 @@ export const createLikeOrMatch = async (
 
     if (!actor || !target) return { kind: 'ERROR', message: 'Perfil não encontrado.' }
 
-    // Register the like (idempotent)
+    // 9.3 — defense-in-depth: discovery already excludes blocked profiles
+    // from ever being seen (5.3), but this closes the direct-API-call gap
+    // (liking a profileId obtained some other way) so a block cannot be
+    // routed around to force a like/match either way.
+    const { isBlockedEitherWay } = await import('./blockService')
+    if (await isBlockedEitherWay(actorProfileId, targetProfileId)) {
+      return { kind: 'ERROR', message: 'Ação não disponível.' }
+    }
+
+    // Register the like (idempotent) — capture the PRIOR action first so
+    // the signal below only fires on a genuine transition INTO 'LIKE',
+    // not on every repeat call with the same actor/target (11.5.6 dedup
+    // policy: one LIKE signal per actor/target action, matching how the
+    // underlying ProfileAction row itself is idempotent).
+    const priorAction = await prisma.profileAction.findUnique({
+      where: { actorProfileId_targetProfileId: { actorProfileId, targetProfileId } },
+      select: { action: true }
+    })
     await prisma.profileAction.upsert({
       where: { actorProfileId_targetProfileId: { actorProfileId, targetProfileId } },
       update: { action: 'LIKE' },
       create: { actorProfileId, targetProfileId, action: 'LIKE' }
     })
+
+    // 11.1/11.5.6 — behavioral signal, best-effort, never blocks the like
+    // itself. Only fired the first time this pair transitions into LIKE.
+    if (priorAction?.action !== 'LIKE') {
+      const { recordSignal } = await import('./recommendationSignalService')
+      recordSignal(actorProfileId, targetProfileId, 'LIKE').catch(() => {})
+    }
 
     // Check reciprocity
     const theirLike = await prisma.profileAction.findFirst({
@@ -70,19 +96,33 @@ export const createLikeOrMatch = async (
     const targetIsActiveCouple = target.type === 'COUPLE' && target.coupleProfile?.coupleStatus === 'ACTIVE'
     const requiresDoubleConsent = actorIsActiveCouple || targetIsActiveCouple
 
-    const match = await prisma.match.create({
-      data: {
+    // 5.9 — creation now goes through MatchStateMachine.transition() instead
+    // of a raw prisma.match.create with an inline status value, so this is
+    // the ONLY place a Match's initial status is decided, and the CREATE
+    // event's own validation (canTransition) runs even here.
+    const result = await transition(null, 'CREATE', {
+      toStateOverride: requiresDoubleConsent ? 'PENDING_COUPLE_APPROVAL' : 'ACTIVE',
+      createData: {
         profileOneId: actorProfileId,
         profileTwoId: targetProfileId,
-        status: requiresDoubleConsent ? 'PENDING_COUPLE_APPROVAL' : 'ACTIVE',
-        matchedAt: requiresDoubleConsent ? null : new Date(),
-        conversation: { create: { type: requiresDoubleConsent ? 'COUPLE_GROUP' : 'ONE_TO_ONE' } }
+        conversationType: requiresDoubleConsent ? 'COUPLE_GROUP' : 'ONE_TO_ONE'
       }
     })
+    if (!result.ok || !result.match) return { kind: 'ERROR', message: result.error || 'Erro ao criar match.' }
+
+    // 11.1 — MATCH is mutual by nature: one signal row per direction.
+    // (Already naturally deduped — this code path only runs once, right
+    // after the match is first created above; the `existing` check earlier
+    // returns before here on any subsequent call for the same pair.)
+    {
+      const { recordSignal } = await import('./recommendationSignalService')
+      recordSignal(actorProfileId, targetProfileId, 'MATCH').catch(() => {})
+      recordSignal(targetProfileId, actorProfileId, 'MATCH').catch(() => {})
+    }
 
     return requiresDoubleConsent
-      ? { kind: 'MATCH_PENDING_COUPLE_APPROVAL', matchId: match.id }
-      : { kind: 'MATCH_CREATED', matchId: match.id }
+      ? { kind: 'MATCH_PENDING_COUPLE_APPROVAL', matchId: result.match.id }
+      : { kind: 'MATCH_CREATED', matchId: result.match.id }
   } catch (err: any) {
     console.error('[MATCH SERVICE]', err.message)
     return { kind: 'ERROR', message: 'Erro ao processar like.' }
@@ -90,45 +130,122 @@ export const createLikeOrMatch = async (
 }
 
 /**
- * Point 10 (Sprint 3): generalized required-approvers resolver.
- *
- * Works for INDIVIDUAL, COUPLE, and (future) GROUP profiles uniformly by
- * reading ProfileMember. Falls back to the legacy CoupleProfile pair for
- * couples that haven't been backfilled into ProfileMember yet (see
- * scripts/backfillProfileMembers.ts) so nothing breaks mid-migration.
+ * Point 10 (Sprint 3) / 4.1 (Sprint 4): generalized required-approvers
+ * resolver. Now a thin wrapper over ProfileMembershipService — kept as its
+ * own export (rather than having callers import the service directly)
+ * because "required approvers for a match" reads more clearly at the call
+ * sites in couples.ts/matches.ts than "required approvers of a profile".
  */
 export const getRequiredApproverUserIds = async (profileId: string): Promise<string[]> => {
-  const profile = await prisma.profile.findUnique({
-    where: { id: profileId },
-    include: { coupleProfile: true, user: { select: { id: true } } }
-  })
-  if (!profile) return []
-
-  if (profile.type === 'INDIVIDUAL') {
-    return profile.userId ? [profile.userId] : []
-  }
-
-  const members = await (prisma as any).profileMember.findMany({
-    where: { profileId, status: 'ACCEPTED', userId: { not: null } },
-    select: { userId: true }
-  })
-
-  if (members.length > 0) {
-    return members.map((m: any) => m.userId as string)
-  }
-
-  // Legacy fallback — couple not yet backfilled into ProfileMember
-  if (profile.coupleProfile?.coupleStatus === 'ACTIVE') {
-    return [profile.coupleProfile.partnerOneUserId, profile.coupleProfile.partnerTwoUserId].filter(Boolean) as string[]
-  }
-
-  return profile.userId ? [profile.userId] : []
+  const { getRequiredApprovers } = await import('./profileMembershipService')
+  return getRequiredApprovers(profileId)
 }
 
 export const recordPass = async (actorProfileId: string, targetProfileId: string): Promise<void> => {
+  // 11.5.6 — same "only on genuine transition" dedup as LIKE, applied here
+  // too for consistency/bounded row growth even though PASS is excluded
+  // from the global aggregate (see comment below) so a duplicate row
+  // would be harmless for ranking — it would still be wasted writes if a
+  // client retried this call.
+  const priorAction = await prisma.profileAction.findUnique({
+    where: { actorProfileId_targetProfileId: { actorProfileId, targetProfileId } },
+    select: { action: true }
+  })
   await prisma.profileAction.upsert({
     where: { actorProfileId_targetProfileId: { actorProfileId, targetProfileId } },
     update: { action: 'PASS' },
     create: { actorProfileId, targetProfileId, action: 'PASS' }
   })
+  if (priorAction?.action === 'PASS') return
+  // 11.1/11.7 — recorded for completeness, but deliberately EXCLUDED from
+  // the global aggregate a candidate's other viewers see (see
+  // recommendationSignalService's GLOBAL_AGGREGATE_TYPES comment) — a
+  // PASS is already a hard per-viewer exclusion from future discovery,
+  // not a reputational signal about the passed profile.
+  const { recordSignal } = await import('./recommendationSignalService')
+  recordSignal(actorProfileId, targetProfileId, 'PASS').catch(() => {})
+}
+
+/**
+ * 5.9 — MatchStateMachine.transition(): the ONLY place Match.status is
+ * written. Before this, it was written directly in discovery.ts's like
+ * route (now fixed to delegate here via createLikeOrMatch), couples.ts's
+ * approve route, and privacy.ts's block route — none of them validating
+ * against each other's assumptions about what transitions were legal.
+ *
+ * matchId is null only for the CREATE event (no Match row exists yet).
+ */
+export interface TransitionResult {
+  ok: boolean
+  match?: any
+  error?: string
+}
+
+const EVENT_TO_DOMAIN_EVENT: Partial<Record<MatchEvent, DomainEventType>> = {
+  REQUIRE_COUPLE_APPROVAL: 'MATCH_APPROVAL_REQUIRED',
+  ACTIVATE:                'MATCH_ACTIVATED',
+  PAUSE:                   'MATCH_PAUSED',
+  END:                     'MATCH_ENDED',
+  BLOCK:                   'MATCH_BLOCKED',
+  REJECT:                  'MATCH_REJECTED',
+  // APPROVE and RESUME deliberately have no domain event: APPROVE is a
+  // self-transition (records that one approver approved, doesn't move the
+  // FSM), and RESUME lands on ACTIVE but firing MATCH_ACTIVATED's "you
+  // have a new match!" notification copy would be wrong for a match that
+  // already existed and was just paused.
+}
+
+export const transition = async (
+  matchId: string | null,
+  event: MatchEvent,
+  opts: {
+    toStateOverride?: MatchState
+    createData?: { profileOneId: string; profileTwoId: string; conversationType: 'ONE_TO_ONE' | 'COUPLE_GROUP' }
+  } = {}
+): Promise<TransitionResult> => {
+  if (event === 'CREATE') {
+    if (!opts.createData) return { ok: false, error: 'createData é obrigatório para o evento CREATE.' }
+    const check = canTransition(null, 'CREATE', opts.toStateOverride)
+    if (!check.allowed) return { ok: false, error: check.reason }
+
+    const match = await prisma.match.create({
+      data: {
+        profileOneId: opts.createData.profileOneId,
+        profileTwoId: opts.createData.profileTwoId,
+        status: check.toState!,
+        matchedAt: check.toState === 'ACTIVE' ? new Date() : null,
+        conversation: { create: { type: opts.createData.conversationType } }
+      }
+    })
+
+    await dispatch({ type: 'MATCH_CREATED', matchId: match.id, profileOneId: match.profileOneId, profileTwoId: match.profileTwoId })
+    if (check.toState === 'ACTIVE') {
+      await dispatch({ type: 'MATCH_ACTIVATED', matchId: match.id, profileOneId: match.profileOneId, profileTwoId: match.profileTwoId })
+    } else if (check.toState === 'PENDING_COUPLE_APPROVAL') {
+      await dispatch({ type: 'MATCH_APPROVAL_REQUIRED', matchId: match.id, profileOneId: match.profileOneId, profileTwoId: match.profileTwoId })
+    }
+    return { ok: true, match }
+  }
+
+  if (!matchId) return { ok: false, error: 'matchId é obrigatório para este evento.' }
+  const existing = await prisma.match.findUnique({ where: { id: matchId } })
+  if (!existing) return { ok: false, error: 'Match não encontrado.' }
+
+  const check = canTransition(existing.status as MatchState, event)
+  if (!check.allowed) return { ok: false, error: check.reason }
+
+  const updated = await prisma.match.update({
+    where: { id: matchId },
+    data: {
+      status: check.toState!,
+      ...(check.toState === 'ACTIVE' && !existing.matchedAt ? { matchedAt: new Date() } : {})
+    }
+  })
+
+  const domainEventType = EVENT_TO_DOMAIN_EVENT[event]
+  if (domainEventType) {
+    await dispatch({ type: domainEventType, matchId: updated.id, profileOneId: updated.profileOneId, profileTwoId: updated.profileTwoId })
+  }
+
+  return { ok: true, match: updated }
 }

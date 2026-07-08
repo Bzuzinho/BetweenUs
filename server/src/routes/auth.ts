@@ -6,6 +6,10 @@ import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
 import { generateTokens, verifyRefreshToken, verifyAccessToken } from '../utils/jwt'
 import { notifyAdmins } from '../lib/notify'
+import { evaluateAndActivateUser } from '../lib/userActivationService'
+import { getPendingReacceptance, recordReacceptance } from '../lib/legalDocumentService'
+import { signMediaUrl } from '../lib/mediaAccessService'
+import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -173,18 +177,41 @@ router.post('/logout', async (req: Request, res: Response) => {
 })
 
 // POST /api/auth/refresh
+//
+// Security follow-up (JWT rotation, commit 487b622 exposure) — every
+// failure path here now clears the accessToken/refreshToken cookies
+// before responding. Before this fix, a failed refresh (expired, invalid
+// signature, or — the case that matters most right now — a token signed
+// with an OLD, rotated-out JWT_REFRESH_SECRET) left the stale httpOnly
+// cookies sitting in the browser. That's harmless for the SPA itself
+// (localStorage is the primary token store and the axios interceptor
+// already clears + redirects on refresh failure), but it violates the
+// explicit contract this audit checks for ("refresh token antigo →
+// cookies/tokens locais são limpos") and could bite any non-SPA client
+// (or a future server-rendered path) that relies on the cookie alone.
 router.post('/refresh', async (req: Request, res: Response) => {
   const rt = req.body?.refreshToken || (req as any).cookies?.refreshToken
-  if (!rt) return res.status(401).json({ error: 'Token em falta.' })
+  if (!rt) { clearAuthCookies(res); return res.status(401).json({ error: 'Token em falta.' }) }
   try {
     const { userId } = verifyRefreshToken(rt)
     const redis = await getRedis()
-    if (redis) { const s = await redis.get(`refresh:${userId}`); if (!s || s!==hashToken(rt)) return res.status(401).json({ error:'Token inválido.' }) }
+    if (redis) {
+      const s = await redis.get(`refresh:${userId}`)
+      if (!s || s!==hashToken(rt)) { clearAuthCookies(res); return res.status(401).json({ error:'Token inválido.' }) }
+    }
     const tokens = generateTokens(userId)
     if (redis) await redis.setEx(`refresh:${userId}`, 30*24*60*60, hashToken(tokens.refreshToken))
     setAuthCookies(res, tokens.accessToken, tokens.refreshToken)
     res.json(tokens)
-  } catch { res.status(401).json({ error: 'Token expirado.' }) }
+  } catch {
+    // Covers both TokenExpiredError and JsonWebTokenError (invalid
+    // signature — the exact case a rotated JWT_REFRESH_SECRET produces
+    // for any refresh token issued before the rotation). Either way the
+    // token is unusable, so the response is identical and the stale
+    // cookies are cleared the same way.
+    clearAuthCookies(res)
+    res.status(401).json({ error: 'Token expirado.' })
+  }
 })
 
 // GET /api/auth/me
@@ -197,6 +224,7 @@ router.get('/me', async (req: Request, res: Response) => {
       where: { id: userId },
       select: {
         id:true, email:true, status:true, adminRole:true, emailVerifiedAt:true, createdAt:true, ageVerifiedAt:true,
+        accountName:true, nif:true, avatarPath:true, dateOfBirth:true,
         profile: { select:{ id:true, displayName:true, type:true, status:true, city:true } },
         subscription: { select:{ plan:true, status:true, currentPeriodEnd:true } }
       }
@@ -214,8 +242,31 @@ router.get('/me', async (req: Request, res: Response) => {
       if (membership?.profile) (user as any).profile = membership.profile
     }
 
-    res.json(user)
+    // 3.3: flag any legal document the user accepted an outdated version of
+    // (or never accepted at all, for documents published after they signed
+    // up). Empty array = nothing to do, same shape either way so the client
+    // doesn't need a separate "not applicable" branch.
+    const pendingLegalReacceptance = await getPendingReacceptance(userId).catch(() => [])
+    const avatarPath = await signMediaUrl(user.avatarPath)
+
+    res.json({ ...user, avatarPath, pendingLegalReacceptance })
   } catch { res.status(401).json({ error: 'Token inválido.' }) }
+})
+
+// POST /api/auth/consents/reaccept — accept the currently published version
+// of a legal document (used after a pendingLegalReacceptance prompt)
+router.post('/consents/reaccept', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { consentType } = req.body
+    if (!consentType) return res.status(400).json({ error: 'consentType obrigatório.' })
+    const consent = await recordReacceptance(req.userId!, consentType, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    })
+    res.json({ ok: true, consent })
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Erro ao registar aceitação.' })
+  }
 })
 
 // POST /api/auth/email/verify — resend verification email (same fix as verifications.ts)
@@ -257,9 +308,13 @@ router.post('/email/confirm', async (req: Request, res: Response) => {
       if (!stored || stored !== hashToken(token)) return res.status(400).json({ error: 'Token inválido ou expirado.' })
       await redis.del(`email_verify:${userId}`)
     }
-    const user = await prisma.user.update({ where: { id:userId }, data: { emailVerifiedAt:new Date(), status:'ACTIVE' } })
+    // Sprint 2.5.5: no longer forces status='ACTIVE' unconditionally — see
+    // lib/userActivationService.ts. A stale confirm link must not be able to
+    // undo a BANNED/SUSPENDED action.
+    const user = await prisma.user.update({ where: { id:userId }, data: { emailVerifiedAt:new Date() } })
+    const activation = await evaluateAndActivateUser(userId)
     import('../lib/email').then(({ sendWelcomeEmail }) => sendWelcomeEmail(user.email).catch(()=>{}))
-    res.json({ ok:true, message:'Email verificado! A tua conta está activa.' })
+    res.json({ ok:true, message: activation.activated ? 'Email verificado! A tua conta está activa.' : 'Email verificado.', activation })
   } catch { res.status(500).json({ error: 'Erro interno.' }) }
 })
 
@@ -359,15 +414,34 @@ router.delete('/sessions', async (req: Request, res: Response) => {
 })
 
 
-// ─── PUT /api/auth/account — placeholder until schema migration adds nif/accountName
+// ─── PUT /api/auth/account — account-level data (accountName/NIF), distinct from Profile
+const accountUpdateSchema = z.object({
+  accountName: z.string().trim().min(2).max(80).optional().nullable(),
+  nif:         z.string().trim().regex(/^\d{9}$/, 'NIF deve ter 9 dígitos.').optional().nullable(),
+})
+
 router.put('/account', async (req: Request, res: Response) => {
   const token = req.headers.authorization?.split(' ')[1] || (req as any).cookies?.accessToken
   if (!token) return res.status(401).json({ error: 'Não autenticado.' })
   try {
-    verifyAccessToken(token)
-    // Fields nif/accountName not yet in schema — pending migration
-    res.json({ ok: true, message: 'Dados de conta guardados.' })
-  } catch { res.status(401).json({ error: 'Token inválido.' }) }
+    const { userId } = verifyAccessToken(token)
+    const data = accountUpdateSchema.parse(req.body)
+
+    const updateData: any = {}
+    if (data.accountName !== undefined) updateData.accountName = data.accountName || null
+    if (data.nif !== undefined)         updateData.nif = data.nif || null
+
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+      select: { id:true, email:true, accountName:true, nif:true, avatarPath:true }
+    })
+
+    res.json({ ok: true, message: 'Dados de conta guardados.', user })
+  } catch (err: any) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
+    res.status(401).json({ error: 'Token inválido.' })
+  }
 })
 
 // ─── POST /api/auth/avatar — upload account avatar ───────────────────────────
@@ -381,21 +455,27 @@ router.post('/avatar', avatarUpload.single('avatar'), async (req: Request, res: 
     const { userId } = verifyAccessToken(token)
     if (!req.file) return res.status(400).json({ error: 'Ficheiro obrigatório.' })
 
-    let avatarUrl: string | null = null
+    // 3.1 follow-up: avatars now go through the same private-storage path
+    // as profile photos/selfies — the bucket is private by definition, and
+    // "public" is a viewer-facing access level (see mediaAccessPolicy.ts),
+    // not an R2 ACL. avatarPath stores an object key; every read path signs
+    // it fresh (see GET /me below, admin.ts GET /users and GET /users/:id).
+    let avatarValue: string | null = null
     if (process.env.STORAGE_ENDPOINT) {
-      const { uploadFile } = await import('../lib/storage')
+      const { uploadPrivateFile } = await import('../lib/storage')
       const ext = req.file.originalname.split('.').pop() || 'jpg'
       const filename = `avatars/${userId}-${Date.now()}.${ext}`
-      const result = await uploadFile(req.file.buffer, filename, req.file.mimetype)
-      avatarUrl = result.url
+      const result = await uploadPrivateFile(req.file.buffer, filename, req.file.mimetype)
+      avatarValue = result.key
     } else {
-      // Dev: store as base64 data URL for testing
-      avatarUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
+      // Dev: store as base64 data URL for testing — signMediaUrl passes
+      // data: URIs through unchanged, same as it does for legacy public URLs.
+      avatarValue = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
     }
 
-    // avatarPath not yet in schema — store in profile photos instead
-    console.log('[AVATAR] Upload received but avatarPath not in schema yet')
-    res.json({ ok:true, avatarPath: avatarUrl })
+    await prisma.user.update({ where: { id: userId }, data: { avatarPath: avatarValue } })
+    const { signMediaUrl } = await import('../lib/mediaAccessService')
+    res.json({ ok:true, avatarPath: await signMediaUrl(avatarValue) })
   } catch (err: any) {
     console.error('[AVATAR]', err.message)
     res.status(500).json({ error: 'Erro ao fazer upload.' })

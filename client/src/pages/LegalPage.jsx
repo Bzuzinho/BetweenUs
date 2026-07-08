@@ -1,4 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import api from '../lib/api'
 
 const C = {
   bg:'#0A141A', surface:'#102129', elevated:'#172C36',
@@ -108,10 +110,22 @@ Em caso de emergência real, contacta sempre as autoridades locais (112 em Portu
   }
 }
 
+const CONSENT_TYPE_BY_PAGE = { terms: 'TERMS', privacy: 'PRIVACY_POLICY' }
+
 export default function LegalPage() {
   const { page } = useParams()
   const navigate = useNavigate()
-  const doc = PAGES[page] || PAGES.terms
+  const fallback = PAGES[page] || PAGES.terms
+  const [doc, setDoc] = useState(fallback)
+
+  useEffect(() => {
+    setDoc(PAGES[page] || PAGES.terms)
+    const consentType = CONSENT_TYPE_BY_PAGE[page]
+    if (!consentType) return // cookies/safety have no LegalDocument yet — stay on the static copy
+    api.get(`/legal/${consentType}`)
+      .then(r => setDoc({ title: r.data.title, content: r.data.content, version: r.data.version }))
+      .catch(() => {}) // keep the static fallback already set above
+  }, [page])
 
   return (
     <div style={{ minHeight:'100vh', background:C.bg, padding:'60px 20px 60px' }}>

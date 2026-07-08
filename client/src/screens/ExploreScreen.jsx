@@ -30,8 +30,8 @@ function GridTile({ profile, onOpen }) {
         background: `linear-gradient(160deg, ${C.elevated} 0%, ${C.bg} 100%)`,
         position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
-        {profile.photos?.length > 0 ? (
-          <img src={profile.photos[0].blurredPath || profile.photos[0].storagePath} alt=""
+        {profile.hasPhotos && profile.primaryPhoto ? (
+          <img src={profile.primaryPhoto} alt=""
             style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         ) : (
           <span style={{ fontSize: 22, color: C.muted }}>{TYPE_ICON[profile.type] || '○'}</span>
@@ -99,9 +99,9 @@ function ProfileCard({ profile, onLike, onPass }) {
           alignItems: 'center',
           justifyContent: 'center',
         }}>
-          {profile.photos?.length > 0 ? (
+          {profile.hasPhotos && profile.primaryPhoto ? (
             <img
-              src={profile.photos[0].blurredPath || profile.photos[0].storagePath}
+              src={profile.primaryPhoto}
               alt=""
               style={{ width:'100%', height:'100%', objectFit:'cover' }}
             />
@@ -125,8 +125,8 @@ function ProfileCard({ profile, onLike, onPass }) {
             display:'flex', alignItems:'center', gap:5,
             backdropFilter:'blur(8px)',
           }}>
-            <div style={{ width:6, height:6, borderRadius:'50%', background: profile.betweenScore > 80 ? C.success : profile.betweenScore > 60 ? C.warning : C.muted }} />
-            <span style={{ fontSize:12, fontWeight:500, color:C.text }}>{profile.betweenScore}</span>
+            <div style={{ width:6, height:6, borderRadius:'50%', background: profile.score > 80 ? C.success : profile.score > 60 ? C.warning : C.muted }} />
+            <span style={{ fontSize:12, fontWeight:500, color:C.text }}>{profile.score}</span>
             <span style={{ fontSize:10, color:C.muted }}>score</span>
           </div>
 
@@ -140,8 +140,8 @@ function ProfileCard({ profile, onLike, onPass }) {
             )}
           </div>
 
-          {/* Blur overlay badge */}
-          {profile.photos?.length > 0 && profile.photos[0].visibilityLevel !== 'PUBLIC' && (
+          {/* Blur overlay badge — discovery always shows a blurred teaser regardless of the photo's own visibility tier */}
+          {profile.hasPhotos && (
             <div style={{ position:'absolute', bottom:10, right:10, background:'rgba(10,20,26,0.7)', borderRadius:8, padding:'3px 8px', fontSize:10, color:C.primary }}>
               🔒 Soft Reveal
             </div>

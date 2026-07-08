@@ -1,0 +1,35 @@
+# Between Us — gitleaks config
+#
+# Security follow-up (JWT_SECRET/JWT_REFRESH_SECRET exposure, commit
+# 487b622) — this project's .env.example intentionally uses placeholder
+# values that LOOK like the shape of a real secret (that's the point —
+# it documents the expected format). Without an allowlist, every one of
+# those placeholders would be a permanent false positive. The allowlist
+# below matches this repo's actual placeholder conventions (grep the
+# current .env.example/.env.test if these ever need updating) rather than
+# excluding whole files, so a real value accidentally pasted into
+# .env.example would still be caught.
+title = "Between Us gitleaks config"
+
+[extend]
+# Start from gitleaks' own maintained rule set (AWS keys, generic API
+# key/token/secret patterns, Stripe, SendGrid, JWTs, private key blocks,
+# etc.) instead of hand-rolling detection rules from scratch.
+useDefault = true
+
+[allowlist]
+regexes = [
+  '''change-me[-a-zA-Z0-9]*''',                 # JWT_SECRET/JWT_REFRESH_SECRET/CONTACT_HASH_SECRET .env.example placeholders
+  '''your-(access|secret|resend)-[a-zA-Z-]*''',  # STORAGE_ACCESS_KEY/STORAGE_SECRET_KEY/SMTP_PASS placeholders
+  '''sk_test_\.\.\.''',                          # STRIPE_SECRET_KEY placeholder
+  '''sk_live_\.\.\.''',                          # Stripe docs mentioning the live prefix, never a real key
+  '''whsec_\.\.\.''',                            # STRIPE_WEBHOOK_SECRET placeholder
+  '''price_\.\.\.''',                            # STRIPE_PRICE_* placeholders
+  '''test-(jwt|refresh|contact-hash)-secret-not-used-in-production''', # .env.test — never used outside CI/local test runs
+  '''dev-(secret|refresh-secret)-change-in-production''', # utils/jwt.ts dev fallback (fails hard in prod, never a real value)
+  '''dev-only-insecure-fallback-do-not-use-in-prod''',    # contactHashService.ts dev fallback
+  '''postgres:postgres@localhost''',             # standard local/CI Postgres default, not a real credential
+]
+paths = [
+  '''(.*?)(jpg|jpeg|png|gif|svg|lock)$''',
+]

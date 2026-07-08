@@ -1,6 +1,7 @@
 import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { resolveMyProfileId } from '../lib/profileMembershipService'
 
 const router = Router()
 
@@ -74,36 +75,22 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
 })
 
 // POST /api/privacy/block/:profileId — block a profile
+// 9.3 — delegates entirely to BlockService, which now also handles
+// shared Private Rooms (safety-lock a 2-person room, or have the blocker
+// leave a 3+-person room) on top of what this route already did (the
+// ProfileAction row + ending any active match). The target is never
+// notified.
 router.post('/block/:profileId', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const myProfile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
+    // 7.11 — Safe Exit's "Block user/profile" action must work for a
+    // couple/group's non-creator member too, same bug class fixed across
+    // Sprint 6/7 elsewhere (Profile.userId-only lookup silently excluded them).
+    const myProfileId = await resolveMyProfileId(req.userId!)
+    const myProfile = myProfileId ? await prisma.profile.findUnique({ where: { id: myProfileId } }) : null
     if (!myProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
 
-    await prisma.profileAction.upsert({
-      where: {
-        actorProfileId_targetProfileId: {
-          actorProfileId: myProfile.id,
-          targetProfileId: req.params.profileId
-        }
-      },
-      update: { action: 'BLOCK' },
-      create: {
-        actorProfileId: myProfile.id,
-        targetProfileId: req.params.profileId,
-        action: 'BLOCK'
-      }
-    })
-
-    // End any active match
-    await prisma.match.updateMany({
-      where: {
-        OR: [
-          { profileOneId: myProfile.id, profileTwoId: req.params.profileId },
-          { profileOneId: req.params.profileId, profileTwoId: myProfile.id }
-        ]
-      },
-      data: { status: 'BLOCKED' }
-    })
+    const { blockProfile } = await import('../lib/blockService')
+    await blockProfile(myProfile.id, req.params.profileId)
 
     res.json({ ok: true })
   } catch (err: any) {

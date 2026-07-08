@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { reconnectSocketWithToken, disconnectSocket } from './socket'
 
 const baseURL = import.meta.env.VITE_API_URL || '/api'
 
@@ -28,6 +29,9 @@ const processQueue = (error, token = null) => {
 const clearSession = () => {
   localStorage.removeItem('accessToken')
   localStorage.removeItem('refreshToken')
+  // Security follow-up — a dead session must also drop the socket
+  // connection, not leave it retrying with a token we just discarded.
+  disconnectSocket()
 }
 
 api.interceptors.response.use(
@@ -73,6 +77,10 @@ api.interceptors.response.use(
       localStorage.setItem('accessToken', accessToken)
       if (newRT) localStorage.setItem('refreshToken', newRT)
       api.defaults.headers.common.Authorization = `Bearer ${accessToken}`
+      // Security follow-up — a socket created with the OLD token (or one
+      // that connect_error already gave up on) needs to pick up the new
+      // one; otherwise it stays disconnected until a full page reload.
+      reconnectSocketWithToken()
       processQueue(null, accessToken)
       original.headers.Authorization = `Bearer ${accessToken}`
       return api(original)

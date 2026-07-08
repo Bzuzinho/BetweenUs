@@ -3,6 +3,10 @@ import { z } from 'zod'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { coarsenCoordinate } from '../utils/location'
+import { mergePhotosForViewer } from '../lib/mediaAccessService'
+import { getVerificationBadges } from '../lib/verificationBadges'
+import { isActiveMember, getActiveMembers, resolveMyProfileId } from '../lib/profileMembershipService'
+import { evaluateCompleteness } from '../lib/profileCompletenessService'
 
 const router = Router()
 
@@ -27,42 +31,20 @@ const profileSchema = z.object({
 const normaliseIntentions = (raw: any[]): { slug: string; preference: 'YES'|'MAYBE'|'NO' }[] =>
   raw.map(i => typeof i === 'string' ? { slug: i, preference: 'YES' as const } : { slug: i.slug, preference: i.preference || 'YES' as const })
 
-// Sprint 3: a couple's Profile.userId is only the creator (partnerOne).
-// Without this, the invited partner gets 403 trying to edit shared
-// intentions/boundaries/privacy — checks ProfileMember as the source of
-// truth, falling back to CoupleProfile for profiles not yet backfilled.
+// 4.1: delegates to ProfileMembershipService.isActiveMember, which owns
+// the ProfileMember-first / CoupleProfile-fallback logic in one place
+// instead of duplicating it here.
 async function canManageProfile(profileId: string, userId: string): Promise<boolean> {
-  const profile = await prisma.profile.findUnique({
-    where: { id: profileId },
-    include: { coupleProfile: true }
-  })
+  const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { userId: true } })
   if (!profile) return false
   if (profile.userId === userId) return true
-
-  const member = await (prisma as any).profileMember.findFirst({
-    where: { profileId, userId, status: 'ACCEPTED' }
-  })
-  if (member) return true
-
-  return profile.coupleProfile?.partnerTwoUserId === userId
+  return isActiveMember(profileId, userId)
 }
 
-// Resolves "my" profile for /me routes — the profile I own, OR (Sprint 3)
-// the shared couple/group profile I've been accepted into as a member.
-async function resolveMyProfileId(userId: string): Promise<string | null> {
-  const owned = await prisma.profile.findUnique({ where: { userId }, select: { id: true } })
-  if (owned) return owned.id
+// 6.1 — resolveMyProfileId moved to profileMembershipService.ts (imported
+// at top of file) so every Sprint 6 router can share the exact same
+// resolution logic instead of re-deriving it.
 
-  const membership = await (prisma as any).profileMember.findFirst({
-    where: { userId, status: 'ACCEPTED' }, select: { profileId: true }
-  })
-  if (membership) return membership.profileId
-
-  const coupleProfile = await prisma.coupleProfile.findFirst({
-    where: { partnerTwoUserId: userId }, select: { profileId: true }
-  })
-  return coupleProfile?.profileId || null
-}
 
 async function upsertIntentions(profileId: string, intentions: { slug: string; preference: 'YES'|'MAYBE'|'NO' }[]) {
   for (const { slug } of intentions) {
@@ -75,16 +57,46 @@ async function upsertIntentions(profileId: string, intentions: { slug: string; p
   const records = await prisma.intention.findMany({ where: { slug: { in: intentions.map(i => i.slug) } } })
   await prisma.profileIntention.deleteMany({ where: { profileId } })
   await prisma.profileIntention.createMany({
-    data: records.map(ir => {
+    data: (records as { id: string; slug: string }[]).map((ir: { id: string; slug: string }) => {
       const match = intentions.find(i => i.slug === ir.slug)
       return { profileId, intentionId: ir.id, preference: match?.preference || 'YES' }
     })
   })
+  // 5.8 — single hook point for all 4 call sites (PUT /me, PUT /:id, POST /
+  // create+update branches) instead of invalidating at each route.
+  const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+  await invalidateScoresForProfile(profileId).catch(() => {})
 }
 
 router.get('/onboarding/steps', requireAuth, async (req: AuthRequest, res: Response) => {
   const profile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
   res.json({ steps: [], currentStep: (profile as any)?.onboardingStep || 1 })
+})
+
+// 4.10 — save/resume for the Create Profile wizard (CreateProfilePage.jsx),
+// which collects everything client-side and only calls POST /profiles once
+// at the very end. Before this, closing the tab mid-wizard lost everything.
+// This does NOT change that "submit once" shape — it just persists a draft
+// blob alongside it so the wizard can prefill on return. Deliberately
+// separate from the /onboarding/step(s) routes above, which predate the
+// current wizard and aren't called by any frontend code.
+router.get('/onboarding/progress', requireAuth, async (req: AuthRequest, res: Response) => {
+  const existing = await prisma.profile.findUnique({ where: { userId: req.userId! } })
+  if (existing) return res.json({ progress: null, reason: 'PROFILE_ALREADY_EXISTS' })
+  const draft = await (prisma as any).onboardingProgress.findUnique({ where: { userId: req.userId! } })
+  res.json({ progress: draft ? { step: draft.step, data: draft.data } : null })
+})
+
+router.put('/onboarding/progress', requireAuth, async (req: AuthRequest, res: Response) => {
+  const { step, data } = req.body
+  if (typeof step !== 'number' || step < 1) return res.status(400).json({ error: 'Passo inválido.' })
+  if (data && typeof data !== 'object') return res.status(400).json({ error: 'Dados inválidos.' })
+  await (prisma as any).onboardingProgress.upsert({
+    where:  { userId: req.userId! },
+    update: { step, data: data || {} },
+    create: { userId: req.userId!, step, data: data || {} }
+  })
+  res.json({ ok: true })
 })
 
 // GET /api/profiles/me
@@ -99,11 +111,22 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       boundaries:      { include: { boundary: true } },
       privacySettings: true,
       coupleProfile:   true,
+      user:            { select: { verification: { select: { type: true, status: true } } } },
     }
   })
   if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-  const { locationLat, locationLng, ...safeProfile } = profile as any
-  res.json(safeProfile)
+  const { locationLat, locationLng, photos, user, ...safeProfile } = profile as any
+  // 3.1: sign photo URLs fresh on every read instead of exposing storage keys/permanent URLs
+  const resolvedPhotos = await mergePhotosForViewer(photos, {
+    ownerUserId: req.userId!,
+    viewerUserId: req.userId!,
+    viewerProfileId: profile.id
+  })
+  // 3.4: public verification badge, derived from Verification.status, not exposed elsewhere
+  // 4.9: completeness is computed server-side so the frontend never hardcodes
+  // a percentage — { score, complete, missing: [...] }
+  const completeness = await evaluateCompleteness(profile as any)
+  res.json({ ...safeProfile, photos: resolvedPhotos, verificationBadges: getVerificationBadges(user?.verification), completeness })
 })
 
 // PUT /api/profiles/me  ← new: edit own profile
@@ -127,6 +150,12 @@ router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
         ...(data.discretionLevel  !== undefined && { discretionLevel: data.discretionLevel }),
       }
     })
+    // 5.8 — relationshipStatus/discretionLevel/city/location all feed
+    // BetweenScoreService directly, independent of whether intentions were
+    // also touched in this same request (upsertIntentions invalidates on
+    // its own path, redundant-but-harmless if both fire).
+    const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+    await invalidateScoresForProfile(updated.id).catch(() => {})
     if (data.intentions?.length) await upsertIntentions(updated.id, normaliseIntentions(data.intentions))
     res.json(updated)
   } catch (err: any) {
@@ -158,6 +187,8 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
           ...(data.discretionLevel  !== undefined && { discretionLevel: data.discretionLevel }),
         }
       })
+      const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+      await invalidateScoresForProfile(updated.id).catch(() => {})
       if (data.intentions?.length) await upsertIntentions(updated.id, normaliseIntentions(data.intentions))
       return res.json(updated)
     }
@@ -186,6 +217,10 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     })
 
     if (data.intentions?.length) await upsertIntentions(profile.id, normaliseIntentions(data.intentions))
+    // 4.10 — the real Profile now exists, so the onboarding draft (if any)
+    // is done serving its purpose. Best-effort: a failure here shouldn't
+    // fail profile creation itself, it'd just leave one harmless stale row.
+    await (prisma as any).onboardingProgress.delete({ where: { userId: req.userId! } }).catch(() => {})
     res.status(201).json(profile)
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
@@ -236,6 +271,8 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
         ...(data.discretionLevel  !== undefined && { discretionLevel: data.discretionLevel }),
       }
     })
+    const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+    await invalidateScoresForProfile(updated.id).catch(() => {})
     if (data.intentions?.length) await upsertIntentions(updated.id, normaliseIntentions(data.intentions))
     res.json(updated)
   } catch (err: any) {
@@ -247,11 +284,39 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
 router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const profile = await prisma.profile.findUnique({
     where: { id: req.params.id },
-    include: { photos: { where: { moderationStatus: 'APPROVED', visibilityLevel: 'PUBLIC' }, orderBy: [{ isPrimary: 'desc' }] }, intentions: { include: { intention: true } }, privacySettings: true }
+    // 3.1/3.2 fix: this used to hard-filter to visibilityLevel:'PUBLIC', which
+    // meant BLURRED/PRIVATE_AFTER_MATCH/PRIVATE_AFTER_APPROVAL photos never
+    // reached the client at all — not even blurred. Access is now decided
+    // per-viewer below via mergePhotosForViewer instead of at the query level.
+    include: {
+      photos: { where: { moderationStatus: 'APPROVED' }, orderBy: [{ isPrimary: 'desc' }] },
+      intentions: { include: { intention: true } },
+      privacySettings: true,
+      user: { select: { verification: { select: { type: true, status: true } } } },
+    }
   })
   if (!profile || profile.status !== 'APPROVED') return res.status(404).json({ error: 'Perfil não encontrado.' })
-  const { userId, locationLat, locationLng, ...pub } = profile as any
-  res.json(pub)
+  const { userId, locationLat, locationLng, photos, user, ...pub } = profile as any
+
+  const viewerProfileId = await resolveMyProfileId(req.userId!)
+  const resolvedPhotos = await mergePhotosForViewer(photos, {
+    ownerUserId: userId,
+    viewerUserId: req.userId!,
+    viewerProfileId
+  })
+
+  // 11.1/11.5.6 — PROFILE_VIEW signal, fire-and-forget, deduped to at
+  // most one per (viewer, target) pair per UTC day (see
+  // recordProfileViewSignal) so repeated GET /profiles/:id calls from the
+  // same viewer in one session don't inflate this signal. Also no-ops
+  // when actor===target (viewing your own profile).
+  if (viewerProfileId) {
+    import('../lib/recommendationSignalService').then(({ recordProfileViewSignal }) => {
+      recordProfileViewSignal(viewerProfileId, profile.id).catch(() => {})
+    }).catch(() => {})
+  }
+
+  res.json({ ...pub, photos: resolvedPhotos, verificationBadges: getVerificationBadges(user?.verification) })
 })
 
 router.put('/me/boundaries', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -261,6 +326,8 @@ router.put('/me/boundaries', requireAuth, async (req: AuthRequest, res: Response
   if (!Array.isArray(boundaries)) return res.status(400).json({ error: 'Formato inválido.' })
   await prisma.profileBoundary.deleteMany({ where: { profileId } })
   await prisma.profileBoundary.createMany({ data: boundaries.map((b: any) => ({ profileId, boundaryId: b.boundaryId, preference: b.preference })) })
+  const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+  await invalidateScoresForProfile(profileId).catch(() => {})
   res.json({ message: 'Limites actualizados.' })
 })
 
@@ -271,6 +338,8 @@ router.put('/:id/boundaries', requireAuth, async (req: AuthRequest, res: Respons
   if (!Array.isArray(boundaries)) return res.status(400).json({ error: 'Formato inválido.' })
   await prisma.profileBoundary.deleteMany({ where: { profileId: profile.id } })
   await prisma.profileBoundary.createMany({ data: boundaries.map((b: any) => ({ profileId: profile.id, boundaryId: b.boundaryId, preference: b.preference })) })
+  const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
+  await invalidateScoresForProfile(profile.id).catch(() => {})
   res.json({ message: 'Limites actualizados.' })
 })
 

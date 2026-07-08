@@ -2,139 +2,69 @@ import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { notifyUser, notifyAdmins } from '../lib/notify'
+import { signMediaUrl } from '../lib/mediaAccessService'
+import { getVerificationBadges } from '../lib/verificationBadges'
 
 const router = Router()
 
-// ─── Between Score calculator ─────────────────────────────────────────────────
-const calcScore = (viewer: any, target: any): number => {
-  let score = 0
-
-  // Intentions overlap (30%)
-  const vIntents = new Set(viewer.intentions?.map((i: any) => i.intention?.slug))
-  const tIntents = new Set(target.intentions?.map((i: any) => i.intention?.slug))
-  const overlap  = [...vIntents].filter(i => tIntents.has(i)).length
-  if (overlap > 0) score += Math.min(30, overlap * 10)
-
-  // No hard boundary conflict (25%)
-  const vNos = new Set(viewer.boundaries?.filter((b: any) => b.preference === 'no').map((b: any) => b.boundary?.slug))
-  const tYes = new Set(target.boundaries?.filter((b: any) => b.preference === 'yes').map((b: any) => b.boundary?.slug))
-  const conflicts = [...tYes].filter(s => vNos.has(s)).length
-  if (conflicts === 0) score += 25
-
-  // Relationship status compatible (15%)
-  const compatMap: Record<string, string[]> = {
-    SINGLE:      ['SINGLE','COUPLE_CURIOUS','COUPLE_LIBERAL','OPEN','POLYAMOROUS'],
-    OPEN:        ['SINGLE','OPEN','POLYAMOROUS','COUPLE_CURIOUS'],
-    POLYAMOROUS: ['SINGLE','OPEN','POLYAMOROUS'],
-    COUPLE_CURIOUS: ['SINGLE','OPEN'],
-    COUPLE_LIBERAL: ['SINGLE','COUPLE_LIBERAL','OPEN'],
-  }
-  const vStatus = viewer.relationshipStatus || 'SINGLE'
-  const tStatus = target.relationshipStatus || 'SINGLE'
-  if ((compatMap[vStatus] || []).includes(tStatus)) score += 15
-
-  // Photos exist (10%)
-  if (target.photos?.length > 0) score += 10
-
-  // Verified (10%)
-  if (target.user?.ageVerifiedAt) score += 10
-
-  // Discretion compatible (5%)
-  if (!viewer.discretionLevel || !target.discretionLevel ||
-      viewer.discretionLevel === target.discretionLevel) score += 5
-
-  // City match bonus (5%)
-  if (viewer.city && target.city && viewer.city.toLowerCase() === target.city.toLowerCase()) score += 5
-
-  return Math.min(100, score)
-}
-
-// GET /api/discovery — all profiles ordered by score
+// GET /api/discovery — the DiscoveryService pipeline (5.2), cursor-paginated (5.4)
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.userId! },
-      include: { profile: {
-        include: {
-          intentions: { include: { intention: true } },
-          boundaries: { include: { boundary: true } },
-        }
-      }}
-    })
-    if (!user?.profile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
+    const viewerProfile = await prisma.profile.findUnique({ where: { userId: req.userId! }, select: { id: true } })
+    if (!viewerProfile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
 
-    const viewerProfile = user.profile
-
-    // Get all blocked/passed/liked profiles by viewer
-    const myActions = await prisma.profileAction.findMany({
-      where: { actorProfileId: viewerProfile.id },
-      select: { targetProfileId: true, action: true }
-    })
-    const excludeIds = new Set([
-      viewerProfile.id,
-      ...myActions.filter(a => ['BLOCK','PASS'].includes(a.action)).map(a => a.targetProfileId)
-    ])
-
-    // Get existing matches (already connected)
-    const myMatches = await prisma.match.findMany({
-      where: {
-        OR: [{ profileOneId: viewerProfile.id }, { profileTwoId: viewerProfile.id }],
-        status: { in: ['PENDING','ACTIVE'] }
-      },
-      select: { profileOneId: true, profileTwoId: true }
-    })
-    myMatches.forEach(m => {
-      excludeIds.add(m.profileOneId === viewerProfile.id ? m.profileTwoId : m.profileOneId)
-    })
-
-    // Sprint 4: read the type filter the frontend already sends — was being silently ignored
     const typeFilter = ['INDIVIDUAL', 'COUPLE', 'GROUP'].includes(String(req.query.type))
-      ? String(req.query.type) : undefined
+      ? String(req.query.type) as 'INDIVIDUAL' | 'COUPLE' | 'GROUP' : undefined
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20))
 
-    // Get all active profiles excluding admin roles
-    const profiles = await prisma.profile.findMany({
-      where: {
-        id: { notIn: [...excludeIds] },
-        status: 'APPROVED',
-        user: { status: 'ACTIVE', adminRole: null },
-        ...(typeFilter && { type: typeFilter as any }),
-      },
-      include: {
-        user: { select: { id:true, ageVerifiedAt:true } },
-        photos: { where: { moderationStatus: 'APPROVED' }, take: 3 },
-        intentions: { include: { intention: true } },
-        boundaries: { include: { boundary: true } },
-        privacySettings: true,
-      },
-      take: 100,
-    })
+    const { getCandidates } = await import('../lib/discoveryService')
+    const { items: rawItems, nextCursor } = await getCandidates(viewerProfile.id, { type: typeFilter }, cursor, limit)
 
-    // Calculate scores and sort
-    const scored = profiles.map(p => ({
-      ...p,
-      score: calcScore(viewerProfile, p)
-    })).sort((a, b) => b.score - a.score)
+    // 11.5/11.12 — LAYER 3. applyRecommendations only ever reorders/relabels
+    // the exact `rawItems` array Layers 1+2 already produced above — it
+    // cannot add or remove a candidate (see recommendationOrchestrator.ts's
+    // header). Shadow mode (default): computes + logs, returns rawItems
+    // unchanged. Enabled + RECOMMENDATION_V1 cohort: returns the reordered
+    // list. Both flags off (default): a no-op passthrough.
+    const { applyRecommendations } = await import('../lib/recommendationOrchestrator')
+    const { items } = await applyRecommendations(viewerProfile.id, rawItems, { type: !!typeFilter })
 
-    // Mark which ones viewer has liked (pending connection)
-    const likedIds = new Set(myActions.filter(a => a.action === 'LIKE').map(a => a.targetProfileId))
-
-    const result = scored.map(p => ({
-      id:                 p.id,
-      displayName:        p.displayName,
-      city:               p.city,
-      country:            p.country,
-      bio:                p.bio,
-      type:               p.type,
-      relationshipStatus: p.relationshipStatus,
-      discretionLevel:    p.discretionLevel,
-      score:              p.score,
-      verified:           !!p.user?.ageVerifiedAt,
-      hasPhotos:          p.photos.length > 0,
-      primaryPhoto:       p.photos.find(ph => ph.isPrimary)?.blurredPath || p.photos[0]?.blurredPath || null,
-      liked:              likedIds.has(p.id),
+    // 3.1: discovery always shows the blurred teaser regardless of a
+    // photo's visibilityLevel (that's the point of a discovery grid) — but
+    // since new uploads store an R2 key, not a public URL, it now has to be
+    // signed before it reaches the client. Kept here (not in
+    // DiscoveryService) since signed-URL generation is a view/transport
+    // concern, not part of the ranking pipeline itself.
+    const profiles = await Promise.all(items.map(async item => {
+      const p = item.profile
+      const teaserSource = p.photos?.find((ph: any) => ph.isPrimary)?.blurredPath || p.photos?.[0]?.blurredPath || null
+      const primaryPhoto = await signMediaUrl(teaserSource)
+      return {
+        id:                 p.id,
+        displayName:        p.displayName,
+        city:               p.city,
+        country:            p.country,
+        bio:                p.bio,
+        type:               p.type,
+        relationshipStatus: p.relationshipStatus,
+        discretionLevel:    p.discretionLevel,
+        score:              item.betweenScore,
+        compatibility:      item.compatibility,
+        reasons:            item.reasons,
+        verified:           !!p.user?.ageVerifiedAt,
+        verificationBadges: getVerificationBadges(p.user?.verification),
+        hasPhotos:          (p.photos?.length || 0) > 0,
+        primaryPhoto,
+        liked:              !!p.liked,
+      }
     }))
 
-    res.json({ profiles: result })
+    // `profiles` kept as the response key for backward compatibility with
+    // ExploreScreen.jsx (which reads res.data.profiles and doesn't yet know
+    // about cursor pagination) — nextCursor is additive, adopted by the
+    // frontend whenever it grows a "load more" control.
+    res.json({ profiles, nextCursor })
   } catch (err: any) {
     console.error('[DISCOVERY]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
@@ -142,83 +72,60 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 })
 
 // POST /api/discovery/:id/like — send connection request
+//
+// 5.1 audit finding (Sprint 5): this route used to have its OWN inline
+// match-creation logic, completely separate from matchService.createLikeOrMatch
+// - it never checked couple double-consent at all, always creating status
+// ACTIVE on a mutual like. Since ExploreScreen.jsx (the only discovery UI)
+// always calls this exact route regardless of whether the viewer's profile
+// is INDIVIDUAL or COUPLE, /api/couples/like/:id's correct double-consent
+// logic was effectively dead code from the frontend's perspective - every
+// real like in production went through the buggy path. Now delegates to
+// the same createLikeOrMatch used by couples.ts, so there is exactly ONE
+// place that decides whether a match needs double consent.
 router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const viewer = await prisma.user.findUnique({
-      where: { id: req.userId! },
-      include: { profile: true }
-    })
+    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
     if (!viewer?.profile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
 
     const target = await prisma.profile.findUnique({
       where: { id: req.params.id },
-      include: { user: { select: { id:true } }, privacySettings: true }
+      include: { user: { select: { id: true } } }
     })
     if (!target) return res.status(404).json({ error: 'Perfil não encontrado.' })
 
-    // Record like action
-    await prisma.profileAction.upsert({
-      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: target.id } },
-      update: { action: 'LIKE' },
-      create: { actorProfileId: viewer.profile.id, targetProfileId: target.id, action: 'LIKE' }
-    })
+    const { createLikeOrMatch } = await import('../lib/matchService')
+    const result = await createLikeOrMatch(viewer.profile.id, target.id)
 
-    // Check if target already liked viewer → auto-match
-    const theirLike = await prisma.profileAction.findFirst({
-      where: { actorProfileId: target.id, targetProfileId: viewer.profile.id, action: 'LIKE' }
-    })
+    switch (result.kind) {
+      case 'ERROR':
+        return res.status(400).json({ error: result.message })
 
-    let matched = false
-    let matchId: string | null = null
-
-    if (theirLike) {
-      // Mutual like → create match
-      const existing = await prisma.match.findFirst({
-        where: { OR: [
-          { profileOneId: viewer.profile.id, profileTwoId: target.id },
-          { profileOneId: target.id, profileTwoId: viewer.profile.id },
-        ]}
-      })
-
-      if (!existing) {
-        const match = await prisma.match.create({
-          data: {
-            profileOneId: viewer.profile.id,
-            profileTwoId: target.id,
-            status: 'ACTIVE',
-            matchedAt: new Date(),
-            conversation: { create: { type: 'ONE_TO_ONE' } }
-          }
-        })
-        matchId = match.id
-        matched = true
-
-        // Notify both users of match
-        notifyUser(target.user.id, 'match',
-          '💫 Novo match!',
-          `Tens um novo match com ${viewer.profile.displayName || 'alguém'}.`,
-          { matchId: match.id, tab: 'matches' }
+      case 'LIKE_RECORDED':
+        // Send connection request notification to target — matches the
+        // pre-fix behavior for the one-sided case, just no longer bundled
+        // with match-creation logic.
+        notifyUser(target.user.id, 'connection_request',
+          '🔔 Pedido de ligação',
+          `${viewer.profile.displayName || 'Alguém'} quer ligar-se contigo. Vê o perfil e decide.`,
+          { fromProfileId: viewer.profile.id, tab: 'matches' }
         ).catch(() => {})
+        return res.json({ ok: true, matched: false, matchId: null })
 
-        notifyUser(req.userId!, 'match',
-          '💫 Match confirmado!',
-          `O teu pedido de ligação foi aceite. Agora podem conversar.`,
-          { matchId: match.id, tab: 'matches' }
-        ).catch(() => {})
-      } else {
-        matched = true
-        matchId = existing.id
-      }
-    } else {
-      // Send connection request notification to target
-      notifyUser(target.user.id, 'connection_request',
-        '🔔 Pedido de ligação',
-        `${viewer.profile.displayName || 'Alguém'} quer ligar-se contigo. Vê o perfil e decide.`,
-        { fromProfileId: viewer.profile.id, tab: 'matches' }
-      ).catch(() => {})
+      case 'MATCH_PENDING_COUPLE_APPROVAL':
+        // MATCH_APPROVAL_REQUIRED's domain event handler (5.10) already
+        // notifies the required approvers - nothing extra needed here.
+        return res.json({ ok: true, matched: false, matchId: result.matchId, pendingCoupleApproval: true })
+
+      case 'MATCH_CREATED':
+      case 'ALREADY_MATCHED':
+        // MATCH_ACTIVATED's domain event handler (5.10) already notified
+        // both sides when the match was created/activated.
+        return res.json({ ok: true, matched: true, matchId: result.matchId })
+
+      default:
+        return res.json({ ok: true, matched: false, matchId: null })
     }
-
-    res.json({ ok: true, matched, matchId })
   } catch (err: any) {
     console.error('[LIKE]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
@@ -230,11 +137,8 @@ router.post('/:id/pass', requireAuth, async (req: AuthRequest, res: Response) =>
   try {
     const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
     if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-    await prisma.profileAction.upsert({
-      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
-      update: { action: 'PASS' },
-      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id, action: 'PASS' }
-    })
+    const { recordPass } = await import('../lib/matchService')
+    await recordPass(viewer.profile.id, req.params.id)
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
 })
@@ -244,11 +148,23 @@ router.post('/:id/block', requireAuth, async (req: AuthRequest, res: Response) =
   try {
     const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
     if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    // 11.5.6 — dedup: only fire BLOCK signal on genuine transition into
+    // BLOCK (matches LIKE/PASS pattern) — a repeat POST .../block (double
+    // click, client retry) must not inflate blockRate, which feeds
+    // directly into the guardrail comparison's recommendDisable decision.
+    const priorAction = await prisma.profileAction.findUnique({
+      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
+      select: { action: true }
+    })
     await prisma.profileAction.upsert({
       where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
       update: { action: 'BLOCK' },
       create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id, action: 'BLOCK' }
     })
+    if (priorAction?.action !== 'BLOCK') {
+      const { recordSignal } = await import('../lib/recommendationSignalService')
+      recordSignal(viewer.profile.id, req.params.id, 'BLOCK').catch(() => {})
+    }
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
 })
@@ -261,6 +177,12 @@ router.post('/:id/report', requireAuth, async (req: AuthRequest, res: Response) 
       data: { reporterUserId: req.userId!, reportedProfileId: req.params.id, reason: reason || 'other', details }
     })
     notifyAdmins('new_report', '⚠️ Nova denúncia', `Denúncia: ${reason}`, { reportId: report.id, tab: 'reports' }).catch(()=>{})
+
+    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
+    if (viewer?.profile) {
+      const { recordSignal } = await import('../lib/recommendationSignalService')
+      recordSignal(viewer.profile.id, req.params.id, 'REPORT').catch(() => {})
+    }
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
 })

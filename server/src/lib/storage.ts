@@ -66,6 +66,44 @@ export const uploadFile = async (
   }
 }
 
+// 3.1 — Private upload path used for anything privacy-sensitive (profile
+// photos, verification selfies). No public ACL is set; the object is only
+// reachable through a signed URL minted by mediaAccessService.ts, gated by
+// mediaAccessPolicy.ts. Returns the object KEY (not a URL) — callers should
+// store the key directly and never construct a public URL from it.
+export const uploadPrivateFile = async (
+  buffer: Buffer,
+  filename: string,
+  mimetype: string
+): Promise<{ key: string }> => {
+  if (!isConfigured) {
+    console.warn('[STORAGE] Not configured — private upload returns a placeholder key')
+    return { key: `dev-placeholder/${filename}` }
+  }
+
+  const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3')
+  const client = new S3Client({
+    region: 'auto',
+    endpoint: process.env.STORAGE_ENDPOINT,
+    credentials: {
+      accessKeyId: process.env.STORAGE_ACCESS_KEY!,
+      secretAccessKey: process.env.STORAGE_SECRET_KEY!
+    }
+  })
+
+  const key = `private/${Date.now()}-${filename}`
+
+  await client.send(new PutObjectCommand({
+    Bucket: process.env.STORAGE_BUCKET,
+    Key: key,
+    Body: buffer,
+    ContentType: mimetype
+    // no ACL — bucket/object stays private, access only via presigned GET
+  }))
+
+  return { key }
+}
+
 export const deleteFile = async (key: string): Promise<void> => {
   if (!isConfigured) return
   try {

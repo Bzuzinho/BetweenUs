@@ -26,6 +26,21 @@ import reportsRouter from '../src/routes/reports'
 import consentRouter from '../src/routes/consent'
 import betaRouter from '../src/routes/beta'
 import subscriptionsRouter from '../src/routes/subscriptions'
+import legalRouter from '../src/routes/legal'
+import verificationsRouter from '../src/routes/verifications'
+import contactsRouter from '../src/routes/contacts'
+import catalogRouter from '../src/routes/catalog'
+import groupsRouter from '../src/routes/groups'
+import privateInterestsRouter from '../src/routes/privateInterests'
+import agreementsRouter from '../src/routes/agreements'
+import travelRouter from '../src/routes/travel'
+import roomsRouter from '../src/routes/rooms'
+import privacyRouter from '../src/routes/privacy'
+import safetyRouter from '../src/routes/safety'
+import guideRouter from '../src/routes/guide'
+import eventsRouter from '../src/routes/events'
+import circlesRouter from '../src/routes/circles'
+import recommendationsRouter from '../src/routes/recommendations'
 
 app.use('/api/auth', authRouter)
 app.use('/api/profiles', profileRouter)
@@ -38,6 +53,21 @@ app.use('/api/reports', reportsRouter)
 app.use('/api/consent', consentRouter)
 app.use('/api/beta', betaRouter)
 app.use('/api/subscriptions', subscriptionsRouter)
+app.use('/api/legal', legalRouter)
+app.use('/api/verifications', verificationsRouter)
+app.use('/api/contacts', contactsRouter)
+app.use('/api/catalog', catalogRouter)
+app.use('/api/groups', groupsRouter)
+app.use('/api/private-interests', privateInterestsRouter)
+app.use('/api/agreements', agreementsRouter)
+app.use('/api/travel', travelRouter)
+app.use('/api/rooms', roomsRouter)
+app.use('/api/privacy', privacyRouter)
+app.use('/api/safety', safetyRouter)
+app.use('/api/guide', guideRouter)
+app.use('/api/events', eventsRouter)
+app.use('/api/circles', circlesRouter)
+app.use('/api/admin/recommendations', recommendationsRouter)
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   res.status(err.status || 500).json({ error: err.message })

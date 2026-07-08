@@ -1,8 +1,16 @@
 import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
-import { requireAdmin, logAdminAction } from '../middleware/admin'
+import { requireAdmin, logAdminAction, roleHasPermission } from '../middleware/admin'
 import { recalculateRiskScore, recalculateAllRiskScores } from '../lib/riskScore'
+import { evaluateAndActivateUser, canTransitionStatus } from '../lib/userActivationService'
+import { forUser as getEligibility } from '../lib/eligibilityService'
+import { mergePhotosForViewer, signMediaUrl } from '../lib/mediaAccessService'
+import { getKeyVersionStats, getActiveKeyVersion } from '../lib/contactHashService'
+import { runHardDeleteJob, findEligibleUsers } from '../lib/hardDeleteJob'
+import { signMediaUrl as signAvatarUrl } from '../lib/mediaAccessService'
+import { getReportEvidenceForModerator } from '../lib/reportEvidenceService'
+import { getLatestAssessment, computeAgreementStats, runModerationAssessment } from '../lib/moderationAssessmentService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -10,11 +18,52 @@ const router = Router()
 router.use(requireAuth)
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
+// 3.5 — rotation progress: how many BlockedContactHash rows are on each
+// HMAC key version. Migration after a rotation is "done" once only the
+// active version has rows left.
+router.get('/contacts/key-version-stats', requireAdmin('metrics'), async (req: AuthRequest, res: Response) => {
+  const stats = await getKeyVersionStats()
+  res.json({ activeVersion: getActiveKeyVersion(), stats })
+})
+
+// 3.6 — hard delete job, reachable from the admin UI as an alternative to
+// the CLI script (npm run hard-delete). SUPER_ADMIN only: this is
+// irreversible and the reachable-from-a-browser-button version of it
+// deserves a narrower blast radius than the rest of the 'users' bucket.
+router.get('/gdpr/hard-delete/preview', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  if ((req as any).adminRole !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Apenas SUPER_ADMIN.' })
+  const eligible = await findEligibleUsers()
+  const preview = await runHardDeleteJob(true)
+  res.json({ eligibleCount: eligible.length, preview })
+})
+
+router.post('/gdpr/hard-delete/run', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  if ((req as any).adminRole !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Apenas SUPER_ADMIN.' })
+  if (req.body.confirm !== 'HARD_DELETE') {
+    return res.status(400).json({ error: 'Confirmação obrigatória: envia { "confirm": "HARD_DELETE" } no corpo do pedido.' })
+  }
+  const results = await runHardDeleteJob(false)
+  const deleted = results.filter(r => !r.skipped)
+  await logAdminAction(req.userId!, 'HARD_DELETE_USERS', 'gdpr', `batch-${Date.now()}`, {
+    newData: { deletedCount: deleted.length, skippedCount: results.length - deleted.length, userIds: deleted.map(r => r.userId) },
+    ipAddress: req.ip
+  })
+  res.json({ ok: true, results })
+})
+
+// BETA.1 — real-metric dashboard excludes isTestAccount users by default
+// (spec: "métricas reais devem poder excluí-las"). includeTestData=true is
+// SUPER_ADMIN-only (same convention as recommendations.ts's wantsTestData)
+// — ADMIN/others always see the production-honest numbers, with no way to
+// silently blend seeded beta accounts into what looks like real traction.
 router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: Response) => {
   try {
     const today = new Date(); today.setHours(0,0,0,0)
     const week  = new Date(Date.now() - 7  * 24 * 60 * 60 * 1000)
     const month = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    const includeTestData = req.query.includeTestData === 'true' && (req as any).adminRole === 'SUPER_ADMIN'
+    const userFilter = includeTestData ? {} : { isTestAccount: false }
+    const viaUser = includeTestData ? {} : { user: { isTestAccount: false } }
 
     const [
       totalUsers, newToday, newWeek, newMonth,
@@ -24,30 +73,34 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
       totalMessages, pendingReports,
       premiumSubs, coupleSubs,
       suspendedUsers, bannedUsers,
-      pendingVerifications, highRiskUsers
+      pendingVerifications, highRiskUsers,
+      testAccountCount
     ] = await Promise.all([
-      prisma.user.count(),
-      prisma.user.count({ where: { createdAt: { gte: today } } }),
-      prisma.user.count({ where: { createdAt: { gte: week } } }),
-      prisma.user.count({ where: { createdAt: { gte: month } } }),
-      prisma.profile.count(),
-      prisma.profile.count({ where: { status: 'PENDING_REVIEW' } }),
-      prisma.profile.count({ where: { status: 'APPROVED' } }),
-      prisma.profilePhoto.count(),
-      prisma.profilePhoto.count({ where: { moderationStatus: 'PENDING' } }),
-      prisma.match.count(),
-      prisma.match.count({ where: { status: 'ACTIVE' } }),
-      prisma.message.count({ where: { deletedAt: null } }),
-      prisma.report.count({ where: { status: 'PENDING' } }),
-      prisma.subscription.count({ where: { plan: 'PREMIUM', status: 'ACTIVE' } }),
-      prisma.subscription.count({ where: { plan: 'COUPLE_PREMIUM', status: 'ACTIVE' } }),
-      prisma.user.count({ where: { status: 'SUSPENDED' } }),
-      prisma.user.count({ where: { status: 'BANNED' } }),
-      prisma.verification.count({ where: { status: 'PENDING' } }),
-      prisma.user.count({ where: { riskScore: { gte: 50 } } })
+      prisma.user.count({ where: userFilter }),
+      prisma.user.count({ where: { createdAt: { gte: today }, ...userFilter } }),
+      prisma.user.count({ where: { createdAt: { gte: week }, ...userFilter } }),
+      prisma.user.count({ where: { createdAt: { gte: month }, ...userFilter } }),
+      prisma.profile.count({ where: viaUser }),
+      prisma.profile.count({ where: { status: 'PENDING_REVIEW', ...viaUser } }),
+      prisma.profile.count({ where: { status: 'APPROVED', ...viaUser } }),
+      prisma.profilePhoto.count({ where: { profile: viaUser } }),
+      prisma.profilePhoto.count({ where: { moderationStatus: 'PENDING', profile: viaUser } }),
+      prisma.match.count({ where: includeTestData ? {} : { profileOne: viaUser, profileTwo: viaUser } }),
+      prisma.match.count({ where: { status: 'ACTIVE', ...(includeTestData ? {} : { profileOne: viaUser, profileTwo: viaUser }) } }),
+      prisma.message.count({ where: { deletedAt: null, ...(includeTestData ? {} : { sender: userFilter }) } }),
+      prisma.report.count({ where: { status: 'PENDING', ...(includeTestData ? {} : { reporter: userFilter }) } }),
+      prisma.subscription.count({ where: { plan: 'PREMIUM', status: 'ACTIVE', ...viaUser } }),
+      prisma.subscription.count({ where: { plan: 'COUPLE_PREMIUM', status: 'ACTIVE', ...viaUser } }),
+      prisma.user.count({ where: { status: 'SUSPENDED', ...userFilter } }),
+      prisma.user.count({ where: { status: 'BANNED', ...userFilter } }),
+      prisma.verification.count({ where: { status: 'PENDING', ...viaUser } }),
+      prisma.user.count({ where: { riskScore: { gte: 50 }, ...userFilter } }),
+      prisma.user.count({ where: { isTestAccount: true } }),
     ])
 
     res.json({
+      includeTestData,
+      testAccountCount,
       users: { total: totalUsers, newToday, newWeek, newMonth, suspended: suspendedUsers, banned: bannedUsers, highRisk: highRiskUsers },
       profiles: { total: totalProfiles, pending: pendingProfiles, approved: approvedProfiles },
       photos: { total: totalPhotos, pending: pendingPhotos },
@@ -63,10 +116,16 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
 })
 
 // ─── Users list ───────────────────────────────────────────────────────────────
+// BETA.1.32 — accountFilter: 'all' | 'real' | 'test' (default 'all' — this
+// list is an admin support/ops tool, not a real-metrics surface, so unlike
+// /dashboard there's no default exclusion here; the filter is opt-in so an
+// admin can deliberately narrow to one or the other).
 router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
-  const { limit = 20, offset = 0, status, search, sortByRisk } = req.query
+  const { limit = 20, offset = 0, status, search, sortByRisk, accountFilter } = req.query
   const where: any = {}
   if (status) where.status = status
+  if (accountFilter === 'test') where.isTestAccount = true
+  if (accountFilter === 'real') where.isTestAccount = false
   if (search) where.OR = [
     { email: { contains: search as string, mode: 'insensitive' } },
     { profile: { displayName: { contains: search as string, mode: 'insensitive' } } }
@@ -77,8 +136,9 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
       where, take: Number(limit), skip: Number(offset),
       orderBy: sortByRisk === 'true' ? { riskScore: 'desc' } : { createdAt: 'desc' },
       select: {
-        id: true, email: true, status: true, adminRole: true,
+        id: true, email: true, status: true, adminRole: true, avatarPath: true,
         createdAt: true, lastSeenAt: true, riskScore: true,
+        isTestAccount: true, testScenarioKey: true,
         profile: { select: { id: true, displayName: true, type: true, city: true, status: true } },
         subscription: { select: { plan: true, status: true } },
         verification: { select: { status: true } },
@@ -87,7 +147,30 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
     }),
     prisma.user.count({ where })
   ])
-  res.json({ users, total })
+  // 3.1 follow-up: avatarPath is now a private storage key, not a public
+  // URL — sign it for the list view. (Was also never selected here before,
+  // so u.avatarPath in AdminPage.jsx's user list was always undefined —
+  // same class of dead-field bug as the discovery photos/score ones.)
+  interface AdminUserListRow {
+    id: string
+    email: string
+    status: string
+    adminRole: string | null
+    avatarPath: string | null
+    createdAt: Date
+    lastSeenAt: Date | null
+    riskScore: number | null
+    isTestAccount: boolean
+    testScenarioKey: string | null
+    profile: { id: string; displayName: string; type: string; city: string | null; status: string } | null
+    subscription: { plan: string; status: string } | null
+    verification: { status: string } | null
+    _count: { reportsMade: number; reportsReceived: number }
+  }
+  const usersWithAvatars = await Promise.all((users as AdminUserListRow[]).map(async (u: AdminUserListRow) => ({
+    ...u, avatarPath: await signAvatarUrl(u.avatarPath)
+  })))
+  res.json({ users: usersWithAvatars, total })
 })
 
 // ─── User detail (customer support view) ─────────────────────────────────────
@@ -129,10 +212,58 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
     targetUserId: req.params.id, ipAddress: req.ip, userAgent: req.headers['user-agent']
   })
 
+  // 6.10 — admin visibility into couple/group membership, ApprovalPolicy,
+  // and Agreement status. Deliberately the SAME aggregate-only summary
+  // member-facing routes get (getAgreementSummary) — per-member agreement
+  // answers are NOT included here by default; that's the separate, always-
+  // explicitly-logged GET /api/agreements/admin/:profileId/raw route.
+  let coupleContext: any = null
+  if (user.profile && user.profile.type !== 'INDIVIDUAL') {
+    const { getActiveMembers } = await import('../lib/profileMembershipService')
+    const { getAgreementSummary } = await import('../lib/profileAgreementService')
+    const [activeMembers, memberRows, agreementSummary] = await Promise.all([
+      getActiveMembers(user.profile.id),
+      (prisma as any).profileMember.findMany({
+        where: { profileId: user.profile.id },
+        include: { user: { select: { id: true, email: true, status: true } } },
+        orderBy: { createdAt: 'asc' }
+      }),
+      getAgreementSummary(user.profile.id).catch(() => null),
+    ])
+    coupleContext = {
+      approvalPolicy: (user.profile as any).approvalPolicy,
+      activeMemberCount: activeMembers.length,
+      members: memberRows.map((m: any) => ({
+        id: m.id, userId: m.userId, email: m.user?.email || m.invitedEmail,
+        isCreator: m.isCreator, status: m.status, joinedAt: m.respondedAt, invitedAt: m.createdAt,
+      })),
+      agreement: agreementSummary ? {
+        status: agreementSummary.status, version: agreementSummary.version,
+        conflictCount: agreementSummary.conflictCount, missingCount: agreementSummary.missingCount,
+        lockedAt: agreementSummary.lockedAt,
+      } : null,
+    }
+  }
+
   // Strip sensitive fields before sending
   const { passwordHash, ...safeUser } = user as any
+  // 3.1: admin support view is a moderation context — always resolve CLEAN,
+  // signed fresh, regardless of the photo's own visibility tier.
+  if (safeUser.profile?.photos?.length) {
+    safeUser.profile = {
+      ...safeUser.profile,
+      photos: await mergePhotosForViewer(safeUser.profile.photos, {
+        ownerUserId: req.params.id,
+        viewerUserId: null,
+        viewerProfileId: null,
+        isAdminModeration: true
+      })
+    }
+  }
+  safeUser.avatarPath = await signAvatarUrl(safeUser.avatarPath)
   res.json({
     ...safeUser,
+    coupleContext,
     referral: {
       invitedBy: referredAs?.referralCode?.user || null,
       invitedByAt: referredAs?.createdAt || null,
@@ -147,30 +278,49 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
 // ─── Edit user (customer support) — with full audit trail ────────────────────
 router.put('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
   try {
-    const { email, status, adminRole, reason, internalNote } = req.body
+    const { email, status, adminRole, accountName, nif, reason, internalNote } = req.body
     if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.' })
 
+    const role = (req as any).adminRole
     const prev = await prisma.user.findUnique({
       where: { id: req.params.id },
-      select: { email: true, status: true, adminRole: true }
+      select: { email: true, status: true, adminRole: true, accountName: true, nif: true }
     })
     if (!prev) return res.status(404).json({ error: 'Utilizador não encontrado.' })
 
     // Only SUPER_ADMIN can change adminRole
-    if (adminRole !== undefined && (req as any).adminRole !== 'SUPER_ADMIN') {
+    if (adminRole !== undefined && role !== 'SUPER_ADMIN') {
       return res.status(403).json({ error: 'Apenas SUPER_ADMIN pode alterar roles.' })
     }
 
+    // Sprint 2.5.4: NIF is financially/legally sensitive — restrict editing to
+    // roles that would plausibly need it. Full field-level PermissionService
+    // (2.5.11) is a larger follow-up; this is a minimal, explicit gate.
+    if (nif !== undefined && !['SUPER_ADMIN', 'ADMIN', 'FINANCE'].includes(role)) {
+      return res.status(403).json({ error: 'Sem permissão para editar o NIF.' })
+    }
+
+    // Sprint 2.5.5: this endpoint used to accept `status` with zero validation,
+    // bypassing the transition matrix entirely. No current caller sends it
+    // through here (the dedicated PUT /users/:id/status does), but close the
+    // gap defensively.
+    if (status !== undefined && !canTransitionStatus(prev.status, status)) {
+      return res.status(400).json({ error: `Transição ${prev.status} → ${status} não permitida aqui — usa a acção de estado dedicada.` })
+    }
+
     const updateData: any = {}
-    if (email !== undefined)     updateData.email = email
-    if (status !== undefined)    updateData.status = status
-    if (adminRole !== undefined) updateData.adminRole = adminRole
+    if (email !== undefined)       updateData.email = email
+    if (status !== undefined)      updateData.status = status
+    if (adminRole !== undefined)   updateData.adminRole = adminRole
+    if (accountName !== undefined) updateData.accountName = accountName
+    if (nif !== undefined)         updateData.nif = nif
 
     const updated = await prisma.user.update({
       where: { id: req.params.id },
       data: updateData,
-      select: { id: true, email: true, status: true, adminRole: true }
+      select: { id: true, email: true, status: true, adminRole: true, accountName: true, nif: true, avatarPath: true, dateOfBirth: true }
     })
+    ;(updated as any).avatarPath = await signAvatarUrl(updated.avatarPath)
 
     await logAdminAction(req.userId!, 'EDIT_USER', 'user', req.params.id, {
       targetUserId: req.params.id,
@@ -298,20 +448,63 @@ router.get('/users/:id/history', requireAdmin('users'), async (req: AuthRequest,
   res.json({ history })
 })
 
+// ─── Eligibility report (Sprint 2.5 audit) ────────────────────────────────────
+// Read-only diagnostic — lets an admin see *why* a user isn't appearing in
+// discovery etc, instead of having to reconstruct it by hand from status +
+// profile + privacy settings.
+router.get('/users/:id/eligibility', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  const eligibility = await getEligibility(req.params.id)
+  res.json({ eligibility })
+})
+
 // ─── User status ──────────────────────────────────────────────────────────────
+// Sprint 2.5.5: manual transitions now go through an explicit state machine.
+// PENDING_VERIFICATION → ACTIVE is intentionally not allowed here — "Reactivar"
+// is for SUSPENDED → ACTIVE. Activating a still-pending user must go through
+// POST /users/:id/evaluate-activation, which actually checks requirements.
 router.put('/users/:id/status', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
   const { status, reason } = req.body
   if (!['ACTIVE', 'SUSPENDED', 'BANNED'].includes(status)) return res.status(400).json({ error: 'Status inválido.' })
   if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.' })
 
   const prev = await prisma.user.findUnique({ where: { id: req.params.id }, select: { status: true } })
+  if (!prev) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+  if (!canTransitionStatus(prev.status, status)) {
+    const hint = prev.status === 'PENDING_VERIFICATION' && status === 'ACTIVE'
+      ? ' Usa "Avaliar activação" — este utilizador ainda não cumpre os requisitos ou precisa de passar pelo fluxo automático.'
+      : ''
+    return res.status(400).json({ error: `Transição ${prev.status} → ${status} não permitida.${hint}` })
+  }
+
   const user = await prisma.user.update({ where: { id: req.params.id }, data: { status } })
 
   await logAdminAction(req.userId!, `${status}_USER`, 'user', req.params.id, {
     targetUserId: req.params.id, reason,
-    previousData: { status: prev?.status }, newData: { status }, ipAddress: req.ip
+    previousData: { status: prev.status }, newData: { status }, ipAddress: req.ip
   })
   res.json({ ok: true, user })
+})
+
+// ─── Evaluate / trigger activation for a PENDING_VERIFICATION user ───────────
+// Read-only-safe: only moves status if requirements are met (email verified,
+// OR identity verification approved, OR profile approved). Lets support/admin
+// manually re-trigger evaluation instead of force-activating with "Reactivar".
+router.post('/users/:id/evaluate-activation', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
+  const prev = await prisma.user.findUnique({ where: { id: req.params.id }, select: { status: true } })
+  if (!prev) return res.status(404).json({ error: 'Utilizador não encontrado.' })
+
+  const result = await evaluateAndActivateUser(req.params.id)
+
+  if (result.activated) {
+    await logAdminAction(req.userId!, 'ACTIVE_USER', 'user', req.params.id, {
+      targetUserId: req.params.id,
+      reason: 'Requisitos de activação cumpridos: ' + result.evaluation.satisfiedBy.join(', '),
+      previousData: { status: prev.status }, newData: { status: 'ACTIVE' }, ipAddress: req.ip
+    })
+  }
+
+  res.json({ ok: true, ...result })
 })
 
 // ─── Profiles ─────────────────────────────────────────────────────────────────
@@ -332,7 +525,23 @@ router.get('/profiles', requireAdmin('profiles'), async (req: AuthRequest, res: 
     }),
     prisma.profile.count({ where })
   ])
-  res.json({ profiles, total })
+  // 3.1: thumbnail per row — admin list view, moderation context (CLEAN)
+  interface AdminProfileListRow {
+    id: string
+    userId: string
+    photos: any[]
+    [key: string]: any
+  }
+  const profilesWithPhotos = await Promise.all((profiles as AdminProfileListRow[]).map(async (p: AdminProfileListRow) => ({
+    ...p,
+    photos: await mergePhotosForViewer(p.photos, {
+      ownerUserId: p.userId,
+      viewerUserId: null,
+      viewerProfileId: null,
+      isAdminModeration: true
+    })
+  })))
+  res.json({ profiles: profilesWithPhotos, total })
 })
 
 router.put('/profiles/:id/status', requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
@@ -346,16 +555,23 @@ router.put('/profiles/:id/status', requireAdmin('profiles'), async (req: AuthReq
   })
 
   // Sprint 4: approving a profile shouldn't require a second manual step in
-  // Users to reactivate the account — do it here if it's still pending.
+  // Users to reactivate the account. Sprint 2.5.5: routed through the central
+  // activation rule instead of an unconditional updateMany, so it's consistent
+  // with email confirmation / identity verification approval.
+  let activation = null
   if (status === 'APPROVED') {
-    await prisma.user.updateMany({
-      where: { id: profile.userId, status: 'PENDING_VERIFICATION' },
-      data: { status: 'ACTIVE' }
-    })
+    activation = await evaluateAndActivateUser(profile.userId)
+    if (activation.activated) {
+      await logAdminAction(req.userId!, 'ACTIVE_USER', 'user', profile.userId, {
+        targetUserId: profile.userId,
+        reason: 'Activação automática após aprovação de perfil.',
+        newData: { status: 'ACTIVE' }, ipAddress: req.ip
+      })
+    }
   }
 
   await logAdminAction(req.userId!, `${status}_PROFILE`, 'profile', req.params.id, { reason, ipAddress: req.ip })
-  res.json({ ok: true, profile })
+  res.json({ ok: true, profile, activation })
 })
 
 // ─── Photos ───────────────────────────────────────────────────────────────────
@@ -368,7 +584,18 @@ router.get('/photos', requireAdmin('photos'), async (req: AuthRequest, res: Resp
     include: { profile: { select: { displayName: true, userId: true, user: { select: { email: true } } } } }
   })
   const total = await prisma.profilePhoto.count({ where: { moderationStatus: status as any } })
-  res.json({ photos, total })
+  // 3.1: moderators must see the actual (unblurred) photo regardless of its
+  // moderationStatus/visibilityLevel — that's the whole point of review.
+  interface AdminPhotoListRow {
+    storagePath: string
+    [key: string]: any
+  }
+  const resolvedPhotos = await Promise.all((photos as AdminPhotoListRow[]).map(async (p: AdminPhotoListRow) => ({
+    ...p,
+    storagePath: (await signMediaUrl(p.storagePath)) || p.storagePath,
+    blurredPath: undefined
+  })))
+  res.json({ photos: resolvedPhotos, total })
 })
 
 router.put('/photos/:id', requireAdmin('photos'), async (req: AuthRequest, res: Response) => {
@@ -385,7 +612,12 @@ router.put('/photos/:id', requireAdmin('photos'), async (req: AuthRequest, res: 
   res.json({ ok: true, photo })
 })
 
-// ─── Reports ──────────────────────────────────────────────────────────────────
+// ─── Reports / Moderation Dashboard (9.12) ─────────────────────────────────────
+// 9.12 — queue, already sorted by priority desc / age asc (oldest of the
+// highest-priority reports first). Deliberately does NOT include evidence
+// here (9.2: "não incluir evidence em listagens comuns de admin") — only
+// a lightweight AI badge (hasAssessment + severity), never the full
+// ModerationAssessment.result blob.
 router.get('/reports', requireAdmin('reports'), async (req: AuthRequest, res: Response) => {
   const { limit = 20, offset = 0, status = 'PENDING' } = req.query
   const reports = await prisma.report.findMany({
@@ -398,7 +630,55 @@ router.get('/reports', requireAdmin('reports'), async (req: AuthRequest, res: Re
     }
   })
   const total = await prisma.report.count({ where: { status: status as any } })
-  res.json({ reports, total })
+
+  const assessments = await (prisma as any).moderationAssessment.findMany({
+    where: { reportId: { in: reports.map((r: any) => r.id) } },
+    orderBy: { createdAt: 'desc' }
+  })
+  const latestByReport = new Map<string, any>()
+  for (const a of assessments) if (!latestByReport.has(a.reportId)) latestByReport.set(a.reportId, a)
+
+  const withBadge = reports.map((r: any) => {
+    const a = latestByReport.get(r.id)
+    return { ...r, aiAssessment: a ? { severity: a.confidence, recommendedPriority: a.result?.recommendedPriority ?? null } : null }
+  })
+
+  res.json({ reports: withBadge, total })
+})
+
+// 9.2/9.12 — detail view: report + evidence (only if the caller has
+// moderation.evidence.view — SUPPORT can open this route via 'reports'
+// but gets evidence: null) + previous reports against the same target +
+// minimal account/profile context + latest AI summary. Never the full
+// account (9.12: "não mostrar tudo da conta sem permission").
+router.get('/reports/:id', requireAdmin('reports'), async (req: AuthRequest, res: Response) => {
+  const report = await prisma.report.findUnique({
+    where: { id: req.params.id },
+    include: {
+      reporter: { select: { id: true, email: true } },
+      reportedUser: { select: { id: true, email: true, status: true, riskScore: true, createdAt: true, profile: { select: { displayName: true, type: true, city: true } } } }
+    }
+  })
+  if (!report) return res.status(404).json({ error: 'Report não encontrado.' })
+
+  const canViewEvidence = roleHasPermission((req as any).adminRole || null, 'moderation.evidence.view')
+  const evidence = canViewEvidence ? await getReportEvidenceForModerator(report.id, req.userId!) : null
+
+  const previousReports = report.reportedUserId
+    ? await prisma.report.findMany({
+        where: { reportedUserId: report.reportedUserId, id: { not: report.id } },
+        select: { id: true, reason: true, status: true, priority: true, createdAt: true },
+        orderBy: { createdAt: 'desc' }, take: 10
+      })
+    : []
+
+  const aiAssessment = await getLatestAssessment(report.id)
+
+  res.json({
+    report, evidence, previousReports,
+    aiAssessment: aiAssessment ? { ...aiAssessment, result: aiAssessment.result } : null,
+    evidenceRestricted: !canViewEvidence,
+  })
 })
 
 router.put('/reports/:id', requireAdmin('reports'), async (req: AuthRequest, res: Response) => {
@@ -412,6 +692,21 @@ router.put('/reports/:id', requireAdmin('reports'), async (req: AuthRequest, res
   res.json({ ok: true, report })
 })
 
+// 9.8 — manual re-run (e.g. after new evidence arrives, or the flag was
+// just turned on). No-ops cleanly if AI_MODERATION_ENABLED is off.
+router.post('/reports/:id/assess', requireAdmin('reports'), async (req: AuthRequest, res: Response) => {
+  const result = await runModerationAssessment(req.params.id)
+  if (!result.assessment) return res.status(200).json({ ok: true, assessment: null, reason: result.reason })
+  res.json({ ok: true, assessment: result.assessment })
+})
+
+// 9.11 — human-in-the-loop measurement: AI recommendation vs human
+// decision agreement rate, overrides, approximate false-positive count.
+router.get('/moderation/stats', requireAdmin('reports'), async (req: AuthRequest, res: Response) => {
+  const stats = await computeAgreementStats()
+  res.json({ stats, aiEnabled: process.env.AI_MODERATION_ENABLED === 'true' })
+})
+
 // ─── Verifications ────────────────────────────────────────────────────────────
 router.get('/verifications', requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
   const verifications = await prisma.verification.findMany({
@@ -422,11 +717,29 @@ router.get('/verifications', requireAdmin('profiles'), async (req: AuthRequest, 
 })
 
 router.put('/verifications/:userId', requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
-  const { status } = req.body
+  const { status, reason } = req.body
+  if (!['APPROVED', 'REJECTED'].includes(status)) return res.status(400).json({ error: 'Status inválido.' })
+  if (status === 'REJECTED' && !reason) return res.status(400).json({ error: 'Motivo obrigatório para rejeitar uma verificação.' })
+
+  const prev = await prisma.verification.findUnique({ where: { userId: req.params.userId }, select: { status: true } })
   await prisma.verification.update({ where: { userId: req.params.userId }, data: { status, reviewedAt: new Date() } })
-  if (status === 'APPROVED') await recalculateRiskScore(req.params.userId)
-  await logAdminAction(req.userId!, `${status}_VERIFICATION`, 'user', req.params.userId, { targetUserId: req.params.userId, ipAddress: req.ip })
-  res.json({ ok: true })
+
+  let activation = null
+  if (status === 'APPROVED') {
+    await prisma.user.update({ where: { id: req.params.userId }, data: { ageVerifiedAt: new Date() } })
+    await recalculateRiskScore(req.params.userId)
+    // Sprint 2.5.5: this used to only touch Verification/ageVerifiedAt and never
+    // reactivated a still-PENDING_VERIFICATION account — now routed through the
+    // same central rule as email confirmation / profile approval.
+    activation = await evaluateAndActivateUser(req.params.userId)
+  }
+
+  await logAdminAction(req.userId!, `${status}_VERIFICATION`, 'user', req.params.userId, {
+    targetUserId: req.params.userId, reason,
+    previousData: { status: prev?.status }, newData: { status },
+    ipAddress: req.ip
+  })
+  res.json({ ok: true, activation })
 })
 
 // ─── Conversations ────────────────────────────────────────────────────────────
@@ -935,7 +1248,7 @@ async function notifyAdmins(title: string, body: string, excludeUserId?: string)
     where: { adminRole: { in: ['SUPER_ADMIN', 'ADMIN'] as any[] }, NOT: excludeUserId ? { id: excludeUserId } : undefined },
     select: { id: true }
   })
-  const notifs = admins.map(a => ({
+  const notifs = admins.map((a: { id: string }) => ({
     userId: a.id, type: 'service_event', title, body,
     data: JSON.stringify({ tab: 'audit' })
   }))

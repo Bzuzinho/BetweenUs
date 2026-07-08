@@ -1,14 +1,16 @@
 import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { resolveMyProfileId } from '../lib/profileMembershipService'
 
 const router = Router()
 
-// Helper: verify user belongs to match
-const getUserProfileId = async (userId: string): Promise<string | null> => {
-  const profile = await prisma.profile.findUnique({ where: { userId }, select: { id: true } })
-  return profile?.id || null
-}
+// 6.6 — was Profile.userId-only (broke for a couple/group's non-creator
+// members, the same bug class fixed across photos.ts/travel.ts/agreements.ts
+// this sprint). Matters here specifically because it silently hid ACTIVE
+// matches — including newly-unlocked Private Rooms — from a couple's
+// second partner.
+const getUserProfileId = resolveMyProfileId
 
 const verifyMatchMembership = async (matchId: string, profileId: string) => {
   const match = await prisma.match.findFirst({
@@ -52,7 +54,16 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       orderBy: { matchedAt: 'desc' }
     })
 
-    const formatted = matches.map(m => {
+    interface MatchListRow {
+      id: string
+      matchedAt: Date
+      profileOneId: string
+      profileTwoId: string
+      profileOne: { id: string; displayName: string; city: string | null; type: string; photos: any[] }
+      profileTwo: { id: string; displayName: string; city: string | null; type: string; photos: any[] }
+      conversation: { id: string; messages: { body: string; createdAt: Date; readAt: Date | null; senderUserId: string }[] } | null
+    }
+    const formatted = (matches as MatchListRow[]).map((m: MatchListRow) => {
       const isOne = m.profileOneId === profileId
       const other = isOne ? m.profileTwo : m.profileOne
       const lastMsg = m.conversation?.messages[0]
@@ -134,6 +145,14 @@ router.post('/:id/messages', requireAuth, async (req: AuthRequest, res: Response
         messageType: 'TEXT'
       }
     })
+
+    // 11.1 — both check their own condition and no-op if already fired/not
+    // yet met; safe to call on every message without extra state here.
+    const conversationId = match.conversation.id
+    import('../lib/recommendationSignalService').then(({ evaluateConversationStarted, evaluateSustainedConversation }) => {
+      evaluateConversationStarted(conversationId).catch(() => {})
+      evaluateSustainedConversation(conversationId).catch(() => {})
+    }).catch(() => {})
 
     res.status(201).json(message)
   } catch (err: any) {

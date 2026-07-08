@@ -3,8 +3,11 @@ import multer from 'multer'
 import { createHash, randomBytes } from 'crypto'
 import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
-import { uploadFile, deleteFile } from '../lib/storage'
+import { uploadPrivateFile, deleteFile } from '../lib/storage'
+import { resolveVerificationSelfieUrl, isStorageKey } from '../lib/mediaAccessService'
 import { requireAuth, AuthRequest } from '../middleware/auth'
+import { requireAdmin, logAdminAction } from '../middleware/admin'
+import { evaluateAndActivateUser } from '../lib/userActivationService'
 import { notifyAdmins } from '../lib/notify'
 
 const router = Router()
@@ -34,23 +37,31 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   res.json(v || { status: 'NONE' })
 })
 
-// POST /api/verifications/submit — selfie upload
+const VERIFICATION_TYPES = ['SELFIE', 'ID_DOCUMENT', 'VIDEO'] as const
+
+// POST /api/verifications/submit — selfie (or, going forward, other
+// verification-type) upload. 3.4: type is now a validated enum instead of
+// always being the hardcoded string "selfie".
 router.post('/submit', requireAuth, upload.single('selfie'), async (req: AuthRequest, res: Response) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Selfie obrigatória.' })
+    const requestedType = VERIFICATION_TYPES.includes(req.body.type) ? req.body.type : 'SELFIE'
     const existing = await prisma.verification.findUnique({ where: { userId: req.userId! } })
     if (existing?.status === 'APPROVED') return res.status(409).json({ error: 'Perfil já verificado.' })
     if (existing?.status === 'PENDING')  return res.status(409).json({ error: 'Verificação já em curso.' })
-    let selfieUrl: string | undefined
+    // 3.1: verification selfies are the most sensitive asset in the app —
+    // always private, never a public ACL. Only reachable via the admin
+    // signed-url endpoint below, and deleted immediately after review.
+    let selfieKey: string | undefined
     if (isProd && process.env.STORAGE_ENDPOINT) {
       const filename = `verify-${req.userId}-${Date.now()}.jpg`
-      const result = await uploadFile(req.file.buffer, `verifications/${filename}`, req.file.mimetype)
-      selfieUrl = result.url
+      const result = await uploadPrivateFile(req.file.buffer, `verifications/${filename}`, req.file.mimetype)
+      selfieKey = result.key
     }
     await prisma.verification.upsert({
       where: { userId: req.userId! },
-      update: { status: 'PENDING', selfieStoragePath: selfieUrl || null, reviewedAt: null, expiresAt: new Date(Date.now() + 30*24*60*60*1000) },
-      create: { userId: req.userId!, type: 'selfie', status: isProd ? 'PENDING' : 'APPROVED', selfieStoragePath: selfieUrl || null, expiresAt: new Date(Date.now() + 30*24*60*60*1000) }
+      update: { type: requestedType, status: 'PENDING', selfieStoragePath: selfieKey || null, reviewedAt: null, expiresAt: new Date(Date.now() + 30*24*60*60*1000) },
+      create: { userId: req.userId!, type: requestedType, status: isProd ? 'PENDING' : 'APPROVED', selfieStoragePath: selfieKey || null, expiresAt: new Date(Date.now() + 30*24*60*60*1000) }
     })
     if (!isProd) {
       await prisma.user.update({ where: { id: req.userId! }, data: { ageVerifiedAt: new Date() } })
@@ -130,33 +141,75 @@ router.post('/email/confirm', async (req: Request, res: Response) => {
       if (!stored || stored !== hash) return res.status(400).json({ error: 'Token inválido ou expirado.' })
       await redis.del(`email_verify:${userId}`)
     }
-    const user = await prisma.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date(), status: 'ACTIVE' } })
+    // Sprint 2.5.5: this used to force status='ACTIVE' unconditionally — a stale
+    // (but still valid/unused) confirmation token clicked after a BANNED/SUSPENDED
+    // action would silently reactivate the account. Now only emailVerifiedAt is
+    // stamped unconditionally; the status change goes through the central
+    // activation rule, which no-ops unless the user is still PENDING_VERIFICATION.
+    const user = await prisma.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date() } })
+    const activation = await evaluateAndActivateUser(userId)
     import('../lib/email').then(({ sendWelcomeEmail }) => {
       sendWelcomeEmail(user.email).catch(e => console.error('[EMAIL WELCOME]', e.message))
     })
-    res.json({ ok: true, message: 'Email verificado! A tua conta está activa.' })
+    res.json({
+      ok: true,
+      message: activation.activated ? 'Email verificado! A tua conta está activa.' : 'Email verificado.',
+      activation
+    })
   } catch { res.status(500).json({ error: 'Erro interno.' }) }
 })
 
 // PUT /api/verifications/admin/:userId — admin approve/reject
-router.put('/admin/:userId', async (req: Request, res: Response) => {
+// Sprint 2.5.4: was completely unauthenticated (no requireAuth/requireAdmin) —
+// anyone could approve/reject any user's identity verification. Locked down.
+// Note: this duplicates part of PUT /api/admin/verifications/:userId (routes/admin.ts).
+// Kept for now because it's the only path that sets ageVerifiedAt + cleans up the
+// selfie file; full consolidation into UserActivationService is tracked separately.
+router.put('/admin/:userId', requireAuth, requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
   try {
     const { status } = req.body
     if (!['APPROVED','REJECTED'].includes(status)) return res.status(400).json({ error: 'Status inválido.' })
+    const prev = await prisma.verification.findUnique({ where: { userId: req.params.userId }, select: { status: true } })
     const verification = await prisma.verification.update({
       where: { userId: req.params.userId },
       data: { status, reviewedAt: new Date() }
     })
+    let activation = null
     if (status === 'APPROVED') {
       await prisma.user.update({ where: { id: req.params.userId }, data: { ageVerifiedAt: new Date() } })
       if (verification.selfieStoragePath) {
-        const key = new URL(verification.selfieStoragePath).pathname.replace(/^\//, '')
+        // 3.1: handle both a raw R2 key (new uploads) and a legacy full URL
+        // (selfies uploaded before this sprint) the same way delete does in photos.ts
+        const path = verification.selfieStoragePath
+        const key = isStorageKey(path) ? path : new URL(path).pathname.replace(/^\//, '')
         await deleteFile(key).catch(e => console.error('[SELFIE DELETE]', e.message))
         await prisma.verification.update({ where: { userId: req.params.userId }, data: { selfieStoragePath: null } })
       }
+      activation = await evaluateAndActivateUser(req.params.userId)
     }
-    res.json({ ok: true, status })
+    await logAdminAction(req.userId!, `${status}_VERIFICATION`, 'user', req.params.userId, {
+      targetUserId: req.params.userId,
+      previousData: { status: prev?.status },
+      newData: { status },
+      ipAddress: req.ip
+    })
+    res.json({ ok: true, status, activation })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
+})
+
+// GET /api/verifications/admin/:userId/selfie-url — signed, short-TTL URL for
+// the pending selfie. Replaces exposing selfieStoragePath directly to the
+// admin client (which no longer resolves to anything publicly reachable).
+router.get('/admin/:userId/selfie-url', requireAuth, requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
+  try {
+    const verification = await prisma.verification.findUnique({ where: { userId: req.params.userId } })
+    if (!verification || !verification.selfieStoragePath) return res.status(404).json({ error: 'Sem selfie disponível.' })
+    const url = await resolveVerificationSelfieUrl(verification.selfieStoragePath, { isOwner: false, isAdminModeration: true })
+    if (!url) return res.status(404).json({ error: 'Sem selfie disponível.' })
+    res.json({ url, expiresIn: 120 })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
 })
 
 export default router

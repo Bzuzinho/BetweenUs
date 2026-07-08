@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { createLikeOrMatch } from '../lib/matchService'
+import { removeMember, resolveMyProfileId } from '../lib/profileMembershipService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -131,6 +132,67 @@ router.post('/like/:targetProfileId', requireAuth, async (req: AuthRequest, res:
   }
 })
 
+// GET /api/couples/matches/pending — 6.6: matches this profile is a
+// required approver for, still PENDING_COUPLE_APPROVAL. This is the data
+// behind "Interesse enviado → Parceiro A confirmou → Parceiro B confirmou"
+// - nothing in the client previously read this at all (confirmed in the
+// Sprint 6 audit: GET /api/matches only ever returns status ACTIVE, so a
+// pending double-consent match was invisible until BOTH partners somehow
+// knew to call the approve endpoint blind).
+router.get('/matches/pending', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const myProfileId = await resolveMyProfileId(req.userId!)
+    if (!myProfileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
+    const matches = await prisma.match.findMany({
+      where: {
+        status: 'PENDING_COUPLE_APPROVAL',
+        OR: [{ profileOneId: myProfileId }, { profileTwoId: myProfileId }]
+      },
+      include: {
+        profileOne: { select: { id: true, displayName: true, type: true,
+          photos: { where: { moderationStatus: 'APPROVED', isPrimary: true }, take: 1 } } },
+        profileTwo: { select: { id: true, displayName: true, type: true,
+          photos: { where: { moderationStatus: 'APPROVED', isPrimary: true }, take: 1 } } },
+      },
+      orderBy: { createdAt: 'desc' }
+    })
+
+    const { getRequiredApproverUserIds } = await import('../lib/matchService')
+    const { getActiveMembers } = await import('../lib/profileMembershipService')
+
+    const enriched = await Promise.all(matches.map(async (match: any) => {
+      const otherProfile = match.profileOneId === myProfileId ? match.profileTwo : match.profileOne
+      const myRequired = await getRequiredApproverUserIds(myProfileId)
+      const otherRequired = await getRequiredApproverUserIds(
+        match.profileOneId === myProfileId ? match.profileTwoId : match.profileOneId
+      )
+      const approvals = await prisma.coupleMatchApproval.findMany({
+        where: { matchId: match.id, approvedAt: { not: null } }
+      })
+      const approvedUserIds = new Set<string>(approvals.map((a: any) => a.userId))
+      const myMembers = await getActiveMembers(myProfileId)
+
+      return {
+        matchId: match.id,
+        profile: otherProfile,
+        // 6.6 flow steps — only ever reveals MY OWN side's individual
+        // approval progress (that's not private from me, it's my own
+        // partner). The other side is deliberately a single aggregate
+        // boolean, never a per-member breakdown.
+        myApprovals: myMembers.map(m => ({ userId: m.userId, isCreator: m.isCreator, approved: approvedUserIds.has(m.userId) })),
+        mySideConfirmed: myRequired.every(uid => approvedUserIds.has(uid)),
+        otherSideConfirmed: otherRequired.every(uid => approvedUserIds.has(uid)),
+      }
+    }))
+
+    res.json({ pending: enriched })
+  } catch (err: any) {
+    console.error('[COUPLE PENDING MATCHES]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 router.post('/matches/:matchId/approve', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const match = await prisma.match.findUnique({ where: { id: req.params.matchId } })
@@ -157,22 +219,72 @@ router.post('/matches/:matchId/approve', requireAuth, async (req: AuthRequest, r
     const approvals = await prisma.coupleMatchApproval.findMany({
       where: { matchId: match.id, approvedAt: { not: null } }
     })
-    const approvedUserIds = new Set(approvals.map(a => a.userId))
-    const allApproved = requiredApprovers.every(uid => approvedUserIds.has(uid))
+    const approvedUserIds = new Set<string>(approvals.map((a: any) => a.userId))
 
+    // 6.5 — ApprovalPolicy V2: each side's requirement is checked on its
+    // OWN terms (isApprovalSatisfied), not by flattening both sides into
+    // one merged list and requiring every name in it. That flattening
+    // happened to be equivalent under the old implicit ALL-only behavior,
+    // but breaks the moment either side uses MAJORITY/DESIGNATED — a
+    // 3-member group with MAJORITY only needs 2 of its own 3 approving,
+    // regardless of how many people are on the other side.
+    const { isApprovalSatisfied } = await import('../lib/approvalPolicyService')
+    const [oneSatisfied, twoSatisfied] = await Promise.all([
+      isApprovalSatisfied(match.profileOneId, approvedUserIds),
+      isApprovalSatisfied(match.profileTwoId, approvedUserIds),
+    ])
+    const allApproved = oneSatisfied && twoSatisfied
+
+    // 5.9 — CoupleMatchApproval bookkeeping (above) stays here, it's a
+    // separate model from Match.status. But the actual status flip now
+    // goes through MatchStateMachine.transition() instead of a raw
+    // prisma.match.update - ACTIVATE's MATCH_ACTIVATED domain event (5.10)
+    // sends the "match ativo" notification to every active member of both
+    // profiles, so the manual notifyUser loop that used to live here is
+    // no longer needed.
     if (allApproved) {
-      await prisma.match.update({ where: { id: match.id }, data: { status: 'ACTIVE', matchedAt: new Date() } })
-      const { notifyUser } = await import('../lib/notify')
-      requiredApprovers
-        .filter(uid => uid !== req.userId)
-        .forEach(uid => notifyUser(uid, 'match', '💫 Match ativo!',
-          'Todos aprovaram. Já podem conversar.', { matchId: match.id, tab: 'matches' }).catch(() => {}))
+      const { transition } = await import('../lib/matchService')
+      const result = await transition(match.id, 'ACTIVATE')
+      if (!result.ok) return res.status(409).json({ error: result.error })
       return res.json({ ok: true, active: true, message: 'Todos aprovaram! Match ativo.' })
     }
 
     res.json({ ok: true, active: false, message: 'Aprovação registada. A aguardar restantes membros.' })
   } catch (err: any) {
     console.error('[COUPLE APPROVE]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// POST /api/couples/matches/:matchId/reject — 6.5's reject flow. Any
+// required approver on either side can reject; the match goes straight to
+// ENDED via MATCH_REJECTED (never reveals WHICH member rejected — the
+// domain event notifies both sides identically, see domainEvents.ts).
+// Deliberately does NOT record which specific user rejected in any
+// user-facing response — CoupleMatchApproval rows for this match are left
+// as-is (whatever partial approvals existed become moot once ENDED), and
+// no rejectedAt bookkeeping is exposed back to the other side.
+router.post('/matches/:matchId/reject', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const match = await prisma.match.findUnique({ where: { id: req.params.matchId } })
+    if (!match) return res.status(404).json({ error: 'Match não encontrado.' })
+    if (match.status !== 'PENDING_COUPLE_APPROVAL') {
+      return res.status(400).json({ error: 'Este match já não está à espera de aprovação.' })
+    }
+
+    const { getRequiredApproverUserIds, transition } = await import('../lib/matchService')
+    const requiredOne = await getRequiredApproverUserIds(match.profileOneId)
+    const requiredTwo = await getRequiredApproverUserIds(match.profileTwoId)
+    const requiredApprovers = [...new Set([...requiredOne, ...requiredTwo])]
+    if (!requiredApprovers.includes(req.userId!)) {
+      return res.status(403).json({ error: 'Não pertences a este match.' })
+    }
+
+    const result = await transition(match.id, 'REJECT')
+    if (!result.ok) return res.status(409).json({ error: result.error })
+    res.json({ ok: true, message: 'Match rejeitado.' })
+  } catch (err: any) {
+    console.error('[COUPLE REJECT]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
   }
 })
@@ -201,6 +313,16 @@ router.delete('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     if (!profile?.coupleProfile) return res.status(404).json({ error: 'Sem perfil de casal.' })
     await prisma.coupleProfile.update({ where: { id: profile.coupleProfile.id }, data: { coupleStatus: 'SEPARATED' } })
     await prisma.profile.update({ where: { id: profile.id }, data: { type: 'INDIVIDUAL' } })
+
+    // 4.1 fix: this used to only flip CoupleProfile.coupleStatus, leaving
+    // ProfileMember rows ACCEPTED — the two models disagreed about who
+    // belonged to the profile after a separation. Remove both partners'
+    // membership; the creator can re-add themselves if they set up a new
+    // couple later (POST /api/couples writes a fresh ProfileMember anyway).
+    const { partnerOneUserId, partnerTwoUserId } = profile.coupleProfile
+    await removeMember(profile.id, partnerOneUserId)
+    if (partnerTwoUserId) await removeMember(profile.id, partnerTwoUserId)
+
     res.json({ ok: true })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })

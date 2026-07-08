@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express'
 import prisma from '../lib/prisma'
+import { captureError } from '../lib/sentry'
 
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
@@ -32,7 +33,7 @@ router.post('/stripe', async (req: Request, res: Response) => {
     try {
       event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret)
     } catch (err: any) {
-      console.error('[WEBHOOK] Signature verification failed:', err.message)
+      captureError(err, { job: 'stripeWebhook', stage: 'signature_verification' })
       return res.status(400).json({ error: `Webhook error: ${err.message}` })
     }
   } else {
@@ -79,20 +80,20 @@ router.post('/stripe', async (req: Request, res: Response) => {
         const { processReferralSubscription } = await import('../lib/referralService')
         processReferralSubscription(userId).catch((e: any) => console.error('[REFERRAL]', e.message))
 
-        // COUPLE_PREMIUM: activate partner for free
+        // COUPLE_PREMIUM: activate every other active member of the same
+        // profile for free. 4.1: goes through ProfileMembershipService
+        // instead of reading CoupleProfile.partnerOneUserId/partnerTwoUserId
+        // directly — also means this now correctly covers a couple whose
+        // membership only exists in ProfileMember (no legacy CoupleProfile
+        // row at all, e.g. created after the backfill).
         if (plan === 'COUPLE_PREMIUM') {
-          const couple = await prisma.coupleProfile.findFirst({
-            where: {
-              OR: [{ partnerOneUserId: userId }, { partnerTwoUserId: userId }],
-              coupleStatus: 'ACTIVE'
-            }
-          })
-          if (couple) {
-            const partnerUserId = couple.partnerOneUserId === userId
-              ? couple.partnerTwoUserId
-              : couple.partnerOneUserId
+          const myProfile = await prisma.profile.findUnique({ where: { userId }, select: { id: true } })
+          if (myProfile) {
+            const { getActiveMembers } = await import('../lib/profileMembershipService')
+            const members = await getActiveMembers(myProfile.id)
+            const otherMemberIds = members.map(m => m.userId).filter(id => id !== userId)
 
-            if (partnerUserId) {
+            for (const partnerUserId of otherMemberIds) {
               await prisma.subscription.upsert({
                 where: { userId: partnerUserId },
                 update: { plan: 'COUPLE_PREMIUM', status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd },
@@ -158,7 +159,7 @@ router.post('/stripe', async (req: Request, res: Response) => {
         console.log('[WEBHOOK] Unhandled event type:', event.type)
     }
   } catch (err: any) {
-    console.error('[WEBHOOK HANDLER ERROR]', err.message)
+    captureError(err, { job: 'stripeWebhook', stage: 'handler' })
     return res.status(500).json({ error: 'Webhook processing failed.' })
   }
 

@@ -27,35 +27,46 @@ const RELATIONSHIP_STATUSES = [
   { value:'OTHER',          label:'Outro' },
 ]
 
-const INTENTIONS = [
-  { slug:'casual_encounter',     label:'Encontro casual' },
-  { slug:'recurring_connection', label:'Ligação recorrente' },
-  { slug:'trio_experience',      label:'Experiência a três' },
-  { slug:'swing',                label:'Swing' },
-  { slug:'polyamory',            label:'Poliamor' },
-  { slug:'online_only',          label:'Apenas online' },
-  { slug:'friends_with_benefits',label:'Amizade colorida' },
-  { slug:'fetish_exploration',   label:'Explorar fetiches' },
-  { slug:'seek_couple',          label:'Procurar casal' },
-  { slug:'seek_third',           label:'Procurar terceira pessoa' },
-]
-
 const DISCRETION = [
   { value:'MAXIMUM',   label:'Máxima privacidade',    desc:'Perfil oculto, fotos desfocadas' },
   { value:'SELECTIVE', label:'Visibilidade seletiva', desc:'Apareço apenas a perfis compatíveis' },
   { value:'OPEN',      label:'Perfil aberto',         desc:'Visível para todos na plataforma' },
 ]
 
+// 4.9 — pure display labels for ProfileCompletenessService's `missing`
+// codes. The score/logic itself always comes from the backend; this is
+// only translating field codes to PT copy, nothing computed here.
+const COMPLETENESS_LABELS = {
+  DISPLAY_NAME:     'nome de exibição',
+  MEMBERS:          'convidar parceiro/membros',
+  GENDER:           'género',
+  INTENTIONS:       'o que procuras',
+  BOUNDARIES:       'mapa de limites',
+  PRIMARY_PHOTO:    'foto de perfil',
+  PRIVACY_SETTINGS: 'definições de privacidade',
+  BIO:              'biografia',
+}
+
 export default function EditProfilePage() {
   const navigate = useNavigate()
   const [form, setForm] = useState(null)
   const [intentionSlugs, setIntentionSlugs] = useState([])
+  const [catalogIntentions, setCatalogIntentions] = useState([])
+  const [catalogBoundaries, setCatalogBoundaries] = useState([])
+  const [catalogGenders, setCatalogGenders] = useState([])
+  const [catalogOrientations, setCatalogOrientations] = useState([])
+  const [boundaryPrefs, setBoundaryPrefs] = useState({}) // boundaryId -> YES|MAYBE|NO
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
+  const [completeness, setCompleteness] = useState(null)
 
   useEffect(() => {
+    api.get('/catalog/intentions').then(r => setCatalogIntentions(r.data.intentions || [])).catch(() => {})
+    api.get('/catalog/boundaries').then(r => setCatalogBoundaries(r.data.boundaries || [])).catch(() => {})
+    api.get('/catalog/genders').then(r => setCatalogGenders(r.data.genders || [])).catch(() => {})
+    api.get('/catalog/orientations').then(r => setCatalogOrientations(r.data.orientations || [])).catch(() => {})
     api.get('/profiles/me').then(r => {
       const p = r.data
       setForm({
@@ -69,6 +80,12 @@ export default function EditProfilePage() {
         discretionLevel:    p.discretionLevel || 'SELECTIVE',
       })
       setIntentionSlugs((p.intentions || []).map(pi => pi.intention?.slug || pi.slug).filter(Boolean))
+      const b = {}
+      ;(p.boundaries || []).forEach(pb => { b[pb.boundaryId] = pb.preference })
+      setBoundaryPrefs(b)
+      // 4.9: score/missing come straight from ProfileCompletenessService —
+      // never computed or guessed on the frontend.
+      setCompleteness(p.completeness || null)
     }).catch(() => navigate('/create-profile'))
     .finally(() => setLoading(false))
   }, [])
@@ -78,6 +95,7 @@ export default function EditProfilePage() {
   const toggleIntention = slug => setIntentionSlugs(prev =>
     prev.includes(slug) ? prev.filter(s => s !== slug) : [...prev, slug]
   )
+  const setBoundaryPref = (boundaryId, pref) => setBoundaryPrefs(p => ({ ...p, [boundaryId]: pref }))
 
   const handleSave = async () => {
     if (!form.displayName.trim()) return setError('Nome visível obrigatório.')
@@ -87,6 +105,12 @@ export default function EditProfilePage() {
         ...form,
         intentions: intentionSlugs.map(slug => ({ slug, preference: 'YES' })),
       })
+      const boundaryEntries = Object.entries(boundaryPrefs)
+      if (boundaryEntries.length > 0) {
+        await api.put('/profiles/me/boundaries', {
+          boundaries: boundaryEntries.map(([boundaryId, preference]) => ({ boundaryId, preference }))
+        })
+      }
       setMsg('Perfil actualizado!')
       setTimeout(() => navigate('/profile'), 1200)
     } catch (err) {
@@ -116,6 +140,17 @@ export default function EditProfilePage() {
 
         {msg   && <div style={{ background:'rgba(74,222,128,0.08)', border:`1px solid rgba(74,222,128,0.25)`, borderRadius:12, padding:'11px 14px', marginBottom:14, color:C.success, fontSize:14 }}>{msg}</div>}
         {error && <div style={{ background:'rgba(248,113,113,0.08)', border:`1px solid rgba(248,113,113,0.25)`, borderRadius:12, padding:'11px 14px', marginBottom:14, color:C.danger, fontSize:14 }}>{error}</div>}
+        {completeness && !completeness.complete && (
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:'12px 16px', marginBottom:14 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:C.text }}>Perfil {completeness.score}% completo</div>
+            </div>
+            <div style={{ height:6, borderRadius:3, background:C.input, overflow:'hidden', marginBottom:8 }}>
+              <div style={{ height:'100%', width:`${completeness.score}%`, background:C.primary, borderRadius:3 }}/>
+            </div>
+            <div style={{ fontSize:12, color:C.muted }}>Falta: {completeness.missing.map(f => COMPLETENESS_LABELS[f] || f).join(', ')}</div>
+          </div>
+        )}
 
         {/* Dados básicos */}
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:20, marginBottom:14 }}>
@@ -126,6 +161,17 @@ export default function EditProfilePage() {
           <textarea style={{ ...INP, minHeight:80, resize:'none' }} placeholder="Breve descrição (opcional)" value={form.bio} onChange={e => set('bio', e.target.value)} />
           <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Cidade</label>
           <input style={INP} placeholder="Ex: Lisboa" value={form.city} onChange={e => set('city', e.target.value)} />
+          <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Género</label>
+          <select style={{ ...INP, cursor:'pointer' }} value={form.gender} onChange={e => set('gender', e.target.value)}>
+            <option value="" style={{ background:C.surface }}>Preferir não dizer / não definido</option>
+            {catalogGenders.map(g => <option key={g.id} value={g.slug} style={{ background:C.surface }}>{g.label}</option>)}
+          </select>
+          {/* 4.4: orientation previously had no input at all in this form either. */}
+          <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Orientação</label>
+          <select style={{ ...INP, cursor:'pointer' }} value={form.orientation} onChange={e => set('orientation', e.target.value)}>
+            <option value="" style={{ background:C.surface }}>Preferir não dizer / não definido</option>
+            {catalogOrientations.map(o => <option key={o.id} value={o.slug} style={{ background:C.surface }}>{o.label}</option>)}
+          </select>
           <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Estado relacional</label>
           <select style={{ ...INP, cursor:'pointer' }} value={form.relationshipStatus} onChange={e => set('relationshipStatus', e.target.value)}>
             {RELATIONSHIP_STATUSES.map(s => <option key={s.value} value={s.value} style={{ background:C.surface }}>{s.label}</option>)}
@@ -136,10 +182,10 @@ export default function EditProfilePage() {
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:20, marginBottom:14 }}>
           <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:12 }}>O que procuras</div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-            {INTENTIONS.map(i => {
+            {catalogIntentions.map(i => {
               const sel = intentionSlugs.includes(i.slug)
               return (
-                <div key={i.slug} onClick={() => toggleIntention(i.slug)} style={{
+                <div key={i.id} onClick={() => toggleIntention(i.slug)} style={{
                   background: sel ? C.primaryDim : C.elevated,
                   border:`1.5px solid ${sel ? C.primary : C.border}`,
                   borderRadius:12, padding:'11px 10px',
@@ -147,11 +193,43 @@ export default function EditProfilePage() {
                   fontSize:13, color: sel ? C.primary : C.text2,
                   minHeight:44, display:'flex', alignItems:'center', justifyContent:'center',
                 }}>
-                  {i.label}
+                  {i.name}
                 </div>
               )
             })}
           </div>
+        </div>
+
+        {/* Mapa de Limites (Sprint 2.5.8) */}
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:20, marginBottom:14 }}>
+          <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:4 }}>Mapa de Limites</div>
+          <p style={{ color:C.muted, fontSize:12, lineHeight:1.5, marginBottom:14 }}>Sim / Talvez / Não para cada tópico.</p>
+          {Object.entries(
+            catalogBoundaries.reduce((acc, b) => { (acc[b.category] = acc[b.category] || []).push(b); return acc }, {})
+          ).map(([category, items]) => (
+            <div key={category} style={{ marginBottom:14 }}>
+              <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:6 }}>{category.replace(/_/g,' ')}</div>
+              {items.map(b => (
+                <div key={b.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'8px 0', borderBottom:`1px solid ${C.border}` }}>
+                  <span style={{ fontSize:13, color:C.text }}>{b.name}</span>
+                  <div style={{ display:'flex', gap:6 }}>
+                    {['NO','MAYBE','YES'].map(pref => {
+                      const active = boundaryPrefs[b.id] === pref
+                      const label = pref === 'YES' ? 'Sim' : pref === 'MAYBE' ? 'Talvez' : 'Não'
+                      return (
+                        <button key={pref} onClick={() => setBoundaryPref(b.id, pref)} style={{
+                          background: active ? C.primaryDim : 'transparent',
+                          border:`1px solid ${active ? C.primary : C.border}`,
+                          borderRadius:8, padding:'4px 10px', fontSize:11,
+                          color: active ? C.primary : C.muted, cursor:'pointer',
+                        }}>{label}</button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
 
         {/* Discrição */}

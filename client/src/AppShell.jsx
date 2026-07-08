@@ -4,6 +4,7 @@ import ExploreScreen from './screens/ExploreScreen'
 import MatchesScreen from './screens/MatchesScreen'
 import GuideScreen from './screens/GuideScreen'
 import RoomsScreen from './screens/RoomsScreen'
+import LegalReacceptanceBanner from './components/LegalReacceptanceBanner'
 
 const C = {
   bg:'#0A141A', surface:'#102129', border:'#1E3340',
@@ -38,6 +39,7 @@ export default function AppShell({ screen }) {
       background:C.bg, position:'relative',
     }}>
       <div style={{ paddingBottom:'calc(68px + env(safe-area-inset-bottom))', paddingTop:'env(safe-area-inset-top)' }}>
+        <LegalReacceptanceBanner />
         {renderScreen()}
       </div>
 

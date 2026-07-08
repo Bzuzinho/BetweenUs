@@ -43,10 +43,10 @@ export const notifyAdmins = async (
       select: { id: true }
     })
     if (!admins.length) return
-    const adminIds = admins.map(a => a.id)
+    const adminIds = admins.map((a: { id: string }) => a.id)
 
     // Create DB notifications for bell
-    await Promise.all(adminIds.map(userId =>
+    await Promise.all(adminIds.map((userId: string) =>
       createNotification(userId, type, title, body, data)
     ))
 
