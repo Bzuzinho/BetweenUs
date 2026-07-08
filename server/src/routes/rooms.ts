@@ -409,6 +409,24 @@ router.delete('/:id/leave', requireAuth, async (req: AuthRequest, res: Response)
   })
   await emitToRoom(req.params.id, 'member:left', { roomId: req.params.id, userId: req.userId })
 
+  // 11.1 — SAFE_EXIT signal. Only recorded when the room maps to a clear
+  // 1:1 match (room.matchId) — a multi-member custom room has no single
+  // "other party" this signal could meaningfully be about, so it's
+  // skipped there rather than fanned out to every remaining member
+  // (which would misrepresent one person's exit as a signal about
+  // everyone else in the room).
+  try {
+    const room = await (prisma as any).privateRoom.findUnique({ where: { id: req.params.id }, include: { match: true } })
+    if (room?.match) {
+      const leaverProfile = await prisma.profile.findUnique({ where: { userId: req.userId! }, select: { id: true } })
+      if (leaverProfile) {
+        const otherProfileId = room.match.profileOneId === leaverProfile.id ? room.match.profileTwoId : room.match.profileOneId
+        const { recordSignal } = await import('../lib/recommendationSignalService')
+        recordSignal(leaverProfile.id, otherProfileId, 'SAFE_EXIT', { roomId: req.params.id }).catch(() => {})
+      }
+    }
+  } catch { /* best-effort */ }
+
   const remaining = await (prisma as any).privateRoomMember.count({
     where: { privateRoomId: req.params.id, leftAt: null, status: 'ACCEPTED' }
   })

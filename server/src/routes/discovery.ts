@@ -19,7 +19,16 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20))
 
     const { getCandidates } = await import('../lib/discoveryService')
-    const { items, nextCursor } = await getCandidates(viewerProfile.id, { type: typeFilter }, cursor, limit)
+    const { items: rawItems, nextCursor } = await getCandidates(viewerProfile.id, { type: typeFilter }, cursor, limit)
+
+    // 11.5/11.12 — LAYER 3. applyRecommendations only ever reorders/relabels
+    // the exact `rawItems` array Layers 1+2 already produced above — it
+    // cannot add or remove a candidate (see recommendationOrchestrator.ts's
+    // header). Shadow mode (default): computes + logs, returns rawItems
+    // unchanged. Enabled + RECOMMENDATION_V1 cohort: returns the reordered
+    // list. Both flags off (default): a no-op passthrough.
+    const { applyRecommendations } = await import('../lib/recommendationOrchestrator')
+    const { items } = await applyRecommendations(viewerProfile.id, rawItems, { type: !!typeFilter })
 
     // 3.1: discovery always shows the blurred teaser regardless of a
     // photo's visibilityLevel (that's the point of a discovery grid) — but
@@ -144,6 +153,8 @@ router.post('/:id/block', requireAuth, async (req: AuthRequest, res: Response) =
       update: { action: 'BLOCK' },
       create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id, action: 'BLOCK' }
     })
+    const { recordSignal } = await import('../lib/recommendationSignalService')
+    recordSignal(viewer.profile.id, req.params.id, 'BLOCK').catch(() => {})
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
 })
@@ -156,6 +167,12 @@ router.post('/:id/report', requireAuth, async (req: AuthRequest, res: Response) 
       data: { reporterUserId: req.userId!, reportedProfileId: req.params.id, reason: reason || 'other', details }
     })
     notifyAdmins('new_report', '⚠️ Nova denúncia', `Denúncia: ${reason}`, { reportId: report.id, tab: 'reports' }).catch(()=>{})
+
+    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
+    if (viewer?.profile) {
+      const { recordSignal } = await import('../lib/recommendationSignalService')
+      recordSignal(viewer.profile.id, req.params.id, 'REPORT').catch(() => {})
+    }
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
 })

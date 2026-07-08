@@ -40,6 +40,7 @@ import safetyRouter from '../src/routes/safety'
 import guideRouter from '../src/routes/guide'
 import eventsRouter from '../src/routes/events'
 import circlesRouter from '../src/routes/circles'
+import recommendationsRouter from '../src/routes/recommendations'
 
 app.use('/api/auth', authRouter)
 app.use('/api/profiles', profileRouter)
@@ -66,6 +67,7 @@ app.use('/api/safety', safetyRouter)
 app.use('/api/guide', guideRouter)
 app.use('/api/events', eventsRouter)
 app.use('/api/circles', circlesRouter)
+app.use('/api/admin/recommendations', recommendationsRouter)
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   res.status(err.status || 500).json({ error: err.message })

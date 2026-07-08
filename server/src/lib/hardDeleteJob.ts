@@ -36,6 +36,7 @@ import prisma from './prisma'
 import { deleteFile } from './storage'
 import { extractStorageKey } from './mediaAccessService'
 import { captureError } from './sentry'
+import { deleteAllSignalsForProfile } from './recommendationSignalService'
 
 const GRACE_DAYS = Number(process.env.HARD_DELETE_GRACE_DAYS || 30)
 
@@ -50,6 +51,10 @@ export interface HardDeleteOutcome {
   reportsAnonymised: number
   adminActionsAnonymised: number
   betaInviteUsageAnonymised: number
+  // 11.6/11.14 — RecommendationSignal has no FK/cascade (schema.prisma
+  // header comment on that model explains why), so it needs its own
+  // explicit sweep here, same treatment as RoomMessage.
+  recommendationSignalsRemoved: number
 }
 
 export const findEligibleUsers = async () => {
@@ -102,9 +107,11 @@ const hardDeleteOne = async (
     return {
       userId: user.id, email: user.email, skipped: true, reason: skipReason, dryRun,
       mediaKeysRemoved: 0, roomMessagesRemoved: 0, reportsAnonymised: 0,
-      adminActionsAnonymised: 0, betaInviteUsageAnonymised: 0
+      adminActionsAnonymised: 0, betaInviteUsageAnonymised: 0, recommendationSignalsRemoved: 0
     }
   }
+
+  const profile = await prisma.profile.findUnique({ where: { userId: user.id }, select: { id: true } })
 
   const [mediaKeys, roomMessageCount, reportCount, adminActionCount, betaInviteUsageCount] = await Promise.all([
     gatherMediaKeys(user.id, user.avatarPath),
@@ -113,24 +120,31 @@ const hardDeleteOne = async (
     prisma.adminAction.count({ where: { targetUserId: user.id } }),
     prisma.betaInvite.count({ where: { usedById: user.id } })
   ])
+  const signalCount = profile
+    ? await (prisma as any).recommendationSignal.count({ where: { OR: [{ actorProfileId: profile.id }, { targetProfileId: profile.id }] } })
+    : 0
 
   if (dryRun) {
     return {
       userId: user.id, email: user.email, skipped: false, dryRun: true,
       mediaKeysRemoved: mediaKeys.length, roomMessagesRemoved: roomMessageCount,
       reportsAnonymised: reportCount, adminActionsAnonymised: adminActionCount,
-      betaInviteUsageAnonymised: betaInviteUsageCount
+      betaInviteUsageAnonymised: betaInviteUsageCount, recommendationSignalsRemoved: signalCount
     }
   }
 
   // Order matters: clear/delete everything that would block the FK cascade
   // BEFORE the final user delete, so a crash mid-way is safely re-runnable.
+  // RecommendationSignal isn't FK-blocking (no relation at all — see its
+  // schema comment) but is swept here anyway, in the same "everything
+  // this user is tied to is gone before we call it done" pass.
   try {
     await Promise.all(mediaKeys.map(key => deleteFile(key).catch(() => {})))
     await prisma.roomMessage.deleteMany({ where: { senderUserId: user.id } })
     await prisma.report.updateMany({ where: { reportedUserId: user.id }, data: { reportedUserId: null } })
     await prisma.adminAction.updateMany({ where: { targetUserId: user.id }, data: { targetUserId: null } })
     await prisma.betaInvite.updateMany({ where: { usedById: user.id }, data: { usedById: null } })
+    if (profile) await deleteAllSignalsForProfile(profile.id)
 
     await prisma.user.delete({ where: { id: user.id } })
   } catch (err) {
@@ -145,7 +159,7 @@ const hardDeleteOne = async (
     userId: user.id, email: user.email, skipped: false, dryRun: false,
     mediaKeysRemoved: mediaKeys.length, roomMessagesRemoved: roomMessageCount,
     reportsAnonymised: reportCount, adminActionsAnonymised: adminActionCount,
-    betaInviteUsageAnonymised: betaInviteUsageCount
+    betaInviteUsageAnonymised: betaInviteUsageCount, recommendationSignalsRemoved: signalCount
   }
 }
 

@@ -14,7 +14,7 @@ export type AdminRole =
 // only. FINANCE and CONTENT_REVIEWER never touch reports at all.
 const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   SUPER_ADMIN:      ['*'],
-  ADMIN:            ['users','profiles','photos','reports','subscriptions','metrics','audit','beta','conversations','guide','catalog','legal','moderation.evidence.view','events','circle.manage'],
+  ADMIN:            ['users','profiles','photos','reports','subscriptions','metrics','audit','beta','conversations','guide','catalog','legal','moderation.evidence.view','events','circle.manage','recommendations'],
   MODERATOR:        ['profiles','photos','reports','conversations','moderation.evidence.view','events'],
   SUPPORT:          ['users','reports'],
   FINANCE:          ['subscriptions','metrics'],

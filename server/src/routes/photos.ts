@@ -292,10 +292,28 @@ router.put('/access-requests/:id', requireAuth, async (req: AuthRequest, res: Re
   if (!request) return res.status(404).json({ error: 'Pedido não encontrado.' })
 
   const photo = request.photo as any
+
+  // 11.1 — PHOTO_ACCESS_GRANTED, only fired the moment a request actually
+  // becomes APPROVED (never on DECLINED, never re-fired on an already-
+  // approved request). Owner is the actor (they extended access), the
+  // requester is the target — reflects positively on the person who was
+  // trusted enough to be granted access.
+  const maybeRecordGrantSignal = async (finalStatus: string) => {
+    if (finalStatus !== 'APPROVED') return
+    try {
+      const requesterProfile = await prisma.profile.findUnique({ where: { userId: request.requesterId }, select: { id: true } })
+      if (requesterProfile) {
+        const { recordSignal } = await import('../lib/recommendationSignalService')
+        recordSignal(photo.profileId, requesterProfile.id, 'PHOTO_ACCESS_GRANTED', { photoId: photo.id }).catch(() => {})
+      }
+    } catch { /* best-effort */ }
+  }
+
   if (photo.memberScope === 'SINGLE_MEMBER') {
     const myProfileId = await resolveMyProfileId(req.userId!)
     if (myProfileId !== photo.profileId) return res.status(403).json({ error: 'Sem permissão.' })
     const updated = await prisma.photoAccessRequest.update({ where: { id: req.params.id }, data: { status, respondedAt: new Date() } })
+    maybeRecordGrantSignal(status)
     return res.json({ ok: true, request: updated })
   }
 
@@ -307,6 +325,7 @@ router.put('/access-requests/:id', requireAuth, async (req: AuthRequest, res: Re
   const result = await sharedMediaConsentService.recordApproval(req.params.id, req.userId!, status)
   if (!result.ok) return res.status(403).json({ error: result.error })
   const updated = await prisma.photoAccessRequest.findUnique({ where: { id: req.params.id } })
+  if (result.finalStatus) maybeRecordGrantSignal(result.finalStatus)
   res.json({ ok: true, request: updated, finalStatus: result.finalStatus })
 })
 

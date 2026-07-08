@@ -88,6 +88,21 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
       console.error('[REPORT EVIDENCE CAPTURE]', evidenceErr.message)
     }
 
+    // 11.1 — behavioral signal, resolved from user->profile since Report
+    // is anchored to User, RecommendationSignal to Profile. Best-effort.
+    if (data.reportedUserId) {
+      try {
+        const [reporterProfile, reportedProfile] = await Promise.all([
+          prisma.profile.findUnique({ where: { userId: req.userId! }, select: { id: true } }),
+          prisma.profile.findUnique({ where: { userId: data.reportedUserId }, select: { id: true } }),
+        ])
+        if (reporterProfile && reportedProfile) {
+          const { recordSignal } = await import('../lib/recommendationSignalService')
+          recordSignal(reporterProfile.id, reportedProfile.id, 'REPORT').catch(() => {})
+        }
+      } catch { /* best-effort */ }
+    }
+
     // 9.8/9.11 — best-effort, fire-and-forget: runModerationAssessment
     // already no-ops instantly if AI_MODERATION_ENABLED is off, and never
     // throws. Not awaited so report submission never waits on it.

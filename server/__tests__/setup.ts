@@ -38,6 +38,11 @@ afterEach(async () => {
     // reference profiles so must precede it; events/circles themselves also
     // precede 'profiles'/'users' respectively for the same FK reason.
     'event_attendances', 'events', 'circle_memberships', 'circles', 'guide_articles',
+    // 11.14 — Sprint 11 per-test tables. Both loosely reference profiles
+    // (no FK — see schema.prisma's RecommendationSignal comment), so
+    // ordering relative to 'profiles' doesn't matter for FK reasons, but
+    // they're still per-test data that must not leak between tests.
+    'recommendation_signals', 'recommendation_ranking_logs',
     'couple_profiles', 'profiles',
     // 3.9: new Sprint 3 tables — must be cleaned between test suites too
     'legal_documents',

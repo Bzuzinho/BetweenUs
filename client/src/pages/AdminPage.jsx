@@ -2250,6 +2250,141 @@ function CirclesManager() {
   )
 }
 
+/* ─── Recommendations Manager (Sprint 11 — shadow mode / A-B dashboard) ────
+   Read + weight-tuning only. The actual on/off switches
+   (INTELLIGENT_RECOMMENDATIONS_SHADOW_MODE / _ENABLED) are env vars, not
+   toggleable here by design — see recommendations.ts's header comment. ── */
+function RecommendationsManager() {
+  const [status, setStatus] = useState(null)
+  const [weights, setWeights] = useState(null)
+  const [form, setForm] = useState({})
+  const [shadow, setShadow] = useState(null)
+  const [guardrails, setGuardrails] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+
+  const load = useCallback(() => {
+    setLoading(true)
+    Promise.all([
+      api.get('/admin/recommendations/status').then(r => r.data).catch(() => null),
+      api.get('/admin/recommendations/weights').then(r => r.data).catch(() => null),
+      api.get('/admin/recommendations/shadow-analysis?days=14').then(r => r.data).catch(() => null),
+      api.get('/admin/recommendations/guardrails?days=14').then(r => r.data).catch(() => null),
+    ]).then(([s, w, sh, g]) => {
+      setStatus(s); setWeights(w); if (w) setForm(w.weights); setShadow(sh); setGuardrails(g)
+    }).finally(() => setLoading(false))
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const saveWeights = async () => {
+    setSaving(true); setMsg(''); setErr('')
+    try {
+      await api.put('/admin/recommendations/weights', form)
+      setMsg('Pesos actualizados.')
+      load()
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Erro ao guardar.')
+    } finally { setSaving(false) }
+  }
+
+  if (loading) return <div style={{ color:C.muted, padding:20, textAlign:'center' }}>A carregar…</div>
+
+  const pct = (v) => v == null ? '—' : `${(v * 100).toFixed(1)}%`
+
+  return (
+    <div>
+      <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.2)`, borderRadius:12, padding:'12px 16px', marginBottom:20, fontSize:13, color:C.primary, lineHeight:1.5 }}>
+        Layer 3 (RecommendationRanker) nunca introduz um perfil excluído pelo eligibility pipeline — só reordena/anota o que o Discovery já produziu. Flags de on/off são variáveis de ambiente (não editáveis aqui), por decisão de segurança.
+      </div>
+
+      {/* Status */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18, marginBottom:16 }}>
+        <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:10 }}>Estado</div>
+        <div style={{ display:'flex', gap:16, flexWrap:'wrap', fontSize:13 }}>
+          <div>Shadow mode: <strong style={{ color: status?.shadowModeEnabled ? C.success : C.muted }}>{status?.shadowModeEnabled ? 'ATIVO' : 'inativo'}</strong></div>
+          <div>A/B test: <strong style={{ color: status?.intelligentRecommendationsEnabled ? C.success : C.muted }}>{status?.intelligentRecommendationsEnabled ? 'ATIVO' : 'inativo'}</strong></div>
+          <div>Modelo: <span style={{ color:C.text2 }}>{status?.modelVersion}</span></div>
+        </div>
+      </div>
+
+      {/* Weights */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18, marginBottom:16 }}>
+        <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:4 }}>Pesos de sinais ({weights?.configVersion})</div>
+        <div style={{ fontSize:12, color:C.muted, marginBottom:12 }}>Editável — nunca fixo no código. Ponto de partida conceptual, não valores finais.</div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(160px, 1fr))', gap:10 }}>
+          {Object.keys(form).map(key => (
+            <div key={key}>
+              <div style={{ fontSize:11, color:C.muted, marginBottom:4 }}>{key}</div>
+              <input type="number" step="0.1" value={form[key]}
+                onChange={e => setForm(p => ({ ...p, [key]: Number(e.target.value) }))}
+                style={{ width:'100%', background:C.elevated, border:`1.5px solid ${C.border}`, borderRadius:8, padding:'8px 10px', color:C.text, fontSize:13, boxSizing:'border-box' }}/>
+            </div>
+          ))}
+        </div>
+        {err && <div style={{ color:C.danger, fontSize:13, marginTop:12 }}>{err}</div>}
+        {msg && <div style={{ color:C.success, fontSize:13, marginTop:12 }}>{msg}</div>}
+        <button onClick={saveWeights} disabled={saving} style={{ marginTop:14, background:C.primary, border:'none', borderRadius:10, padding:'9px 18px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer', opacity:saving?0.6:1 }}>
+          {saving ? 'A guardar...' : 'Guardar pesos'}
+        </button>
+      </div>
+
+      {/* Shadow analysis */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18, marginBottom:16 }}>
+        <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:10 }}>Shadow analysis (últimos {shadow?.sinceDays ?? 14} dias)</div>
+        <div style={{ display:'flex', gap:20, flexWrap:'wrap', fontSize:13, color:C.text2 }}>
+          <div>Rank correlation: <strong style={{color:C.text}}>{shadow?.rankCorrelation != null ? shadow.rankCorrelation.toFixed(2) : 'sem dados'}</strong></div>
+          <div>Like rate (top 10 atual): <strong style={{color:C.text}}>{pct(shadow?.likeProjection?.currentTopNLikeRate)}</strong></div>
+          <div>Like rate (top 10 recomendado): <strong style={{color:C.text}}>{pct(shadow?.likeProjection?.recommendationTopNLikeRate)}</strong></div>
+        </div>
+        <div style={{ marginTop:12, fontSize:12, color:C.muted }}>
+          Meaningful Connection Rate — CONTROL: <strong style={{color:C.text2}}>{pct(shadow?.meaningfulConnectionRateByCohort?.CONTROL?.rate)}</strong>{' '}
+          · RECOMMENDATION_V1: <strong style={{color:C.text2}}>{pct(shadow?.meaningfulConnectionRateByCohort?.RECOMMENDATION_V1?.rate)}</strong>
+        </div>
+      </div>
+
+      {/* Guardrails */}
+      <div style={{ background:C.surface, border:`1px solid ${guardrails?.recommendDisable ? C.danger : C.border}`, borderRadius:16, padding:18 }}>
+        <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:10 }}>Guardrails A/B (últimos {guardrails?.sinceDays ?? 14} dias)</div>
+        <table style={{ width:'100%', fontSize:12, color:C.text2, borderCollapse:'collapse' }}>
+          <thead>
+            <tr style={{ textAlign:'left', color:C.muted }}>
+              <th style={{ padding:'4px 8px' }}></th>
+              <th style={{ padding:'4px 8px' }}>Bloqueios</th>
+              <th style={{ padding:'4px 8px' }}>Denúncias</th>
+              <th style={{ padding:'4px 8px' }}>Safe Exit</th>
+              <th style={{ padding:'4px 8px' }}>Abandono de match</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ padding:'4px 8px' }}>CONTROL</td>
+              <td style={{ padding:'4px 8px' }}>{pct(guardrails?.control?.blockRate)}</td>
+              <td style={{ padding:'4px 8px' }}>{pct(guardrails?.control?.reportRate)}</td>
+              <td style={{ padding:'4px 8px' }}>{pct(guardrails?.control?.safeExitRate)}</td>
+              <td style={{ padding:'4px 8px' }}>{pct(guardrails?.control?.matchAbandonmentRate)}</td>
+            </tr>
+            <tr>
+              <td style={{ padding:'4px 8px' }}>RECOMMENDATION_V1</td>
+              <td style={{ padding:'4px 8px' }}>{pct(guardrails?.recommendationV1?.blockRate)}</td>
+              <td style={{ padding:'4px 8px' }}>{pct(guardrails?.recommendationV1?.reportRate)}</td>
+              <td style={{ padding:'4px 8px' }}>{pct(guardrails?.recommendationV1?.safeExitRate)}</td>
+              <td style={{ padding:'4px 8px' }}>{pct(guardrails?.recommendationV1?.matchAbandonmentRate)}</td>
+            </tr>
+          </tbody>
+        </table>
+        {guardrails?.recommendDisable && (
+          <div style={{ marginTop:12, background:C.dangerDim, border:`1px solid ${C.danger}`, borderRadius:8, padding:'10px 12px', fontSize:12, color:C.danger }}>
+            ⚠ Recomendação: considerar desativar INTELLIGENT_RECOMMENDATIONS_ENABLED.
+            {guardrails.concerns.map((c, i) => <div key={i} style={{ marginTop:4 }}>{c}</div>)}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /* ─── Configurações Tab (SUPER_ADMIN only) ───────────────────────────────────── */
 const ROLES_CONFIG = [
   { value:'CONTENT_REVIEWER', label:'Revisor de conteúdo', desc:'Fotos e perfis', perms:['photos','profiles'] },
@@ -2802,7 +2937,7 @@ function ConfiguracoesTab() {
     <div>
       {/* Subtab bar */}
       <div style={{ display:'flex', gap:6, marginBottom:20 }}>
-        {[['perfis','◎ Perfis'],['generos','⚧ Géneros'],['orientacoes','◇ Orientações'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['interesses','✷ Interesses privados'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['eventos','◇ Eventos'],['circulos','◎ Circles'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
+        {[['perfis','◎ Perfis'],['generos','⚧ Géneros'],['orientacoes','◇ Orientações'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['interesses','✷ Interesses privados'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['eventos','◇ Eventos'],['circulos','◎ Circles'],['recomendacoes','✦ Recomendações'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
           <button key={k} onClick={()=>setSubTab(k)} style={{
             background:subTab===k?C.primaryDim:C.surface,
             border:`1.5px solid ${subTab===k?C.primary:C.border}`,
@@ -2867,6 +3002,9 @@ function ConfiguracoesTab() {
 
       {/* ── Circles subtab (10.11) ── */}
       {subTab==='circulos' && <CirclesManager />}
+
+      {/* ── Recomendações subtab (Sprint 11) ── */}
+      {subTab==='recomendacoes' && <RecommendationsManager />}
 
       {/* ── Afiliados subtab ── */}
       {subTab==='afiliados' && <AffiliateRuleManager />}

@@ -16,7 +16,7 @@ import { evaluateCompleteness } from './profileCompletenessService'
 import { getOrCalculateScore } from './compatibilityScoreService'
 import { buildExplanation } from './compatibilityExplanationService'
 import { hashContactWithVersion } from './contactHashService'
-import type { BetweenScoreBoundaryInput, BetweenScoreProfileInput } from './betweenScoreService'
+import type { BetweenScoreBoundaryInput, BetweenScoreProfileInput, BetweenScoreReasonCode } from './betweenScoreService'
 
 export interface DiscoveryFilters {
   type?: 'INDIVIDUAL' | 'COUPLE' | 'GROUP'
@@ -33,6 +33,13 @@ export interface DiscoveryCandidateItem {
     location: number
   }
   reasons: string[]
+  // 11.4 — the raw BetweenScoreService reason codes behind `reasons`
+  // (already computed per candidate below, just not previously exposed on
+  // the return shape). Added so recommendationRanker.ts can derive its own
+  // explainability codes (11.10) without recomputing BetweenScore itself —
+  // it consumes this exact field, never touches boundary/intention data
+  // directly.
+  reasonCodes: BetweenScoreReasonCode[]
 }
 
 export interface DiscoveryResult {
@@ -290,6 +297,7 @@ export const getCandidates = async (
       location: s.breakdown.location.score,
     },
     reasons: s.explanation,
+    reasonCodes: s.reasonCodes as BetweenScoreReasonCode[],
   }))
 
   const last = page[page.length - 1]

@@ -304,6 +304,15 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     viewerUserId: req.userId!,
     viewerProfileId
   })
+
+  // 11.1 — PROFILE_VIEW signal, fire-and-forget. recordSignal already
+  // no-ops when actor===target (viewing your own profile).
+  if (viewerProfileId) {
+    import('../lib/recommendationSignalService').then(({ recordSignal }) => {
+      recordSignal(viewerProfileId, profile.id, 'PROFILE_VIEW').catch(() => {})
+    }).catch(() => {})
+  }
+
   res.json({ ...pub, photos: resolvedPhotos, verificationBadges: getVerificationBadges(user?.verification) })
 })
 

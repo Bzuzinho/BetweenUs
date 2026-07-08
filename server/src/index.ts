@@ -156,6 +156,7 @@ import privateInterestsRouter from './routes/privateInterests'
 import agreementsRouter        from './routes/agreements'
 import eventsRouter            from './routes/events'
 import circlesRouter           from './routes/circles'
+import recommendationsRouter    from './routes/recommendations'
 
 app.use('/api/auth',          authRouter)
 app.use('/api/profiles',      profileRouter)
@@ -185,6 +186,7 @@ app.use('/api/private-interests', privateInterestsRouter)
 app.use('/api/agreements',    agreementsRouter)
 app.use('/api/events',         eventsRouter)
 app.use('/api/circles',        circlesRouter)
+app.use('/api/admin/recommendations', recommendationsRouter)
 
 // 7.8 — Socket.IO authentication. The Sprint 7 audit found NO auth at all
 // on the connection handshake: any socket (authenticated HTTP session or
@@ -299,6 +301,7 @@ httpServer.listen(PORT, () => {
   import('./jobs/cleanupExpiredMessages').then(({ startRoomMessageCleanupCron }) => startRoomMessageCleanupCron())
   // 8.6 — same in-process interval pattern, expires overdue ConsentCheck rows.
   import('./jobs/expireConsentChecks').then(({ startExpireConsentChecksCron }) => startExpireConsentChecksCron())
+  import('./jobs/recommendationLogCleanupJob').then(({ startRecommendationLogCleanupCron }) => startRecommendationLogCleanupCron())
 })
 
 export default app

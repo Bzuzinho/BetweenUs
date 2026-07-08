@@ -1820,3 +1820,108 @@ model CircleMembership {
   @@unique([circleId, profileId])
   @@map("circle_memberships")
 }
+
+// ─── Intelligent Recommendations (Sprint 11) ───────────────────────────────
+// LAYER 3 of the ranking architecture (eligibility -> Between Score ->
+// Recommendation Ranker). Every model below is additive/observational —
+// nothing here is read by DiscoveryService's eligibility pipeline (5.2/5.3),
+// and the ranker itself (recommendationRanker.ts) only ever accepts the
+// exact DiscoveryCandidateItem[] that pipeline already produced. See that
+// file's header comment for how the absolute rule ("ranker nunca introduz
+// um perfil excluído pelo eligibility pipeline") is enforced structurally,
+// not just by convention.
+//
+// actorProfileId/targetProfileId below are deliberately LOOSE references
+// (no @relation/FK), same pattern as Report.reportedEventId (10.8) — a
+// signal table can be extremely high write volume (PROFILE_VIEW fires on
+// nearly every discovery card render), so it avoids both the FK overhead
+// and adding two more back-relation arrays to the already-large Profile
+// model. GDPR consequence: hardDeleteJob.ts must explicitly sweep these
+// rows by profileId (added in 11.6/11.14) since there is no cascade.
+enum RecommendationSignalType {
+  PROFILE_VIEW
+  LIKE
+  MAYBE
+  PASS
+  MATCH
+  CONVERSATION_STARTED
+  SUSTAINED_CONVERSATION
+  PHOTO_ACCESS_GRANTED
+  SAFE_EXIT
+  BLOCK
+  REPORT
+}
+
+model RecommendationSignal {
+  id               String                    @id @default(uuid())
+  actorProfileId   String
+  targetProfileId  String
+  signalType       RecommendationSignalType
+  weight           Float
+  // 11.1 — "não registar body de mensagens". metadata only ever carries
+  // small non-identifying counters (e.g. { distinctDayCount: 3 } for
+  // SUSTAINED_CONVERSATION, or { conversationId } to dedupe
+  // CONVERSATION_STARTED) — never message content, never raw
+  // boundaries/private interests. Enforced by recommendationSignalService's
+  // narrow, typed metadata inputs (no caller can pass an arbitrary object).
+  metadata         Json?
+  createdAt        DateTime                  @default(now())
+
+  // Pair lookup (e.g. "has this viewer already passed this candidate
+  // recently") and per-candidate aggregation (targetProfileId, signalType)
+  // are the two access patterns recommendationSignalService actually runs.
+  @@index([actorProfileId, targetProfileId])
+  @@index([targetProfileId, signalType])
+  @@map("recommendation_signals")
+}
+
+// 11.2 — versioned, admin-editable signal weights. Same single-row-per-
+// version shape as BetweenScoreConfig (betweenScoreConfigService.ts) —
+// deliberately NOT hardcoded constants, since the spec explicitly says
+// "não assumir pesos finais". Defaults below are the spec's own worked
+// example, nothing more authoritative than a starting point.
+model RecommendationSignalWeightConfig {
+  id                            String   @id @default(uuid())
+  configVersion                 String   @unique
+  active                        Boolean  @default(true)
+  weightProfileView             Float    @default(0.2)
+  weightLike                    Float    @default(1)
+  weightMaybe                   Float    @default(0.3)
+  weightPass                    Float    @default(-1)
+  weightMatch                   Float    @default(3)
+  weightConversationStarted     Float    @default(4)
+  weightSustainedConversation   Float    @default(8)
+  weightPhotoAccessGranted      Float    @default(2)
+  weightSafeExit                Float    @default(-8)
+  weightBlock                   Float    @default(-10)
+  weightReport                  Float    @default(-15)
+  updatedByUserId               String?
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+
+  @@map("recommendation_signal_weight_configs")
+}
+
+// 11.5 — shadow-mode ranking log. Written ONLY when
+// INTELLIGENT_RECOMMENDATIONS_SHADOW_MODE (or the eventual A/B test) is on;
+// Discovery's actual response to the client is never derived from this
+// table. currentRank/currentScore are DiscoveryService's existing
+// (score desc, createdAt desc, id asc) order — the ranker never influences
+// them, this table only OBSERVES both orders side by side.
+model RecommendationRankingLog {
+  id                   String   @id @default(uuid())
+  viewerProfileId      String
+  candidateProfileId   String
+  currentRank          Int
+  recommendationRank   Int
+  currentScore         Float
+  recommendationScore  Float
+  algorithmVersion     String
+  reasonCodes          String[]
+  isExploration        Boolean  @default(false)
+  createdAt            DateTime @default(now())
+
+  @@index([viewerProfileId, createdAt])
+  @@index([algorithmVersion, createdAt])
+  @@map("recommendation_ranking_logs")
+}

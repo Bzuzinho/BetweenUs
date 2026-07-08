@@ -54,6 +54,10 @@ export const createLikeOrMatch = async (
       create: { actorProfileId, targetProfileId, action: 'LIKE' }
     })
 
+    // 11.1 — behavioral signal, best-effort, never blocks the like itself.
+    const { recordSignal } = await import('./recommendationSignalService')
+    recordSignal(actorProfileId, targetProfileId, 'LIKE').catch(() => {})
+
     // Check reciprocity
     const theirLike = await prisma.profileAction.findFirst({
       where: { actorProfileId: targetProfileId, targetProfileId: actorProfileId, action: 'LIKE' }
@@ -95,6 +99,10 @@ export const createLikeOrMatch = async (
     })
     if (!result.ok || !result.match) return { kind: 'ERROR', message: result.error || 'Erro ao criar match.' }
 
+    // 11.1 — MATCH is mutual by nature: one signal row per direction.
+    recordSignal(actorProfileId, targetProfileId, 'MATCH').catch(() => {})
+    recordSignal(targetProfileId, actorProfileId, 'MATCH').catch(() => {})
+
     return requiresDoubleConsent
       ? { kind: 'MATCH_PENDING_COUPLE_APPROVAL', matchId: result.match.id }
       : { kind: 'MATCH_CREATED', matchId: result.match.id }
@@ -122,6 +130,13 @@ export const recordPass = async (actorProfileId: string, targetProfileId: string
     update: { action: 'PASS' },
     create: { actorProfileId, targetProfileId, action: 'PASS' }
   })
+  // 11.1/11.7 — recorded for completeness, but deliberately EXCLUDED from
+  // the global aggregate a candidate's other viewers see (see
+  // recommendationSignalService's GLOBAL_AGGREGATE_TYPES comment) — a
+  // PASS is already a hard per-viewer exclusion from future discovery,
+  // not a reputational signal about the passed profile.
+  const { recordSignal } = await import('./recommendationSignalService')
+  recordSignal(actorProfileId, targetProfileId, 'PASS').catch(() => {})
 }
 
 /**

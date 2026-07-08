@@ -137,6 +137,14 @@ router.post('/:id/messages', requireAuth, async (req: AuthRequest, res: Response
       }
     })
 
+    // 11.1 — both check their own condition and no-op if already fired/not
+    // yet met; safe to call on every message without extra state here.
+    const conversationId = match.conversation.id
+    import('../lib/recommendationSignalService').then(({ evaluateConversationStarted, evaluateSustainedConversation }) => {
+      evaluateConversationStarted(conversationId).catch(() => {})
+      evaluateSustainedConversation(conversationId).catch(() => {})
+    }).catch(() => {})
+
     res.status(201).json(message)
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
