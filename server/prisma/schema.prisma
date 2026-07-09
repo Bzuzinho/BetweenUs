@@ -390,6 +390,7 @@ model User {
   intentAlignmentApprovals IntentAlignmentApproval[]
   guideArticlesAuthored GuideArticle[]
   circlesCreatedByMe Circle[] @relation("CircleCreatedByAdmin")
+  paymentRecords     PaymentRecord[]
 
   // 5.11 — discovery's candidate query joins on user.status (and
   // effectively adminRole via a null check) for every request.
@@ -398,6 +399,29 @@ model User {
   // /admin/dashboard metrics default exclusion both filter on this.
   @@index([isTestAccount])
   @@map("users")
+}
+
+// BETA.2.9 — presentational metadata for the FIXED structural ProfileType
+// enum (INDIVIDUAL/COUPLE/GROUP). Deliberately NOT a way to create new
+// structural types — profileTypePolicy.ts's own header comment explains
+// why ProfileType stays a hardcoded enum the rest of the codebase
+// branches on (matching rules, discovery badges, double consent), not a
+// data-driven catalog. This table only lets an admin edit how each FIXED
+// type is LABELLED/DESCRIBED/ORDERED in the UI — one row per enum value,
+// never more, never fewer. Distinct from the "Perfis" naming collision
+// this fixes: before this, Admin > Configurações > Perfis showed ADMIN
+// ROLE permissions (SUPER_ADMIN/MODERATOR/etc), not profile types at all
+// — that view is renamed to "Roles de Admin" (routes/catalog.ts,
+// AdminPage.jsx ConfiguracoesTab), and THIS is the real profile-types view.
+model ProfileTypeConfig {
+  type        ProfileType @id
+  label       String
+  description String?
+  active      Boolean     @default(true)
+  sortOrder   Int         @default(0)
+  updatedAt   DateTime    @updatedAt
+
+  @@map("profile_type_configs")
 }
 
 model Profile {
@@ -1295,11 +1319,56 @@ model Subscription {
   status                 SubscriptionStatus @default(ACTIVE)
   currentPeriodStart     DateTime?
   currentPeriodEnd       DateTime?
+  // BETA.2.7 — was read from Stripe's customer.subscription.updated event
+  // but never stored: the admin subscription tab had no way to show
+  // "cancels at period end" vs "already cancelled" as two different
+  // states. Populated in webhooks.ts's customer.subscription.updated
+  // handler from Stripe's own `cancel_at_period_end` field.
+  cancelAtPeriodEnd      Boolean            @default(false)
   cancelledAt            DateTime?
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
 
+  payments PaymentRecord[]
+
   @@map("subscriptions")
+}
+
+// BETA.2.7 — before this there was NO local ledger of individual payment
+// events at all: Subscription only ever held the CURRENT plan/period, so
+// "lifetime revenue" or "amount paid this period" could not be computed
+// from local data without either calling Stripe on every admin page
+// render (explicitly the wrong approach per the spec) or fabricating a
+// number from currentPeriodEnd math (which the spec explicitly forbids —
+// "não calcular lifetime revenue usando apenas Subscription.currentPeriod").
+// This is the ledger: one row per Stripe invoice/payment event, written
+// only from webhooks.ts (the source of truth is the actual
+// succeeded/failed event, never a client-side guess). providerEventId is
+// Stripe's own event.id, unique — makes webhook processing idempotent if
+// Stripe redelivers the same event (which it does, by design).
+enum PaymentRecordStatus {
+  SUCCEEDED
+  FAILED
+}
+
+model PaymentRecord {
+  id                String              @id @default(uuid())
+  userId            String
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionId    String?
+  subscription      Subscription?       @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  provider          String              @default("stripe")
+  providerEventId   String              @unique
+  providerInvoiceId String?
+  amount            Int                 // minor units (cents) — same convention Stripe uses, never converted/rounded here
+  currency          String
+  status            PaymentRecordStatus
+  occurredAt        DateTime            // Stripe's own event timestamp, not our processing time
+  createdAt         DateTime            @default(now())
+
+  @@index([userId])
+  @@index([subscriptionId])
+  @@map("payment_records")
 }
 
 model Verification {

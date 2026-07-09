@@ -78,6 +78,7 @@ Pré-requisito: `npm run db:seed` (catálogos estruturais) tem de ter corrido pr
 - Guide: 5 artigos publicados, 3 rascunhos.
 - Events: 5 eventos (políticas de venue distintas), com attendance em todos os estados.
 - Circles: 4 circles, memberships em todos os estados.
+- Beta Invites: 4 (PENDING, ACCEPTED, EXPIRED, REVOKED) — criados por `individual_diogo`, INVITE_B aceite por `individual_ines`.
 
 ## Comandos
 

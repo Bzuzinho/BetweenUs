@@ -7,14 +7,21 @@
 //   - RoomMessage.senderUserId (NOT NULL, no cascade) -> deleted outright
 //   - Report.reportedUserId / AdminAction.targetUserId / BetaInvite.usedById
 //     (nullable, no cascade) -> nulled, the row itself stays
-//   - AdminAction.adminId / BetaInvite.createdById (NOT NULL, no cascade,
-//     no null-out option) -> the account is SKIPPED entirely rather than
-//     forced through, exactly like hardDeleteJob. This matters here more
-//     than there: the 6 admin test accounts are routinely used to click
-//     around the real admin panel during manual QA, so it is plausible
-//     one of them has performed a real AdminAction by the time cleanup
-//     runs — that audit trail must not be destroyed just because the
-//     actor was a test account.
+//   - AdminAction.adminId (NOT NULL, no cascade, no null-out option) ->
+//     the account is SKIPPED entirely rather than forced through, exactly
+//     like hardDeleteJob. The 6 admin test accounts are routinely used to
+//     click around the real admin panel during manual QA, so it is
+//     plausible one of them has performed a real AdminAction by the time
+//     cleanup runs — that audit trail must not be destroyed just because
+//     the actor was a test account.
+//   - BetaInvite.createdById (NOT NULL, no cascade, no null-out option) ->
+//     DELETED outright (not skipped like AdminAction). BETA.2.8's beta
+//     invite scenarios are themselves fabricated by THIS seed with zero
+//     audit value — unlike AdminAction, there is no "real admin work"
+//     interpretation to preserve here. Skipping the creator account
+//     instead (as an earlier version of this file did) would leave
+//     individual_diogo permanently stuck across every reseed/cleanup
+//     cycle, since it always re-creates the same 4 invites via upsert.
 //   - RecommendationSignal (no FK/cascade at all) -> swept explicitly via
 //     deleteAllSignalsForProfile, same as hardDeleteJob, for analytics
 //     cleanliness even though it wouldn't block the delete either way.
@@ -43,19 +50,14 @@ interface CleanupOutcome {
   reportsAnonymised: number
   adminActionsAnonymised: number
   betaInviteUsageAnonymised: number
+  betaInvitesCreatedRemoved: number
   recommendationSignalsRemoved: number
 }
 
 const findSkipReason = async (userId: string): Promise<string | null> => {
-  const [adminActionCount, betaInviteCount] = await Promise.all([
-    prisma.adminAction.count({ where: { adminId: userId } }),
-    prisma.betaInvite.count({ where: { createdById: userId } }),
-  ])
+  const adminActionCount = await prisma.adminAction.count({ where: { adminId: userId } })
   if (adminActionCount > 0) {
     return `Tem ${adminActionCount} ação(ões) de administrador registada(s) (AdminAction.adminId é obrigatório e não tem cascade) — apagar esta conta destruiria o histórico de auditoria dessas ações. Conta mantida (não apagada por este script).`
-  }
-  if (betaInviteCount > 0) {
-    return `Criou ${betaInviteCount} convite(s) beta (BetaInvite.createdById é obrigatório e não tem cascade). Conta mantida.`
   }
   return null
 }
@@ -66,17 +68,18 @@ const cleanupOne = async (user: { id: string; email: string }, dryRun: boolean):
     return {
       userId: user.id, email: user.email, skipped: true, reason: skipReason, dryRun,
       roomMessagesRemoved: 0, reportsAnonymised: 0, adminActionsAnonymised: 0,
-      betaInviteUsageAnonymised: 0, recommendationSignalsRemoved: 0,
+      betaInviteUsageAnonymised: 0, betaInvitesCreatedRemoved: 0, recommendationSignalsRemoved: 0,
     }
   }
 
   const profile = await prisma.profile.findUnique({ where: { userId: user.id }, select: { id: true } })
 
-  const [roomMessageCount, reportCount, adminActionCount, betaInviteUsageCount] = await Promise.all([
+  const [roomMessageCount, reportCount, adminActionCount, betaInviteUsageCount, betaInviteCreatedCount] = await Promise.all([
     prisma.roomMessage.count({ where: { senderUserId: user.id } }),
     prisma.report.count({ where: { reportedUserId: user.id } }),
     prisma.adminAction.count({ where: { targetUserId: user.id } }),
     prisma.betaInvite.count({ where: { usedById: user.id } }),
+    prisma.betaInvite.count({ where: { createdById: user.id } }),
   ])
   const signalCount = profile
     ? await (prisma as any).recommendationSignal.count({ where: { OR: [{ actorProfileId: profile.id }, { targetProfileId: profile.id }] } })
@@ -87,7 +90,7 @@ const cleanupOne = async (user: { id: string; email: string }, dryRun: boolean):
       userId: user.id, email: user.email, skipped: false, dryRun: true,
       roomMessagesRemoved: roomMessageCount, reportsAnonymised: reportCount,
       adminActionsAnonymised: adminActionCount, betaInviteUsageAnonymised: betaInviteUsageCount,
-      recommendationSignalsRemoved: signalCount,
+      betaInvitesCreatedRemoved: betaInviteCreatedCount, recommendationSignalsRemoved: signalCount,
     }
   }
 
@@ -95,11 +98,12 @@ const cleanupOne = async (user: { id: string; email: string }, dryRun: boolean):
   // that would otherwise block the FK cascade BEFORE the final user
   // delete, so a crash mid-way is safely re-runnable (cleanup can just be
   // invoked again — every step here is idempotent on an already-cleared
-  // relation).
+  // relation, and deleteMany on already-deleted rows is a no-op).
   await prisma.roomMessage.deleteMany({ where: { senderUserId: user.id } })
   await prisma.report.updateMany({ where: { reportedUserId: user.id }, data: { reportedUserId: null } })
   await prisma.adminAction.updateMany({ where: { targetUserId: user.id }, data: { targetUserId: null } })
   await prisma.betaInvite.updateMany({ where: { usedById: user.id }, data: { usedById: null } })
+  await prisma.betaInvite.deleteMany({ where: { createdById: user.id } })
   if (profile) await deleteAllSignalsForProfile(profile.id)
 
   await prisma.user.delete({ where: { id: user.id } })
@@ -108,7 +112,7 @@ const cleanupOne = async (user: { id: string; email: string }, dryRun: boolean):
     userId: user.id, email: user.email, skipped: false, dryRun: false,
     roomMessagesRemoved: roomMessageCount, reportsAnonymised: reportCount,
     adminActionsAnonymised: adminActionCount, betaInviteUsageAnonymised: betaInviteUsageCount,
-    recommendationSignalsRemoved: signalCount,
+    betaInvitesCreatedRemoved: betaInviteCreatedCount, recommendationSignalsRemoved: signalCount,
   }
 }
 
@@ -144,7 +148,7 @@ const main = async () => {
 
   console.log('─'.repeat(70))
   console.log(`${dryRun ? 'Seriam apagadas' : 'Apagadas'}: ${deleted.length}`)
-  console.log(`Mantidas (skip — auditoria de admin/convite associada): ${skipped.length}`)
+  console.log(`Mantidas (skip — auditoria de admin associada): ${skipped.length}`)
   if (skipped.length > 0) {
     console.log('\nContas mantidas:')
     for (const s of skipped) console.log(`  - ${s.email}: ${s.reason}`)
@@ -154,13 +158,15 @@ const main = async () => {
     reportsAnonymised: acc.reportsAnonymised + o.reportsAnonymised,
     adminActionsAnonymised: acc.adminActionsAnonymised + o.adminActionsAnonymised,
     betaInviteUsageAnonymised: acc.betaInviteUsageAnonymised + o.betaInviteUsageAnonymised,
+    betaInvitesCreatedRemoved: acc.betaInvitesCreatedRemoved + o.betaInvitesCreatedRemoved,
     recommendationSignalsRemoved: acc.recommendationSignalsRemoved + o.recommendationSignalsRemoved,
-  }), { roomMessagesRemoved: 0, reportsAnonymised: 0, adminActionsAnonymised: 0, betaInviteUsageAnonymised: 0, recommendationSignalsRemoved: 0 })
+  }), { roomMessagesRemoved: 0, reportsAnonymised: 0, adminActionsAnonymised: 0, betaInviteUsageAnonymised: 0, betaInvitesCreatedRemoved: 0, recommendationSignalsRemoved: 0 })
   console.log('\nEfeitos colaterais:')
   console.log(`  RoomMessage removidas: ${totals.roomMessagesRemoved}`)
   console.log(`  Report.reportedUserId anonimizados: ${totals.reportsAnonymised}`)
   console.log(`  AdminAction.targetUserId anonimizados: ${totals.adminActionsAnonymised}`)
   console.log(`  BetaInvite.usedById anonimizados: ${totals.betaInviteUsageAnonymised}`)
+  console.log(`  BetaInvite (criados por conta apagada) removidos: ${totals.betaInvitesCreatedRemoved}`)
   console.log(`  RecommendationSignal removidos: ${totals.recommendationSignalsRemoved}`)
   console.log('─'.repeat(70))
 }

@@ -24,6 +24,7 @@ import { seedConsentChecks, seedSharedIntentions } from './phases/consent'
 import { seedBlockScenario, seedReports, seedVerificationQueue, seedSafetyCheckins } from './phases/safety'
 import { seedTravelModes, seedSubscriptions } from './phases/travel'
 import { seedGuideArticles, seedEvents, seedCircles } from './phases/content'
+import { seedBetaInvites } from './phases/invites'
 import { INDIVIDUAL_SCENARIOS, COUPLE_SCENARIOS } from './scenarios'
 
 const checkStructuralSeedRan = async (): Promise<void> => {
@@ -46,15 +47,15 @@ const main = async () => {
   const counts: Record<string, number> = {}
 
   try {
-    console.log('\n[1/12] Admin accounts...')
+    console.log('\n[1/13] Admin accounts...')
     const adminIds = await createAdminAccounts()
     counts.adminAccounts = Object.keys(adminIds).length
 
-    console.log('[2/12] Lifecycle accounts...')
+    console.log('[2/13] Lifecycle accounts...')
     const lifecycleIds = await createLifecycleAccounts()
     counts.lifecycleAccounts = Object.keys(lifecycleIds).length
 
-    console.log('[3/12] Individual + couple + group profiles...')
+    console.log('[3/13] Individual + couple + group profiles...')
     const individuals = await createIndividualProfiles()
     await createLifecycleProfiles(lifecycleIds)
     const couples = await createCoupleProfiles()
@@ -63,7 +64,7 @@ const main = async () => {
     counts.coupleProfiles = COUPLE_SCENARIOS.length
     counts.groupProfiles = group ? 1 : 0
 
-    console.log('[4/12] Photos / media...')
+    console.log('[4/13] Photos / media...')
     const labelByKey: Record<string, string> = {}
     for (const s of INDIVIDUAL_SCENARIOS) labelByKey[s.key] = s.displayName
     for (const c of COUPLE_SCENARIOS) labelByKey[c.key] = c.displayName
@@ -80,36 +81,36 @@ const main = async () => {
       }
     }
 
-    console.log('[5/12] Discovery / Between Score pairs + Like/Pass/Match...')
+    console.log('[5/13] Discovery / Between Score pairs + Like/Pass/Match...')
     const matchIds = await seedLikePassMatchScenarios(individuals, couples)
     await seedContactBlockPair(individuals)
     counts.matches = Object.keys(matchIds).length
 
-    console.log('[6/12] Private Rooms + Room Rules + chat...')
+    console.log('[6/13] Private Rooms + Room Rules + chat...')
     const roomIds = await seedPrivateRooms(individuals, couples, matchIds)
     counts.privateRooms = Object.keys(roomIds).length
 
-    console.log('[7/12] Consent Checks + Shared Intentions...')
+    console.log('[7/13] Consent Checks + Shared Intentions...')
     await seedConsentChecks(individuals, couples, matchIds)
     await seedSharedIntentions(roomIds, individuals, couples)
     counts.consentChecks = 7
 
-    console.log('[8/12] Block + Reports + Evidence...')
+    console.log('[8/13] Block + Reports + Evidence...')
     await seedBlockScenario(individuals)
     await seedReports(individuals, roomIds)
     counts.reports = 6
 
-    console.log('[9/12] Verification queue + Safety Check-ins...')
+    console.log('[9/13] Verification queue + Safety Check-ins...')
     await seedVerificationQueue(individuals, couples)
     await seedSafetyCheckins(individuals)
     counts.safetyCheckins = 6
 
-    console.log('[10/12] Travel Mode + Subscriptions...')
+    console.log('[10/13] Travel Mode + Subscriptions...')
     await seedTravelModes(individuals, couples)
     await seedSubscriptions(individuals, couples)
     counts.travelModes = 6
 
-    console.log('[11/12] Guide + Events + Circles...')
+    console.log('[11/13] Guide + Events + Circles...')
     await seedGuideArticles(adminIds)
     await seedEvents(individuals, couples)
     await seedCircles(individuals, couples, adminIds)
@@ -117,7 +118,11 @@ const main = async () => {
     counts.events = 5
     counts.circles = 4
 
-    console.log('[12/12] Done.')
+    console.log('[12/13] Beta invites...')
+    await seedBetaInvites(individuals)
+    counts.betaInvites = 4
+
+    console.log('[13/13] Done.')
     await finishRun(run.id, 'COMPLETED', counts)
 
     console.log('\n' + '─'.repeat(60))
@@ -137,6 +142,7 @@ const main = async () => {
     console.log(`  - Travel Modes: ${counts.travelModes}`)
     console.log(`  - Events: ${counts.events}`)
     console.log(`  - Circles: ${counts.circles}`)
+    console.log(`  - Beta invites: ${counts.betaInvites}`)
     console.log('')
     console.log('Validation command: npm run db:seed:beta:validate')
     console.log('Test account manifest: docs/testing/BETA_TEST_ACCOUNTS.md')

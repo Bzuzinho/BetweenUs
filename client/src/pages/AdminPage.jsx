@@ -19,6 +19,19 @@ const INP = {
   marginBottom:10, display:'block', WebkitAppearance:'none', outline:'none',
 }
 
+// BETA.2.7 — amounts everywhere in PaymentRecord/Subscription financials
+// are minor units (cents), matching Stripe's own convention (never
+// converted/rounded server-side) — this is the one place that turns them
+// into a display string, so every consumer formats identically.
+const formatMoney = (minorUnits, currency) => {
+  if (minorUnits === null || minorUnits === undefined || !currency) return '—'
+  try {
+    return new Intl.NumberFormat('pt-PT', { style:'currency', currency }).format(minorUnits / 100)
+  } catch {
+    return `${(minorUnits / 100).toFixed(2)} ${currency}`
+  }
+}
+
 /* ─── Role permissions ───────────────────────────────────────────────────────── */
 const ROLE_TABS = {
   SUPER_ADMIN:      ['dashboard','reports','photos','profiles','users','verifications','conversations','audit','beta','configuracoes'],
@@ -1234,18 +1247,47 @@ function UserDetail({ userId, onBack }) {
       )}
 
       {view==='subscription' && (
-        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, fontSize:13, color:C.text2, lineHeight:2 }}>
-          {u.subscription ? (
-            <>
+        u.subscription ? (
+          <>
+            <div style={{ fontSize:11, color:C.muted, fontWeight:600, marginBottom:6, marginTop:4 }}>SUBSCRIÇÃO ACTUAL</div>
+            <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, fontSize:13, color:C.text2, lineHeight:2, marginBottom:14 }}>
               <div>Plano: <strong style={{color:C.text}}>{u.subscription.plan}</strong></div>
               <div>Estado: <strong style={{color:C.text}}>{u.subscription.status}</strong></div>
               <div>Fornecedor: <strong style={{color:C.text}}>{u.subscription.provider || '—'}</strong></div>
-              {u.subscription.currentPeriodStart && <div>Período desde: <strong style={{color:C.text}}>{new Date(u.subscription.currentPeriodStart).toLocaleDateString('pt')}</strong></div>}
-              {u.subscription.currentPeriodEnd && <div>Período até: <strong style={{color:C.text}}>{new Date(u.subscription.currentPeriodEnd).toLocaleDateString('pt')}</strong></div>}
+              <div>Início da subscrição: <strong style={{color:C.text}}>{new Date(u.subscription.createdAt).toLocaleDateString('pt')}</strong></div>
+              {u.subscription.currentPeriodStart && <div>Período actual desde: <strong style={{color:C.text}}>{new Date(u.subscription.currentPeriodStart).toLocaleDateString('pt')}</strong></div>}
+              {u.subscription.currentPeriodEnd && <div>Período actual até: <strong style={{color:C.text}}>{new Date(u.subscription.currentPeriodEnd).toLocaleDateString('pt')}</strong></div>}
+              <div>Cancela no fim do período: <strong style={{color:u.subscription.cancelAtPeriodEnd?C.warning:C.text}}>{u.subscription.cancelAtPeriodEnd ? 'Sim' : 'Não'}</strong></div>
               {u.subscription.cancelledAt && <div>Cancelada em: <strong style={{color:C.danger}}>{new Date(u.subscription.cancelledAt).toLocaleDateString('pt')}</strong></div>}
-            </>
-          ) : <div style={{color:C.muted}}>Sem subscrição.</div>}
-        </div>
+            </div>
+
+            <div style={{ fontSize:11, color:C.muted, fontWeight:600, marginBottom:6 }}>PERÍODO ACTUAL</div>
+            <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, fontSize:13, color:C.text2, lineHeight:2, marginBottom:14 }}>
+              {u.financials?.hasLocalPaymentHistory ? (
+                <div>Valor pago neste período: <strong style={{color:C.text}}>{formatMoney(u.financials.currentPeriod.amountPaid, u.financials.currentPeriod.currency)}</strong></div>
+              ) : (
+                <div style={{color:C.muted}}>Dados históricos não disponíveis localmente.</div>
+              )}
+            </div>
+
+            <div style={{ fontSize:11, color:C.muted, fontWeight:600, marginBottom:6 }}>HISTÓRICO (LIFETIME)</div>
+            <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, fontSize:13, color:C.text2, lineHeight:2 }}>
+              {u.financials?.hasLocalPaymentHistory ? (
+                <>
+                  <div>Total pago desde criação da conta: <strong style={{color:C.text}}>{formatMoney(u.financials.lifetime.totalAmountPaid, u.financials.lifetime.currency)}</strong></div>
+                  <div>Pagamentos com sucesso: <strong style={{color:C.text}}>{u.financials.lifetime.totalSuccessfulPayments}</strong></div>
+                  {u.financials.lifetime.lastSuccessfulPaymentAt && <div>Último pagamento: <strong style={{color:C.text}}>{new Date(u.financials.lifetime.lastSuccessfulPaymentAt).toLocaleDateString('pt')}</strong></div>}
+                  {u.financials.recentFailedPayments > 0 && <div>Pagamentos falhados (90 dias): <strong style={{color:C.danger}}>{u.financials.recentFailedPayments}</strong></div>}
+                </>
+              ) : (
+                <div style={{color:C.muted}}>
+                  Dados históricos não disponíveis localmente.
+                  {u.isTestAccount && <div style={{marginTop:6, fontSize:11}}>Conta de teste — não gera eventos reais do Stripe.</div>}
+                </div>
+              )}
+            </div>
+          </>
+        ) : <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, fontSize:13, color:C.muted }}>Sem subscrição.</div>
       )}
 
       {view==='invites' && (
@@ -3175,6 +3217,79 @@ function BoundariesManager() {
   )
 }
 
+// BETA.2.9 — editor for ProfileTypeConfig (label/description/active/
+// sortOrder only — see catalog.ts's route comment for why there's no
+// create/delete: the 3 rows are fixed to the ProfileType enum).
+function ProfileTypeConfigManager() {
+  const [items, setItems] = useState([])
+  const [editing, setEditing] = useState(null) // type string | null
+  const [form, setForm] = useState({ label:'', description:'', active:true, sortOrder:0 })
+  const [err, setErr] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true); const [loadErr, setLoadErr] = useState('')
+
+  const load = useCallback(() => {
+    setLoading(true); setLoadErr('')
+    api.get('/catalog/admin/profile-type-config')
+      .then(r => setItems((r.data.profileTypeConfigs||[]).sort((a,b)=>a.sortOrder-b.sortOrder)))
+      .catch(e => setLoadErr(e.response?.data?.error || 'Não foi possível carregar os tipos de perfil.'))
+      .finally(() => setLoading(false))
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const openEdit = (cfg) => { setForm({ label:cfg.label, description:cfg.description||'', active:cfg.active, sortOrder:cfg.sortOrder }); setEditing(cfg.type); setErr('') }
+
+  const save = async () => {
+    if (!form.label.trim()) return setErr('Nome obrigatório.')
+    setSaving(true); setErr('')
+    try {
+      await api.put(`/catalog/admin/profile-type-config/${editing}`, form)
+      setEditing(null); load()
+    } catch (e) { setErr(e.response?.data?.error || 'Erro ao guardar.') } finally { setSaving(false) }
+  }
+
+  if (editing !== null) return (
+    <div>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
+        <button onClick={()=>setEditing(null)} style={{ background:'none', border:'none', color:C.muted, fontSize:20, cursor:'pointer' }}>←</button>
+        <h3 style={{ color:C.text, fontSize:16, fontWeight:500, margin:0, flex:1 }}>Editar {editing}</h3>
+        <button onClick={save} disabled={saving} style={{ background:C.primary, border:'none', borderRadius:8, padding:'8px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>{saving?'…':'Guardar'}</button>
+      </div>
+      {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>NOME (label) *</label>
+      <input style={INP} value={form.label} onChange={e=>setForm(p=>({...p,label:e.target.value}))}/>
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>DESCRIÇÃO</label>
+      <textarea style={{...INP, resize:'vertical'}} rows={2} value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))}/>
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>ORDEM</label>
+      <input type="number" style={INP} value={form.sortOrder} onChange={e=>setForm(p=>({...p,sortOrder:Number(e.target.value)}))}/>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', background:C.elevated, borderRadius:10, padding:'12px 14px' }}>
+        <div style={{ fontSize:14, color:C.text }}>Activo (disponível no produto)</div>
+        <div onClick={()=>setForm(p=>({...p,active:!p.active}))} style={{ width:44, height:24, borderRadius:12, cursor:'pointer', background:form.active?C.primary:C.input, position:'relative', border:`1px solid ${form.active?C.primary:C.border}` }}>
+          <div style={{ position:'absolute', top:3, width:16, height:16, borderRadius:'50%', background:'white', left:form.active?23:3, transition:'left 0.2s' }}/>
+        </div>
+      </div>
+    </div>
+  )
+
+  return (
+    <div>
+      {loadErr && <div style={{ color:C.danger, fontSize:13, marginBottom:10, display:'flex', alignItems:'center', gap:8 }}>{loadErr} <button onClick={load} style={{ background:'none', border:`1px solid ${C.danger}`, borderRadius:6, padding:'3px 10px', color:C.danger, fontSize:12, cursor:'pointer' }}>Tentar novamente</button></div>}
+      {!loading && !loadErr && items.length===0 && <div style={{ color:C.muted, fontSize:13, padding:'20px 0', textAlign:'center' }}>Corre `npm run db:seed` para criar os 3 tipos estruturais.</div>}
+      {items.map(cfg => (
+        <div key={cfg.type} style={{ background:C.surface, border:`1px solid ${cfg.active?C.border:'rgba(248,113,113,0.2)'}`, borderRadius:14, padding:'12px 14px', marginBottom:8 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+            <div>
+              <div style={{ fontSize:14, fontWeight:500, color:C.text }}>{cfg.label} {!cfg.active && <span style={{color:C.muted, fontSize:11}}>(inactivo)</span>}</div>
+              <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{cfg.type} {cfg.description && `· ${cfg.description}`}</div>
+            </div>
+            <button onClick={()=>openEdit(cfg)} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.text2, fontSize:12, cursor:'pointer', flexShrink:0 }}>✏️ Editar</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function ConfiguracoesTab() {
   const [subTab, setSubTab] = useState('perfis')
   const [plans, setPlans] = useState([])
@@ -3189,8 +3304,8 @@ function ConfiguracoesTab() {
   return (
     <div>
       {/* Subtab bar */}
-      <div style={{ display:'flex', gap:6, marginBottom:20 }}>
-        {[['perfis','◎ Perfis'],['generos','⚧ Géneros'],['orientacoes','◇ Orientações'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['interesses','✷ Interesses privados'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['eventos','◇ Eventos'],['circulos','◎ Circles'],['recomendacoes','✦ Recomendações'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
+      <div style={{ display:'flex', gap:6, marginBottom:20, flexWrap:'wrap' }}>
+        {[['perfis','◎ Perfis'],['roles-admin','🛡 Roles de Admin'],['generos','⚧ Géneros'],['orientacoes','◇ Orientações'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['interesses','✷ Interesses privados'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['eventos','◇ Eventos'],['circulos','◎ Circles'],['recomendacoes','✦ Recomendações'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
           <button key={k} onClick={()=>setSubTab(k)} style={{
             background:subTab===k?C.primaryDim:C.surface,
             border:`1.5px solid ${subTab===k?C.primary:C.border}`,
@@ -3201,12 +3316,29 @@ function ConfiguracoesTab() {
         ))}
       </div>
 
-      {/* ── Perfis subtab ── */}
+      {/* ── Perfis subtab (BETA.2.9) ── STRUCTURAL profile TYPES
+          (Individual/Casal/Grupo) — NOT admin roles, NOT user dating
+          profiles. Before this fix, "Perfis" here actually showed admin
+          role permissions (now moved to its own "Roles de Admin" subtab
+          below), which is exactly the naming collision QA flagged: an
+          admin expecting to configure INDIVIDUAL/COUPLE/GROUP found role
+          permissions instead, with nothing editable. */}
       {subTab==='perfis' && (
         <div>
           <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.2)`, borderRadius:12, padding:'12px 16px', marginBottom:20, fontSize:13, color:C.primary, lineHeight:1.5 }}>
-            Os perfis definem as permissões de cada tipo de utilizador no painel de administração.
-            Apenas o Super Admin pode atribuir ou remover roles.
+            Tipos estruturais de perfil (Individual, Casal, Grupo). Podes editar como aparecem no produto —
+            não podes criar um novo tipo estrutural aqui.
+          </div>
+          <ProfileTypeConfigManager />
+        </div>
+      )}
+
+      {/* ── Roles de Admin subtab (era "Perfis" antes desta correção) ── */}
+      {subTab==='roles-admin' && (
+        <div>
+          <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.2)`, borderRadius:12, padding:'12px 16px', marginBottom:20, fontSize:13, color:C.primary, lineHeight:1.5 }}>
+            Os roles de admin definem as permissões de cada tipo de utilizador no painel de administração.
+            Apenas o Super Admin pode atribuir ou remover roles (feito na ficha do utilizador, não aqui).
           </div>
 
           {ROLES_CONFIG.map(role => (

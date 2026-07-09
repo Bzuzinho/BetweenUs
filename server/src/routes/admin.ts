@@ -302,9 +302,24 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
     }
   }
   safeUser.avatarPath = await signAvatarUrl(safeUser.avatarPath)
+
+  // BETA.2.7 — financial summary, computed only when a Subscription row
+  // exists (a FREE-plan user with no subscription row has no payment
+  // history to summarise, and hasLocalPaymentHistory:false covers it).
+  let financials: any = null
+  if (safeUser.subscription) {
+    const { getSubscriptionFinancialSummary } = await import('../lib/subscriptionFinancialService')
+    financials = await getSubscriptionFinancialSummary(
+      req.params.id,
+      safeUser.subscription.currentPeriodStart,
+      safeUser.subscription.currentPeriodEnd
+    )
+  }
+
   res.json({
     ...safeUser,
     coupleContext,
+    financials,
     referral: {
       invitedBy: referredAs?.referralCode?.user || null,
       invitedByAt: referredAs?.createdAt || null,

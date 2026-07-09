@@ -118,9 +118,48 @@ router.post('/stripe', async (req: Request, res: Response) => {
               status: sub.status === 'active' ? 'ACTIVE' :
                 sub.status === 'canceled' ? 'CANCELLED' :
                 sub.status === 'past_due' ? 'PAST_DUE' : 'UNPAID',
-              currentPeriodEnd: new Date(sub.current_period_end * 1000)
+              currentPeriodEnd: new Date(sub.current_period_end * 1000),
+              // BETA.2.7 — was read from Stripe but never stored. Lets the
+              // admin subscription tab distinguish "cancels at period end"
+              // (still active until then) from an already-terminated sub.
+              cancelAtPeriodEnd: !!sub.cancel_at_period_end
             }
           })
+        }
+        break
+      }
+
+      // BETA.2.7 — was entirely unhandled before this: no case existed for
+      // a SUCCESSFUL payment/renewal at all, so there was no local record
+      // of any payment ever happening beyond "subscription currently
+      // active." This is the write side of the PaymentRecord ledger the
+      // admin subscription tab's lifetime/current-period totals read from.
+      // `providerEventId: event.id` makes this idempotent — Stripe
+      // redelivers events, and an upsert on that unique key means a
+      // redelivered 'invoice.payment_succeeded' never double-counts revenue.
+      case 'invoice.payment_succeeded':
+      case 'invoice.paid': {
+        const invoice = event.data.object
+        const subscription = await prisma.subscription.findFirst({
+          where: { providerSubscriptionId: invoice.subscription }
+        })
+        if (subscription && typeof invoice.amount_paid === 'number') {
+          await (prisma as any).paymentRecord.upsert({
+            where: { providerEventId: event.id },
+            update: {},
+            create: {
+              userId: subscription.userId,
+              subscriptionId: subscription.id,
+              providerInvoiceId: invoice.id || null,
+              amount: invoice.amount_paid,
+              currency: (invoice.currency || 'eur').toUpperCase(),
+              status: 'SUCCEEDED',
+              occurredAt: new Date((invoice.status_transitions?.paid_at || event.created) * 1000)
+            }
+          })
+          console.log('[WEBHOOK] Payment recorded (succeeded):', subscription.userId, invoice.amount_paid)
+        } else {
+          console.warn('[WEBHOOK] invoice.payment_succeeded — no matching local subscription for', invoice.subscription)
         }
         break
       }
@@ -150,6 +189,25 @@ router.post('/stripe', async (req: Request, res: Response) => {
             where: { id: subscription.id },
             data: { status: 'PAST_DUE' }
           })
+          // BETA.2.7 — a failed payment is also recorded in the ledger
+          // (status: FAILED) so the admin subscription tab's "payment
+          // issues" can show it, and so a failed attempt is never silently
+          // counted as if it were a successful one anywhere downstream.
+          if (typeof invoice.amount_due === 'number') {
+            await (prisma as any).paymentRecord.upsert({
+              where: { providerEventId: event.id },
+              update: {},
+              create: {
+                userId: subscription.userId,
+                subscriptionId: subscription.id,
+                providerInvoiceId: invoice.id || null,
+                amount: invoice.amount_due,
+                currency: (invoice.currency || 'eur').toUpperCase(),
+                status: 'FAILED',
+                occurredAt: new Date(event.created * 1000)
+              }
+            }).catch((e: any) => console.error('[WEBHOOK] failed PaymentRecord write:', e.message))
+          }
           console.warn('[WEBHOOK] Payment failed for user:', subscription.userId)
         }
         break

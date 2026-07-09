@@ -527,6 +527,36 @@ const main = async () => {
     return { pass: !!run, detail: run ? `version=${run.version} completedAt=${run.completedAt}` : 'nenhuma execução encontrada' }
   })
 
+  // ── Beta invites (BETA.2.8) ─────────────────────────────────────────
+  await check('beta-invites', 'INVITE A é PENDING (active, nunca usado, não expirado)', async () => {
+    const inv = await (prisma as any).betaInvite.findUnique({ where: { code: 'BETA-INVITE-A-PENDING' } })
+    if (!inv) return { pass: false, detail: 'não encontrado' }
+    const isPending = inv.active && !inv.usedById && (!inv.expiresAt || inv.expiresAt > new Date())
+    return { pass: isPending, detail: `active=${inv.active} usedById=${inv.usedById} expiresAt=${inv.expiresAt}` }
+  })
+  await check('beta-invites', 'INVITE B é ACCEPTED (usedById definido)', async () => {
+    const inv = await (prisma as any).betaInvite.findUnique({ where: { code: 'BETA-INVITE-B-ACCEPTED' } })
+    if (!inv) return { pass: false, detail: 'não encontrado' }
+    return { pass: !!inv.usedById && !!inv.usedAt && inv.useCount === 1, detail: `usedById=${inv.usedById} useCount=${inv.useCount}` }
+  })
+  await check('beta-invites', 'INVITE C é EXPIRED (active, nunca usado, expiresAt no passado)', async () => {
+    const inv = await (prisma as any).betaInvite.findUnique({ where: { code: 'BETA-INVITE-C-EXPIRED' } })
+    if (!inv) return { pass: false, detail: 'não encontrado' }
+    const isExpired = inv.active && !inv.usedById && inv.expiresAt && inv.expiresAt < new Date()
+    return { pass: !!isExpired, detail: `active=${inv.active} usedById=${inv.usedById} expiresAt=${inv.expiresAt}` }
+  })
+  await check('beta-invites', 'INVITE D é REVOKED (active=false, nunca usado)', async () => {
+    const inv = await (prisma as any).betaInvite.findUnique({ where: { code: 'BETA-INVITE-D-REVOKED' } })
+    if (!inv) return { pass: false, detail: 'não encontrado' }
+    return { pass: inv.active === false && !inv.usedById, detail: `active=${inv.active} usedById=${inv.usedById}` }
+  })
+  await check('beta-invites', 'usedById de INVITE B é único (@unique no schema — não reutilizado noutro invite)', async () => {
+    const accepted = await (prisma as any).betaInvite.findUnique({ where: { code: 'BETA-INVITE-B-ACCEPTED' } })
+    if (!accepted?.usedById) return { pass: false, detail: 'INVITE B sem usedById' }
+    const count = await (prisma as any).betaInvite.count({ where: { usedById: accepted.usedById } })
+    return { pass: count === 1, detail: `invites com este usedById=${count}` }
+  })
+
   // ── Admin scenario coverage sanity ────────────────────────────────
   await check('admin', 'Nenhuma conta de teste tem testScenarioKey fora do manifest conhecido', async () => {
     const known = new Set([
