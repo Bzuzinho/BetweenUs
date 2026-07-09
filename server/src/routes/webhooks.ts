@@ -87,10 +87,14 @@ router.post('/stripe', async (req: Request, res: Response) => {
         // membership only exists in ProfileMember (no legacy CoupleProfile
         // row at all, e.g. created after the backfill).
         if (plan === 'COUPLE_PREMIUM') {
-          const myProfile = await prisma.profile.findUnique({ where: { userId }, select: { id: true } })
-          if (myProfile) {
-            const { getActiveMembers } = await import('../lib/profileMembershipService')
-            const members = await getActiveMembers(myProfile.id)
+          // BETA.2 (FASE C) — must resolve to the buyer's Shared Profile
+          // (not their Individual Profile, which Profile.userId now always
+          // points to — see activeProfileContextService.ts) or the whole
+          // partner-activation loop below silently activates nobody.
+          const { resolveMyProfileId, getActiveMembers } = await import('../lib/profileMembershipService')
+          const myProfileId = await resolveMyProfileId(userId)
+          if (myProfileId) {
+            const members = await getActiveMembers(myProfileId)
             const otherMemberIds = members.map(m => m.userId).filter(id => id !== userId)
 
             for (const partnerUserId of otherMemberIds) {

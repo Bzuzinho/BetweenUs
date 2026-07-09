@@ -13,6 +13,7 @@ import { canTransitionRoom } from '../lib/privateRoomStateMachine'
 import {
   resolveRoomMembership, canSendMessage, canManageRoom, canModerateContent,
 } from '../lib/roomAuthorizationService'
+import { resolveMyProfileId } from '../lib/profileMembershipService'
 import { sendRoomMessage, deleteRoomMessage } from '../lib/roomMessageService'
 import {
   DEFAULT_ROOM_RULES, proposeRuleSet, acceptRuleSet, revokeRuleAcceptance, getConsentState,
@@ -424,11 +425,15 @@ router.delete('/:id/leave', requireAuth, async (req: AuthRequest, res: Response)
     try {
       const room = await (prisma as any).privateRoom.findUnique({ where: { id: req.params.id }, include: { match: true } })
       if (room?.match) {
-        const leaverProfile = await prisma.profile.findUnique({ where: { userId: req.userId! }, select: { id: true } })
-        if (leaverProfile) {
-          const otherProfileId = room.match.profileOneId === leaverProfile.id ? room.match.profileTwoId : room.match.profileOneId
+        // BETA.2 (FASE C) — Profile.userId no longer resolves a Shared
+        // Profile member's profile (see activeProfileContextService.ts) —
+        // use the acting-profile resolver so couple/group members' exits
+        // still record the signal against the right side of the match.
+        const leaverProfileId = await resolveMyProfileId(req.userId!)
+        if (leaverProfileId) {
+          const otherProfileId = room.match.profileOneId === leaverProfileId ? room.match.profileTwoId : room.match.profileOneId
           const { recordSignal } = await import('../lib/recommendationSignalService')
-          recordSignal(leaverProfile.id, otherProfileId, 'SAFE_EXIT', { roomId: req.params.id }).catch(() => {})
+          recordSignal(leaverProfileId, otherProfileId, 'SAFE_EXIT', { roomId: req.params.id }).catch(() => {})
         }
       }
     } catch { /* best-effort */ }

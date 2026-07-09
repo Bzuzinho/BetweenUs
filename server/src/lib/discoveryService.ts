@@ -10,6 +10,7 @@
 // artificiais" per the spec.
 import prisma from './prisma'
 import * as eligibilityService from './eligibilityService'
+import { getActiveMembers } from './profileMembershipService'
 import { evaluateIntentionCompatibility, type ProfileIntentionInput } from './intentionCompatibilityService'
 import { evaluateBoundaryCompatibility } from './boundaryCompatibilityService'
 import { evaluateCandidateConstraints, type ConstraintBoundaryInput, type CandidateStructuralProps } from './candidateConstraintService'
@@ -62,7 +63,20 @@ const fetchCandidatePool = async (viewerProfile: any, filters: DiscoveryFilters,
     where: {
       id: { notIn: [...excludeIds] },
       status: 'APPROVED',
-      user: { status: 'ACTIVE', adminRole: null },
+      // BETA.2 (FASE C) — a Shared Profile (COUPLE/GROUP) no longer has a
+      // `user` relation at all (userId is null — ownership moved to
+      // ProfileMember, see schema.prisma's Profile.userId comment), so the
+      // old unconditional `user: {status:'ACTIVE', adminRole:null}` filter
+      // would silently exclude every couple/group from this query (an
+      // inner-join-like filter on an optional relation excludes null
+      // rows). Individual Profiles still get that check here as a
+      // pre-filter (Step 2 re-checks it properly via EligibilityService);
+      // Shared Profiles skip it here and get their own member-based check
+      // in Step 2 below instead.
+      OR: [
+        { user: { status: 'ACTIVE', adminRole: null } },
+        { userId: null },
+      ],
       ...(filters.type && { type: filters.type }),
     },
     include: {
@@ -84,6 +98,20 @@ const isUserEligible = async (ownerUserId: string): Promise<boolean> => {
   return eligibility.canAppearInDiscovery
 }
 
+// BETA.2 (FASE C) — Shared Profile equivalent of isUserEligible. There's no
+// single owning user to check anymore (Profile.userId is null for
+// COUPLE/GROUP), so this checks every ACTIVE member instead — same ALL
+// posture as ApprovalPolicyService's COUPLE default (a couple/group's
+// safety-relevant eligibility is only as good as its least-eligible
+// member; one suspended/banned member hides the whole shared profile
+// rather than showing a partial/misleading card).
+const isSharedProfileEligible = async (profileId: string): Promise<boolean> => {
+  const members = await getActiveMembers(profileId)
+  if (members.length === 0) return false
+  const results = await Promise.all(members.map(m => isUserEligible(m.userId)))
+  return results.every(Boolean)
+}
+
 // ── Step 3: Profile Eligibility (4.9 ProfileCompletenessService) ──────────
 const isProfileEligible = (completenessMissing: string[]): boolean =>
   !completenessMissing.includes('PRIMARY_PHOTO') && !completenessMissing.includes('MEMBERS')
@@ -102,6 +130,25 @@ const passesVisibilityPolicy = (candidate: any): boolean => {
   if (candidate.visibilityMode === 'INVISIBLE') return false
   if (candidate.visibilityMode === 'MATCHES_ONLY') return false
   return true
+}
+
+// ── Step 4.5: Shared Profile individual-discovery policy (BETA.2 FASE C) ──
+// An Individual Profile whose owner is also an ACCEPTED member of a Shared
+// Profile (couple/group) is hidden from Discovery UNLESS that Shared
+// Profile's members have unanimously opted into
+// individualDiscoveryPolicy: INDIVIDUAL_AND_SHARED (default SHARED_ONLY —
+// see the schema.prisma enum comment and routes/profiles.ts's /:id/policy
+// endpoints for how that's changed). Only applies to type INDIVIDUAL
+// candidates — a Shared Profile itself is never affected by its own
+// policy field.
+const passesIndividualDiscoveryPolicy = async (candidate: any): Promise<boolean> => {
+  if (candidate.type !== 'INDIVIDUAL' || !candidate.userId) return true
+  const membership = await (prisma as any).profileMember.findFirst({
+    where: { userId: candidate.userId, status: 'ACCEPTED' },
+    select: { profile: { select: { type: true, individualDiscoveryPolicy: true } } }
+  })
+  if (!membership || membership.profile?.type === 'INDIVIDUAL') return true
+  return membership.profile?.individualDiscoveryPolicy === 'INDIVIDUAL_AND_SHARED'
 }
 
 // ── Step 5: Direct Blocks (bidirectional — 5.3 audit fix) ──────────────────
@@ -234,16 +281,27 @@ export const getCandidates = async (
   })
   if (!viewerProfile) return { items: [], nextCursor: null }
 
+  // BETA.2 (FASE C) — a Shared Profile viewer (userId null — see
+  // schema.prisma's Profile.userId comment) has no single owning user to
+  // check canUseApp/contact-blocks against; both checks below are done
+  // across every active member instead (same ALL posture as
+  // isSharedProfileEligible on the candidate side — one banned/suspended
+  // member blocks browsing for the whole shared context).
+  const viewerMembers = viewerProfile.userId
+    ? [viewerProfile.userId]
+    : (await getActiveMembers(viewerProfileId)).map(m => m.userId)
+
   // Step 2 (viewer side): a viewer whose own account can't use discovery
   // shouldn't get results either, independent of any candidate's eligibility.
-  const viewerEligible = await eligibilityService.forUser(viewerProfile.userId)
-  if (!viewerEligible.canUseApp) return { items: [], nextCursor: null }
+  const viewerEligibilities = await Promise.all(viewerMembers.map(uid => eligibilityService.forUser(uid)))
+  if (viewerMembers.length === 0 || viewerEligibilities.some(e => !e.canUseApp)) return { items: [], nextCursor: null }
 
-  const [myActions, blockedByProfileIds, contactIsBlocked] = await Promise.all([
+  const [myActions, blockedByProfileIds, contactBlockCheckers] = await Promise.all([
     prisma.profileAction.findMany({ where: { actorProfileId: viewerProfileId }, select: { targetProfileId: true, action: true } }),
     fetchProfilesThatBlockedViewer(viewerProfileId),
-    buildContactBlockChecker(viewerProfile.userId),
+    Promise.all(viewerMembers.map(uid => buildContactBlockChecker(uid))),
   ])
+  const contactIsBlocked = (email: string): boolean => contactBlockCheckers.some(check => check(email))
 
   const myMatches = await prisma.match.findMany({
     where: { OR: [{ profileOneId: viewerProfileId }, { profileTwoId: viewerProfileId }], status: { in: ['PENDING', 'PENDING_COUPLE_APPROVAL', 'ACTIVE'] } },
@@ -273,8 +331,13 @@ export const getCandidates = async (
   const scored: Array<{ candidate: any; score: number; breakdown: any; reasonCodes: string[]; explanation: string[] }> = []
 
   for (const candidate of pool) {
-    // Step 2
-    if (!(await isUserEligible(candidate.userId))) continue
+    // Step 2 — BETA.2 (FASE C): Shared Profile candidates (userId null)
+    // have no single owning user, so they're checked via every active
+    // member instead (isSharedProfileEligible).
+    const candidateEligible = candidate.userId
+      ? await isUserEligible(candidate.userId)
+      : await isSharedProfileEligible(candidate.id)
+    if (!candidateEligible) continue
     // Step 6 — checked before the completeness call since it's the
     // cheapest check (pure in-memory, no DB call - candidate.user.email
     // was already fetched as part of the Step 1 pool query) and most
@@ -285,6 +348,8 @@ export const getCandidates = async (
     if (!isProfileEligible(completeness.missing)) continue
     // Step 4
     if (!passesVisibilityPolicy(candidate)) continue
+    // Step 4.5 (BETA.2 FASE C)
+    if (!(await passesIndividualDiscoveryPolicy(candidate))) continue
 
     // Step 7 (Discovery validation follow-up) — Candidate Constraints,
     // evaluated BEFORE intention/boundary compatibility and BEFORE Between

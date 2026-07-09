@@ -4,14 +4,23 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { notifyUser, notifyAdmins } from '../lib/notify'
 import { signMediaUrl } from '../lib/mediaAccessService'
 import { getVerificationBadges } from '../lib/verificationBadges'
+import { resolveMyProfileId } from '../lib/profileMembershipService'
 
 const router = Router()
 
 // GET /api/discovery — the DiscoveryService pipeline (5.2), cursor-paginated (5.4)
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const viewerProfile = await prisma.profile.findUnique({ where: { userId: req.userId! }, select: { id: true } })
-    if (!viewerProfile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
+    // BETA.2 (FASE C) — this used to be a direct Profile.userId lookup,
+    // which 404'd for every non-creator couple/group member (they never
+    // owned a Profile row for the shared profile — see
+    // activeProfileContextService.ts's header comment). resolveMyProfileId
+    // now returns whichever profile the caller is currently acting as
+    // (their own Individual Profile, or a Shared Profile they belong to),
+    // matching what Discovery should present them as.
+    const viewerProfileId = await resolveMyProfileId(req.userId!)
+    if (!viewerProfileId) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
+    const viewerProfile = { id: viewerProfileId }
 
     const typeFilter = ['INDIVIDUAL', 'COUPLE', 'GROUP'].includes(String(req.query.type))
       ? String(req.query.type) as 'INDIVIDUAL' | 'COUPLE' | 'GROUP' : undefined

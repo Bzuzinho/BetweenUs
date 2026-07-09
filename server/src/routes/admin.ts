@@ -4,6 +4,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { requireAdmin, logAdminAction, roleHasPermission } from '../middleware/admin'
 import { recalculateRiskScore, recalculateAllRiskScores } from '../lib/riskScore'
 import { evaluateAndActivateUser, canTransitionStatus } from '../lib/userActivationService'
+import { getActiveMembers } from '../lib/profileMembershipService'
 import { forUser as getEligibility } from '../lib/eligibilityService'
 import { mergePhotosForViewer, signMediaUrl } from '../lib/mediaAccessService'
 import { getKeyVersionStats, getActiveKeyVersion } from '../lib/contactHashService'
@@ -258,21 +259,41 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
   // member-facing routes get (getAgreementSummary) — per-member agreement
   // answers are NOT included here by default; that's the separate, always-
   // explicitly-logged GET /api/agreements/admin/:profileId/raw route.
+  //
+  // BETA.2 (FASE C) — user.profile is now ALWAYS this user's own
+  // Individual Profile (Shared Profiles no longer carry userId — see
+  // schema.prisma's Profile.userId comment), so `user.profile.type !==
+  // 'INDIVIDUAL'` can never be true anymore and this block would silently
+  // stop firing for every user post-backfill. Shared Profile membership is
+  // now resolved via ProfileMember instead, independent of whether this
+  // user also owns an Individual Profile — which is exactly the
+  // ownership-vs-membership distinction this admin view needs to show.
   let coupleContext: any = null
-  if (user.profile && user.profile.type !== 'INDIVIDUAL') {
+  const sharedMembership = await (prisma as any).profileMember.findFirst({
+    where: { userId: req.params.id, status: 'ACCEPTED' },
+    include: { profile: true }
+  })
+  const sharedProfile = sharedMembership?.profile && sharedMembership.profile.type !== 'INDIVIDUAL'
+    ? sharedMembership.profile
+    : null
+  if (sharedProfile) {
     const { getActiveMembers } = await import('../lib/profileMembershipService')
     const { getAgreementSummary } = await import('../lib/profileAgreementService')
     const [activeMembers, memberRows, agreementSummary] = await Promise.all([
-      getActiveMembers(user.profile.id),
+      getActiveMembers(sharedProfile.id),
       (prisma as any).profileMember.findMany({
-        where: { profileId: user.profile.id },
+        where: { profileId: sharedProfile.id },
         include: { user: { select: { id: true, email: true, status: true } } },
         orderBy: { createdAt: 'asc' }
       }),
-      getAgreementSummary(user.profile.id).catch(() => null),
+      getAgreementSummary(sharedProfile.id).catch(() => null),
     ])
     coupleContext = {
-      approvalPolicy: (user.profile as any).approvalPolicy,
+      profileId: sharedProfile.id,
+      type: sharedProfile.type,
+      displayName: sharedProfile.displayName,
+      individualDiscoveryPolicy: sharedProfile.individualDiscoveryPolicy,
+      approvalPolicy: sharedProfile.approvalPolicy,
       activeMemberCount: activeMembers.length,
       members: memberRows.map((m: any) => ({
         id: m.id, userId: m.userId, email: m.user?.email || m.invitedEmail,
@@ -614,20 +635,42 @@ router.put('/profiles/:id/status', requireAdmin('profiles'), async (req: AuthReq
   // Users to reactivate the account. Sprint 2.5.5: routed through the central
   // activation rule instead of an unconditional updateMany, so it's consistent
   // with email confirmation / identity verification approval.
+  // BETA.2 (FASE C) — Profile.userId is null for Shared Profiles
+  // (COUPLE/GROUP — see schema.prisma's comment), so approving one now
+  // activates every active member instead of a single owner. `activation`
+  // in the response keeps its old single-result shape for the Individual
+  // Profile case (still the common path); Shared Profile approvals return
+  // an array under `activations` instead.
   let activation = null
+  let activations: any[] | null = null
   if (status === 'APPROVED') {
-    activation = await evaluateAndActivateUser(profile.userId)
-    if (activation.activated) {
-      await logAdminAction(req.userId!, 'ACTIVE_USER', 'user', profile.userId, {
-        targetUserId: profile.userId,
-        reason: 'Activação automática após aprovação de perfil.',
-        newData: { status: 'ACTIVE' }, ipAddress: req.ip
-      })
+    if (profile.userId) {
+      activation = await evaluateAndActivateUser(profile.userId)
+      if (activation.activated) {
+        await logAdminAction(req.userId!, 'ACTIVE_USER', 'user', profile.userId, {
+          targetUserId: profile.userId,
+          reason: 'Activação automática após aprovação de perfil.',
+          newData: { status: 'ACTIVE' }, ipAddress: req.ip
+        })
+      }
+    } else {
+      const members = await getActiveMembers(profile.id)
+      activations = await Promise.all(members.map(async (m) => {
+        const result = await evaluateAndActivateUser(m.userId)
+        if (result.activated) {
+          await logAdminAction(req.userId!, 'ACTIVE_USER', 'user', m.userId, {
+            targetUserId: m.userId,
+            reason: 'Activação automática após aprovação de perfil (partilhado).',
+            newData: { status: 'ACTIVE' }, ipAddress: req.ip
+          })
+        }
+        return { userId: m.userId, ...result }
+      }))
     }
   }
 
   await logAdminAction(req.userId!, `${status}_PROFILE`, 'profile', req.params.id, { reason, ipAddress: req.ip })
-  res.json({ ok: true, profile, activation })
+  res.json({ ok: true, profile, activation, activations })
 })
 
 // ─── Photos ───────────────────────────────────────────────────────────────────
@@ -662,7 +705,18 @@ router.put('/photos/:id', requireAdmin('photos'), async (req: AuthRequest, res: 
   })
   if (moderationStatus === 'REJECTED') {
     const full = await prisma.profilePhoto.findUnique({ where: { id: req.params.id }, include: { profile: true } })
-    if (full) await recalculateRiskScore(full.profile.userId)
+    if (full) {
+      // BETA.2 (FASE C) — a Shared Profile's photo has no single owning
+      // user (Profile.userId is null — see schema.prisma), so a rejected
+      // photo's risk-score hit is applied to every active member instead
+      // of just one.
+      if (full.profile.userId) {
+        await recalculateRiskScore(full.profile.userId)
+      } else {
+        const members = await getActiveMembers(full.profile.id)
+        await Promise.all(members.map(m => recalculateRiskScore(m.userId)))
+      }
+    }
   }
   await logAdminAction(req.userId!, `${moderationStatus}_PHOTO`, 'photo', req.params.id, { reason: moderationNotes, ipAddress: req.ip })
   res.json({ ok: true, photo })

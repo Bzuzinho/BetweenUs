@@ -1008,13 +1008,23 @@ function CoupleAdminSection({ ctx, profileId }) {
     } catch {} finally { setLoadingRaw(false) }
   }
 
+  const policyLabel = ctx.individualDiscoveryPolicy === 'INDIVIDUAL_AND_SHARED'
+    ? 'Individual + Partilhado (perfis individuais dos membros também aparecem no Discovery)'
+    : 'Só Partilhado (perfis individuais dos membros ficam ocultos no Discovery)'
+
   return (
     <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16 }}>
-      <div style={{ fontSize:14, fontWeight:500, color:C.text2, marginBottom:12 }}>💑 Membros e Acordo</div>
+      <div style={{ fontSize:14, fontWeight:500, color:C.text2, marginBottom:4 }}>💑 {ctx.type === 'GROUP' ? 'Grupo' : 'Casal'}: {ctx.displayName}</div>
+      <div style={{ fontSize:11, color:C.muted, marginBottom:12 }}>
+        Este utilizador é <strong style={{color:C.text}}>membro</strong> deste perfil partilhado — separado do seu Perfil Individual próprio (ver tab "Perfil").
+      </div>
 
-      <div style={{ fontSize:12, color:C.muted, marginBottom:14 }}>
+      <div style={{ fontSize:12, color:C.muted, marginBottom:8 }}>
         ApprovalPolicy: <strong style={{color:C.text}}>{ctx.approvalPolicy}</strong>
         {' · '}Membros ativos: <strong style={{color:C.text}}>{ctx.activeMemberCount}</strong>
+      </div>
+      <div style={{ fontSize:12, color:C.muted, marginBottom:14 }}>
+        Política de Discovery individual: <strong style={{color:C.text}}>{policyLabel}</strong>
       </div>
 
       <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>
@@ -1243,7 +1253,12 @@ function UserDetail({ userId, onBack }) {
       )}
 
       {view==='couple' && data.coupleContext && (
-        <CoupleAdminSection ctx={data.coupleContext} profileId={data.profile?.id} />
+        // BETA.2 (FASE C) — profileId must be the SHARED profile's id
+        // (agreements/policy live there), not data.profile.id — that now
+        // always refers to this user's own, separate Individual Profile
+        // (ownership), while coupleContext describes their Shared Profile
+        // membership. See routes/admin.ts's GET /users/:id comment.
+        <CoupleAdminSection ctx={data.coupleContext} profileId={data.coupleContext.profileId} />
       )}
 
       {view==='subscription' && (

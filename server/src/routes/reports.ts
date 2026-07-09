@@ -5,6 +5,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { computeReportPriority, ReportReasonValue } from '../lib/reportPriorityService'
 import { captureMessageSnapshot, captureProfileSnapshot } from '../lib/reportEvidenceService'
 import { runModerationAssessment } from '../lib/moderationAssessmentService'
+import { resolveMyProfileId } from '../lib/profileMembershipService'
 
 const router = Router()
 
@@ -81,8 +82,13 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
         }
       }
       if (data.reportedUserId) {
-        const targetProfile = await prisma.profile.findUnique({ where: { userId: data.reportedUserId }, select: { id: true } })
-        if (targetProfile) await captureProfileSnapshot(report.id, targetProfile.id)
+        // BETA.2 (FASE C) — resolve to whichever profile the reported user
+        // is currently acting as (their Individual Profile, or a Shared
+        // Profile), not just an owned-row lookup that would miss
+        // non-creator couple/group members. See
+        // activeProfileContextService.ts's header for why this matters.
+        const targetProfileId = await resolveMyProfileId(data.reportedUserId)
+        if (targetProfileId) await captureProfileSnapshot(report.id, targetProfileId)
       }
     } catch (evidenceErr: any) {
       console.error('[REPORT EVIDENCE CAPTURE]', evidenceErr.message)
@@ -92,13 +98,13 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     // is anchored to User, RecommendationSignal to Profile. Best-effort.
     if (data.reportedUserId) {
       try {
-        const [reporterProfile, reportedProfile] = await Promise.all([
-          prisma.profile.findUnique({ where: { userId: req.userId! }, select: { id: true } }),
-          prisma.profile.findUnique({ where: { userId: data.reportedUserId }, select: { id: true } }),
+        const [reporterProfileId, reportedProfileId] = await Promise.all([
+          resolveMyProfileId(req.userId!),
+          resolveMyProfileId(data.reportedUserId),
         ])
-        if (reporterProfile && reportedProfile) {
+        if (reporterProfileId && reportedProfileId) {
           const { recordSignal } = await import('../lib/recommendationSignalService')
-          recordSignal(reporterProfile.id, reportedProfile.id, 'REPORT').catch(() => {})
+          recordSignal(reporterProfileId, reportedProfileId, 'REPORT').catch(() => {})
         }
       } catch { /* best-effort */ }
     }

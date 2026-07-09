@@ -5,7 +5,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { coarsenCoordinate } from '../utils/location'
 import { mergePhotosForViewer } from '../lib/mediaAccessService'
 import { getVerificationBadges } from '../lib/verificationBadges'
-import { isActiveMember, getActiveMembers, resolveMyProfileId } from '../lib/profileMembershipService'
+import { isActiveMember, getActiveMembers, resolveMyProfileId, getRequiredApprovers } from '../lib/profileMembershipService'
 import { evaluateCompleteness } from '../lib/profileCompletenessService'
 
 const router = Router()
@@ -350,6 +350,173 @@ router.put('/:id/privacy', requireAuth, async (req: AuthRequest, res: Response) 
   if (req.body.invisibleMode && (!sub || sub.plan === 'FREE')) return res.status(403).json({ error: 'Modo invisível requer Premium.', code: 'PREMIUM_REQUIRED' })
   const settings = await prisma.privacySettings.upsert({ where: { profileId: profile.id }, update: req.body, create: { profileId: profile.id, ...req.body } })
   res.json(settings)
+})
+
+// BETA.2 (FASE C) — Shared Profile individual-discovery policy.
+//
+// Governs whether a couple/group member's own Individual Profile is
+// additionally visible in Discovery (INDIVIDUAL_AND_SHARED) or hidden
+// while acting through the Shared Profile only (SHARED_ONLY, the
+// default). Changing it requires every active member to agree — reuses
+// ApprovalPolicyService's isApprovalSatisfied (the same ALL/MAJORITY/
+// DESIGNATED machinery already governing match approval) rather than
+// inventing new consensus rules, and ProfileMembershipService.
+// getRequiredApprovers for "who must approve" — both already
+// battle-tested by couples.ts's match approval flow. Deliberately NOT
+// built on ProfileAgreement/AgreementQuestion: that machinery does a
+// conservative merge across a whole round of unrelated Q&A questions at
+// once, and entangling an eligibility-critical discovery flag in that
+// round would let an edit to an unrelated question silently affect
+// discovery visibility.
+
+// GET /api/profiles/:id/policy — current policy + any pending proposal
+router.get('/:id/policy', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { id: req.params.id }, select: { id: true, type: true, individualDiscoveryPolicy: true } })
+    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    if (profile.type === 'INDIVIDUAL') return res.status(400).json({ error: 'Só perfis de casal/grupo têm esta política.' })
+    if (!(await isActiveMember(profile.id, req.userId!))) return res.status(403).json({ error: 'Sem permissão.' })
+
+    const pending = await (prisma as any).sharedProfilePolicyProposal.findFirst({
+      where: { profileId: profile.id, status: 'PENDING' },
+      include: { approvals: true },
+      orderBy: { createdAt: 'desc' }
+    })
+    const requiredApprovers = await getRequiredApprovers(profile.id)
+
+    res.json({
+      currentPolicy: profile.individualDiscoveryPolicy,
+      pendingProposal: pending ? {
+        id: pending.id,
+        proposedPolicy: pending.proposedPolicy,
+        proposedByUserId: pending.proposedByUserId,
+        createdAt: pending.createdAt,
+        requiredApprovers,
+        approvedUserIds: pending.approvals.filter((a: any) => a.approvedAt).map((a: any) => a.userId)
+      } : null
+    })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// POST /api/profiles/:id/policy/propose — start (or replace) a proposal to
+// change this Shared Profile's individualDiscoveryPolicy. The proposer's
+// own approval is recorded immediately (same posture as a match like —
+// proposing something IS your vote for it).
+router.post('/:id/policy/propose', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { policy } = req.body
+    if (!['INDIVIDUAL_AND_SHARED', 'SHARED_ONLY'].includes(policy)) {
+      return res.status(400).json({ error: 'Política inválida.' })
+    }
+    const profile = await prisma.profile.findUnique({ where: { id: req.params.id }, select: { id: true, type: true, individualDiscoveryPolicy: true } })
+    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    if (profile.type === 'INDIVIDUAL') return res.status(400).json({ error: 'Só perfis de casal/grupo têm esta política.' })
+    if (!(await isActiveMember(profile.id, req.userId!))) return res.status(403).json({ error: 'Sem permissão.' })
+
+    if (profile.individualDiscoveryPolicy === policy) {
+      return res.status(409).json({ error: 'Já é a política atual.' })
+    }
+
+    // Only one PENDING proposal at a time — a new one from anyone
+    // supersedes (cancels) whatever was pending before, same as changing
+    // your mind before everyone's answered.
+    await (prisma as any).sharedProfilePolicyProposal.updateMany({
+      where: { profileId: profile.id, status: 'PENDING' },
+      data: { status: 'CANCELLED' }
+    })
+
+    const proposal = await (prisma as any).sharedProfilePolicyProposal.create({
+      data: { profileId: profile.id, proposedPolicy: policy, proposedByUserId: req.userId! }
+    })
+    await (prisma as any).sharedProfilePolicyApproval.create({
+      data: { proposalId: proposal.id, userId: req.userId!, approvedAt: new Date() }
+    })
+
+    // A lone member (e.g. a couple still PENDING_PARTNER) satisfies "ALL"
+    // immediately — apply right away instead of waiting for a second
+    // member who may not exist yet.
+    const { isApprovalSatisfied } = await import('../lib/approvalPolicyService')
+    const approvedUserIds = new Set<string>([req.userId!])
+    if (await isApprovalSatisfied(profile.id, approvedUserIds)) {
+      await prisma.$transaction([
+        prisma.profile.update({ where: { id: profile.id }, data: { individualDiscoveryPolicy: policy } }),
+        (prisma as any).sharedProfilePolicyProposal.update({ where: { id: proposal.id }, data: { status: 'APPROVED' } })
+      ])
+      return res.status(201).json({ proposalId: proposal.id, applied: true, currentPolicy: policy })
+    }
+
+    res.status(201).json({ proposalId: proposal.id, applied: false, currentPolicy: profile.individualDiscoveryPolicy })
+  } catch (err: any) {
+    console.error('[POLICY PROPOSE]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// POST /api/profiles/:id/policy/proposals/:proposalId/approve
+router.post('/:id/policy/proposals/:proposalId/approve', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { id: req.params.id }, select: { id: true } })
+    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    if (!(await isActiveMember(profile.id, req.userId!))) return res.status(403).json({ error: 'Sem permissão.' })
+
+    const proposal = await (prisma as any).sharedProfilePolicyProposal.findUnique({ where: { id: req.params.proposalId } })
+    if (!proposal || proposal.profileId !== profile.id || proposal.status !== 'PENDING') {
+      return res.status(404).json({ error: 'Proposta inválida ou já resolvida.' })
+    }
+
+    await (prisma as any).sharedProfilePolicyApproval.upsert({
+      where: { proposalId_userId: { proposalId: proposal.id, userId: req.userId! } },
+      update: { approvedAt: new Date(), rejectedAt: null },
+      create: { proposalId: proposal.id, userId: req.userId!, approvedAt: new Date() }
+    })
+
+    const approvals = await (prisma as any).sharedProfilePolicyApproval.findMany({
+      where: { proposalId: proposal.id, approvedAt: { not: null } }
+    })
+    const approvedUserIds = new Set<string>(approvals.map((a: any) => a.userId))
+
+    const { isApprovalSatisfied } = await import('../lib/approvalPolicyService')
+    if (await isApprovalSatisfied(profile.id, approvedUserIds)) {
+      await prisma.$transaction([
+        prisma.profile.update({ where: { id: profile.id }, data: { individualDiscoveryPolicy: proposal.proposedPolicy } }),
+        (prisma as any).sharedProfilePolicyProposal.update({ where: { id: proposal.id }, data: { status: 'APPROVED' } })
+      ])
+      return res.json({ applied: true, currentPolicy: proposal.proposedPolicy })
+    }
+
+    res.json({ applied: false })
+  } catch (err: any) {
+    console.error('[POLICY APPROVE]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
+// POST /api/profiles/:id/policy/proposals/:proposalId/reject — any active
+// member can veto (unanimous approval means a single rejection blocks it).
+router.post('/:id/policy/proposals/:proposalId/reject', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const profile = await prisma.profile.findUnique({ where: { id: req.params.id }, select: { id: true } })
+    if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    if (!(await isActiveMember(profile.id, req.userId!))) return res.status(403).json({ error: 'Sem permissão.' })
+
+    const proposal = await (prisma as any).sharedProfilePolicyProposal.findUnique({ where: { id: req.params.proposalId } })
+    if (!proposal || proposal.profileId !== profile.id || proposal.status !== 'PENDING') {
+      return res.status(404).json({ error: 'Proposta inválida ou já resolvida.' })
+    }
+
+    await (prisma as any).sharedProfilePolicyApproval.upsert({
+      where: { proposalId_userId: { proposalId: proposal.id, userId: req.userId! } },
+      update: { rejectedAt: new Date(), approvedAt: null },
+      create: { proposalId: proposal.id, userId: req.userId!, rejectedAt: new Date() }
+    })
+    await (prisma as any).sharedProfilePolicyProposal.update({ where: { id: proposal.id }, data: { status: 'REJECTED' } })
+
+    res.json({ ok: true })
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
 })
 
 export default router
