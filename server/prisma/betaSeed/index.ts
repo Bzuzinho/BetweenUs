@@ -82,12 +82,12 @@ const main = async () => {
     }
 
     console.log('[5/13] Discovery / Between Score pairs + Like/Pass/Match...')
-    const matchIds = await seedLikePassMatchScenarios(individuals, couples)
+    const matchIds = await seedLikePassMatchScenarios(individuals, couples, group)
     await seedContactBlockPair(individuals)
     counts.matches = Object.keys(matchIds).length
 
     console.log('[6/13] Private Rooms + Room Rules + chat...')
-    const roomIds = await seedPrivateRooms(individuals, couples, matchIds)
+    const roomIds = await seedPrivateRooms(individuals, couples, matchIds, group)
     counts.privateRooms = Object.keys(roomIds).length
 
     console.log('[7/13] Consent Checks + Shared Intentions...')

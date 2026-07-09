@@ -44,7 +44,8 @@ const seedMessages = async (roomId: string, senderUserId: string, otherUserId: s
 }
 
 export const seedPrivateRooms = async (
-  individuals: ProfileMap, couples: ProfileMap, matchIds: Record<string, string>
+  individuals: ProfileMap, couples: ProfileMap, matchIds: Record<string, string>,
+  group?: { profileId: string; memberUserIds: string[] } | null
 ): Promise<Record<string, string>> => {
   const roomIds: Record<string, string> = {}
 
@@ -149,6 +150,22 @@ export const seedPrivateRooms = async (
       if (ines) await acceptRuleSet(r.room.id, ines)
       roomIds.room_f_safety_locked = r.room.id
       await blockProfile(individuals['individual_alex']?.profileId!, individuals['individual_ines']?.profileId!)
+    }
+  }
+
+  // ROOM G — GROUP_INDIVIDUAL — ACTIVE, all rules accepted. From
+  // match_group_individual_active (Trio Aurora x Miguel). BETA.2 (FASE E)
+  // — demonstrates a 4-person Private Room (3 group members + Miguel),
+  // proving createFromMatch/PrivateRoomMember creation is genuinely
+  // N-party and not hardcoded to 2 logical sides.
+  if (matchIds.match_group_individual_active && group) {
+    const r = await createFromMatch(matchIds.match_group_individual_active)
+    if (r.ok && r.room) {
+      roomIds.room_g_group_individual_active = r.room.id
+      const miguel = individuals['individual_miguel']?.userId
+      for (const uid of group.memberUserIds) await acceptRuleSet(r.room.id, uid)
+      if (miguel) await acceptRuleSet(r.room.id, miguel)
+      if (miguel && group.memberUserIds[0]) await seedMessages(r.room.id, group.memberUserIds[0], miguel)
     }
   }
 
