@@ -56,7 +56,16 @@ router.post('/gdpr/hard-delete/run', requireAdmin('users'), async (req: AuthRequ
 // SUPER_ADMIN-only (same convention as recommendations.ts's wantsTestData)
 // — ADMIN/others always see the production-honest numbers, with no way to
 // silently blend seeded beta accounts into what looks like real traction.
-router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: Response) => {
+// BETA.2.3 — was requireAdmin('metrics'), which only SUPER_ADMIN/ADMIN/
+// FINANCE have. MODERATOR/SUPPORT/CONTENT_REVIEWER got a blanket 403 on
+// this single endpoint and the frontend's silent .catch(() => {}) turned
+// that into a permanent "A carregar..." spinner (DashboardTab never left
+// `data === null`). Gate relaxed to "any authenticated admin role" — the
+// response itself is now filtered per-section by filterDashboardForRole()
+// below, so a MODERATOR still never receives revenue/subscription data,
+// it just gets a 200 with only the sections it has permission for instead
+// of a 403 with nothing.
+router.get('/dashboard', requireAdmin(), async (req: AuthRequest, res: Response) => {
   try {
     const today = new Date(); today.setHours(0,0,0,0)
     const week  = new Date(Date.now() - 7  * 24 * 60 * 60 * 1000)
@@ -98,7 +107,8 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
       prisma.user.count({ where: { isTestAccount: true } }),
     ])
 
-    res.json({
+    const { filterDashboardForRole } = await import('../lib/adminWorkQueueService')
+    const full = {
       includeTestData,
       testAccountCount,
       users: { total: totalUsers, newToday, newWeek, newMonth, suspended: suspendedUsers, banned: bannedUsers, highRisk: highRiskUsers },
@@ -109,6 +119,11 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
       reports: { pending: pendingReports },
       subscriptions: { premium: premiumSubs, couple: coupleSubs, total: premiumSubs + coupleSubs },
       verifications: { pending: pendingVerifications }
+    }
+    res.json({
+      includeTestData,
+      testAccountCount,
+      ...filterDashboardForRole(full, (req as any).adminRole || null)
     })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
@@ -123,7 +138,20 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
 router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
   const { limit = 20, offset = 0, status, search, sortByRisk, accountFilter } = req.query
   const where: any = {}
-  if (status) where.status = status
+  // BETA.2.4 — deleted (anonymised) accounts stay in the users table forever
+  // (soft-delete/retention, see hardDeleteJob.ts) but must not clutter the
+  // default admin listing as if they were normal users. Explicit opt-in via
+  // ?status=DELETED shows only deleted accounts; ?status=ALL removes the
+  // filter entirely (audit/export use case). Any other explicit ?status=X
+  // behaves exactly as before (exact match). No status param = default =
+  // everything except DELETED.
+  if (status === 'ALL') {
+    // no filter
+  } else if (status) {
+    where.status = status
+  } else {
+    where.status = { not: 'DELETED' }
+  }
   if (accountFilter === 'test') where.isTestAccount = true
   if (accountFilter === 'real') where.isTestAccount = false
   if (search) where.OR = [
@@ -137,7 +165,7 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
       orderBy: sortByRisk === 'true' ? { riskScore: 'desc' } : { createdAt: 'desc' },
       select: {
         id: true, email: true, status: true, adminRole: true, avatarPath: true,
-        createdAt: true, lastSeenAt: true, riskScore: true,
+        createdAt: true, lastSeenAt: true, riskScore: true, updatedAt: true,
         isTestAccount: true, testScenarioKey: true,
         profile: { select: { id: true, displayName: true, type: true, city: true, status: true } },
         subscription: { select: { plan: true, status: true } },
@@ -160,6 +188,7 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
     createdAt: Date
     lastSeenAt: Date | null
     riskScore: number | null
+    updatedAt: Date
     isTestAccount: boolean
     testScenarioKey: string | null
     profile: { id: string; displayName: string; type: string; city: string | null; status: string } | null
@@ -167,8 +196,20 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
     verification: { status: string } | null
     _count: { reportsMade: number; reportsReceived: number }
   }
+  // BETA.2.4 — for a DELETED (anonymised) account, expose when the
+  // anonymisation happened and when hardDeleteJob.ts is scheduled to
+  // permanently remove the row, so admin can distinguish "recently
+  // deleted, still in retention window" from stale data — reuses
+  // hardDeleteJob.ts's own GRACE_DAYS/updatedAt-cutoff logic rather than
+  // inventing a second definition of the retention window.
+  const HARD_DELETE_GRACE_DAYS = Number(process.env.HARD_DELETE_GRACE_DAYS || 30)
   const usersWithAvatars = await Promise.all((users as AdminUserListRow[]).map(async (u: AdminUserListRow) => ({
-    ...u, avatarPath: await signAvatarUrl(u.avatarPath)
+    ...u,
+    avatarPath: await signAvatarUrl(u.avatarPath),
+    ...(u.status === 'DELETED' ? {
+      deletedAt: u.updatedAt,
+      hardDeleteScheduledAt: new Date(u.updatedAt.getTime() + HARD_DELETE_GRACE_DAYS * 24 * 60 * 60 * 1000)
+    } : {})
   })))
   res.json({ users: usersWithAvatars, total })
 })
@@ -1148,6 +1189,25 @@ router.put('/referral-rule', requireAdmin('configuracoes'), async (req: AuthRequ
 
 export default router
 // ─── Notifications ────────────────────────────────────────────────────────────
+// BETA.2.2 — the bell used to ONLY show event-driven Notification rows
+// (never anything for pre-existing/seeded pending work, and never anything
+// at all for MODERATOR/SUPPORT/FINANCE/CONTENT_REVIEWER — notifyAdmins()
+// only targets SUPER_ADMIN/ADMIN). This endpoint is additive: unread
+// Notification rows (unchanged) PLUS a role-filtered, derived work queue
+// (adminWorkQueueService.ts) computed fresh from the actual pending
+// tables every call — no new Notification rows are created for this, per
+// the explicit instruction not to fabricate seed notifications when the
+// information can be derived from real queues.
+router.get('/notifications/summary', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  try {
+    const { getAdminNotificationSummary } = await import('../lib/adminWorkQueueService')
+    const summary = await getAdminNotificationSummary(req.userId!, ((req as any).adminRole || null))
+    res.json(summary)
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 router.get('/notifications', requireAdmin(), async (req: AuthRequest, res: Response) => {
   const notifs = await (prisma as any).notification.findMany({
     where: { userId: req.userId! },

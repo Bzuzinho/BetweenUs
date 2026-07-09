@@ -43,14 +43,40 @@ const ALL_TABS = [
 ]
 
 /* ─── Notification bell ──────────────────────────────────────────────────────── */
+// BETA.2.2 — QUEUE_TAB maps each derived work-queue key (adminWorkQueueService.ts)
+// to the admin tab clicking it should open. Kept here (not server-side)
+// because it's purely a frontend navigation concern — the backend only
+// knows counts, not routes.
+const QUEUE_TAB = {
+  verificationsPending: 'verifications',
+  profilesPendingReview: 'profiles',
+  reportsPending: 'reports',
+  reportsCritical: 'reports',
+  photosPending: 'photos',
+}
+const QUEUE_LABEL = {
+  verificationsPending: 'Verificações pendentes',
+  profilesPendingReview: 'Perfis para rever',
+  reportsPending: 'Reports pendentes',
+  reportsCritical: 'Reports críticos',
+  photosPending: 'Fotos pendentes',
+}
+
 function NotificationBell() {
   const [open, setOpen] = useState(false)
   const [notifs, setNotifs] = useState([])
+  // BETA.2.2 — workQueue is DERIVED (verifications/reports/profiles/photos
+  // actually pending right now), separate from `notifs` (event-driven
+  // Notification rows). Before this the bell only ever reflected the
+  // latter, so pre-existing/seeded pending work never showed up for any
+  // role, including SUPER_ADMIN.
+  const [workQueue, setWorkQueue] = useState({})
   const ref = useRef(null)
   const navigate = useNavigate()
 
   const load = useCallback(() => {
     api.get('/admin/notifications').then(r => setNotifs(r.data.notifications || [])).catch(() => {})
+    api.get('/admin/notifications/summary').then(r => setWorkQueue(r.data.workQueue || {})).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -66,6 +92,10 @@ function NotificationBell() {
   }, [])
 
   const unread = notifs.filter(n => !n.readAt).length
+  // reportsCritical is a subset of reportsPending — don't double-count it
+  // in the badge, same reasoning as adminWorkQueueService.ts's totalAttentionCount.
+  const queueTotal = (workQueue.verificationsPending||0) + (workQueue.profilesPendingReview||0) + (workQueue.reportsPending||0) + (workQueue.photosPending||0)
+  const totalAttention = unread + queueTotal
 
   const markRead = async id => {
     await api.put(`/admin/notifications/${id}/read`).catch(() => {})
@@ -86,14 +116,14 @@ function NotificationBell() {
   return (
     <div ref={ref} style={{ position:'relative' }}>
       <button onClick={() => setOpen(o => !o)} style={{
-        position:'relative', background:'none', border:`1px solid ${unread > 0 ? 'rgba(184,167,255,0.4)' : C.border}`,
+        position:'relative', background:'none', border:`1px solid ${totalAttention > 0 ? 'rgba(184,167,255,0.4)' : C.border}`,
         borderRadius:10, width:38, height:38, cursor:'pointer',
         display:'flex', alignItems:'center', justifyContent:'center', fontSize:18,
-        color: unread > 0 ? C.primary : C.text2,
+        color: totalAttention > 0 ? C.primary : C.text2,
         transition:'all 0.2s',
       }}>
         🔔
-        {unread > 0 && (
+        {totalAttention > 0 && (
           <span style={{
             position:'absolute', top:-5, right:-5,
             background:C.danger, color:'#fff',
@@ -101,7 +131,7 @@ function NotificationBell() {
             padding:'1px 5px', minWidth:16, textAlign:'center',
             animation:'pulse 1.5s infinite',
           }}>
-            {unread > 9 ? '9+' : unread}
+            {totalAttention > 9 ? '9+' : totalAttention}
           </span>
         )}
       </button>
@@ -119,8 +149,21 @@ function NotificationBell() {
               <button onClick={delAll} style={{ fontSize:11, color:C.muted, background:'none', border:'none', cursor:'pointer' }}>Apagar todas</button>
             )}
           </div>
+          {queueTotal > 0 && (
+            <div style={{ borderBottom:`1px solid ${C.border}` }}>
+              {Object.entries(workQueue).filter(([k,v]) => k !== 'reportsCritical' && v > 0).map(([k,v]) => (
+                <div key={k} onClick={() => { setOpen(false); navigate(`/admin/${QUEUE_TAB[k]}`) }} style={{
+                  padding:'10px 14px', cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center',
+                  fontSize:13, color:C.text,
+                }}>
+                  <span>{QUEUE_LABEL[k]}{k==='reportsPending' && workQueue.reportsCritical>0 ? ` (${workQueue.reportsCritical} críticos)` : ''}</span>
+                  <span style={{ background:C.primaryDim, color:C.primary, borderRadius:8, padding:'2px 8px', fontSize:12, fontWeight:600 }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div style={{ overflowY:'auto', maxHeight:320 }}>
-            {notifs.length === 0 && (
+            {notifs.length === 0 && queueTotal === 0 && (
               <div style={{ padding:20, textAlign:'center', color:C.muted, fontSize:13 }}>Sem notificações</div>
             )}
             {notifs.map(n => (
@@ -442,27 +485,65 @@ function ReasonModal({ title, onConfirm, onCancel, hasNote=false }) {
 }
 
 /* ─── Dashboard tab ──────────────────────────────────────────────────────────── */
+// BETA.2.3 — role-aware dashboard. GET /admin/dashboard now returns 200
+// for ANY admin role (was requireAdmin('metrics'), 403 for MODERATOR/
+// SUPPORT/CONTENT_REVIEWER) with a `visibleSections` array telling the
+// frontend which of `users/profiles/photos/matches/messages/reports/
+// subscriptions/verifications` this role is actually allowed to see —
+// filtered server-side (adminWorkQueueService.ts's filterDashboardForRole),
+// never trust-the-client. A widget is rendered only if its section is
+// present in `visibleSections`, so e.g. MODERATOR never sees a revenue
+// card, and a role with NO visible sections still gets a real (if sparse)
+// dashboard instead of a permanent spinner or a wall of undefined values.
 function DashboardTab({ changeTab }) {
   const [data, setData] = useState(null)
-  useEffect(() => { api.get('/admin/dashboard').then(r => setData(r.data)).catch(() => {}) }, [])
-  if (!data) return <div style={{ color:C.muted, padding:20 }}>A carregar...</div>
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(() => {
+    setLoading(true); setError('')
+    api.get('/admin/dashboard')
+      .then(r => setData(r.data))
+      .catch(e => setError(e.response?.data?.error || 'Não foi possível carregar o dashboard.'))
+      .finally(() => setLoading(false))
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  if (loading) return <div style={{ color:C.muted, padding:20 }}>A carregar...</div>
+  if (error) return (
+    <div style={{ background:C.dangerDim, border:`1px solid rgba(248,113,113,0.3)`, borderRadius:14, padding:16, color:C.danger, fontSize:13 }}>
+      {error}
+      <div style={{ marginTop:10 }}>
+        <button onClick={load} style={{ background:'none', border:`1px solid ${C.danger}`, borderRadius:8, padding:'6px 14px', color:C.danger, fontSize:12, cursor:'pointer' }}>Tentar novamente</button>
+      </div>
+    </div>
+  )
+  const visible = new Set(data?.visibleSections || [])
+  if (visible.size === 0) return <div style={{ color:C.muted, padding:20, textAlign:'center' }}>Não há dados de dashboard disponíveis para o teu role.</div>
+
   return (
     <div>
-      <div style={{ display:'flex', gap:8, marginBottom:10, flexWrap:'wrap' }}>
-        <StatCard label="Utilizadores" value={data.users?.total} onClick={() => changeTab('users')}/>
-        <StatCard label="Hoje" value={data.users?.newToday} color={C.success} onClick={() => changeTab('users')}/>
-        <StatCard label="Alto risco" value={data.users?.highRisk} color={C.danger} onClick={() => changeTab('users')}/>
-      </div>
-      <div style={{ display:'flex', gap:8, marginBottom:10, flexWrap:'wrap' }}>
-        <StatCard label="Perfis pend." value={data.profiles?.pending} color={C.warning} onClick={() => changeTab('profiles')}/>
-        <StatCard label="Reports" value={data.reports?.pending} color={C.danger} onClick={() => changeTab('reports')}/>
-        <StatCard label="Fotos pend." value={data.photos?.pending} color={C.warning} onClick={() => changeTab('photos')}/>
-      </div>
-      <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-        <StatCard label="Verif. pend." value={data.verifications?.pending} color={C.warning} onClick={() => changeTab('verifications')}/>
-        <StatCard label="Premium" value={data.subscriptions?.total} color={C.success} onClick={() => changeTab('users')}/>
-        <StatCard label="Suspenses" value={data.users?.suspended} color={C.muted} onClick={() => changeTab('users')}/>
-      </div>
+      {(visible.has('users') || visible.has('profiles') || visible.has('reports')) && (
+        <div style={{ display:'flex', gap:8, marginBottom:10, flexWrap:'wrap' }}>
+          {visible.has('users') && <StatCard label="Utilizadores" value={data.users?.total} onClick={() => changeTab('users')}/>}
+          {visible.has('users') && <StatCard label="Hoje" value={data.users?.newToday} color={C.success} onClick={() => changeTab('users')}/>}
+          {visible.has('users') && <StatCard label="Alto risco" value={data.users?.highRisk} color={C.danger} onClick={() => changeTab('users')}/>}
+        </div>
+      )}
+      {(visible.has('profiles') || visible.has('reports') || visible.has('photos')) && (
+        <div style={{ display:'flex', gap:8, marginBottom:10, flexWrap:'wrap' }}>
+          {visible.has('profiles') && <StatCard label="Perfis pend." value={data.profiles?.pending} color={C.warning} onClick={() => changeTab('profiles')}/>}
+          {visible.has('reports') && <StatCard label="Reports" value={data.reports?.pending} color={C.danger} onClick={() => changeTab('reports')}/>}
+          {visible.has('photos') && <StatCard label="Fotos pend." value={data.photos?.pending} color={C.warning} onClick={() => changeTab('photos')}/>}
+        </div>
+      )}
+      {(visible.has('verifications') || visible.has('subscriptions') || visible.has('users')) && (
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          {visible.has('verifications') && <StatCard label="Verif. pend." value={data.verifications?.pending} color={C.warning} onClick={() => changeTab('verifications')}/>}
+          {visible.has('subscriptions') && <StatCard label="Premium" value={data.subscriptions?.total} color={C.success} onClick={() => changeTab('users')}/>}
+          {visible.has('users') && <StatCard label="Suspensas" value={data.users?.suspended} color={C.muted} onClick={() => changeTab('users')}/>}
+        </div>
+      )}
     </div>
   )
 }
@@ -1080,15 +1161,24 @@ function UserDetail({ userId, onBack }) {
         )}
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:14 }}>
+      {/* BETA.2.6 — was a rigid 2-column grid (gridTemplateColumns:'1fr 1fr'),
+          so every button stretched to half the panel width even on a wide
+          desktop screen. Now a flex-wrap ActionBar: buttons sit inline on
+          one row when there's room (desktop), wrap in pairs on tablet, and
+          stack on narrow mobile — all from the same flex-wrap, no separate
+          breakpoints needed. Each button gets a fixed, compact width
+          instead of stretching to fill its grid cell. */}
+      <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:14 }}>
         {/* Sprint 2.5.5: "Reactivar" só faz SUSPENDED→ACTIVE (transição manual explícita).
             PENDING_VERIFICATION→ACTIVE só acontece via avaliação de requisitos. */}
-        {u.status==='SUSPENDED' && <button onClick={()=>setModal('activate')} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:12, padding:11, color:C.success, fontSize:13, minHeight:44, cursor:'pointer' }}>✓ Reactivar</button>}
-        {u.status==='PENDING_VERIFICATION' && <button onClick={evaluateActivation} style={{ background:C.successDim, border:`1px solid ${C.success}`, borderRadius:12, padding:11, color:C.success, fontSize:13, minHeight:44, cursor:'pointer' }}>⟳ Avaliar activação</button>}
-        {u.status==='ACTIVE' && <button onClick={()=>setModal('suspend')}  style={{ background:C.elevated,   border:`1px solid ${C.border}`,  borderRadius:12, padding:11, color:C.text2,  fontSize:13, minHeight:44, cursor:'pointer' }}>⏸ Suspender</button>}
-        {u.status!=='BANNED'    && <button onClick={()=>setModal('ban')}      style={{ background:C.dangerDim,  border:`1px solid ${C.danger}`,  borderRadius:12, padding:11, color:C.danger,  fontSize:13, minHeight:44, cursor:'pointer' }}>🚫 Banir</button>}
-        <button onClick={resetPwd} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:12, padding:11, color:C.text2, fontSize:13, minHeight:44, cursor:'pointer' }}>🔑 Reset password</button>
-        <button onClick={()=>setModal('delete')} style={{ background:C.dangerDim, border:`1px solid rgba(248,113,113,0.3)`, borderRadius:12, padding:11, color:C.danger, fontSize:13, minHeight:44, cursor:'pointer' }}>🗑 Eliminar</button>
+        {u.status==='SUSPENDED' && <button onClick={()=>setModal('activate')} style={{ flex:'1 1 auto', minWidth:130, background:C.successDim, border:`1px solid ${C.success}`, borderRadius:10, padding:'9px 14px', color:C.success, fontSize:13, minHeight:40, cursor:'pointer' }}>✓ Reactivar</button>}
+        {u.status==='PENDING_VERIFICATION' && <button onClick={evaluateActivation} style={{ flex:'1 1 auto', minWidth:150, background:C.successDim, border:`1px solid ${C.success}`, borderRadius:10, padding:'9px 14px', color:C.success, fontSize:13, minHeight:40, cursor:'pointer' }}>⟳ Avaliar activação</button>}
+        {/* Suspender — warning style (não é destrutivo/irreversível como Banir/Eliminar, mas também não é neutro como Reset password). */}
+        {u.status==='ACTIVE' && <button onClick={()=>setModal('suspend')}  style={{ flex:'1 1 auto', minWidth:130, background:'rgba(251,191,36,0.1)', border:`1px solid ${C.warning}`,  borderRadius:10, padding:'9px 14px', color:C.warning,  fontSize:13, minHeight:40, cursor:'pointer' }}>⏸ Suspender</button>}
+        {u.status!=='BANNED'    && <button onClick={()=>setModal('ban')}      style={{ flex:'1 1 auto', minWidth:110, background:C.dangerDim,  border:`1px solid ${C.danger}`,  borderRadius:10, padding:'9px 14px', color:C.danger,  fontSize:13, minHeight:40, cursor:'pointer' }}>🚫 Banir</button>}
+        {/* Reset password — neutral/secondary, not a status change. */}
+        <button onClick={resetPwd} style={{ flex:'1 1 auto', minWidth:150, background:C.elevated, border:`1px solid ${C.border}`, borderRadius:10, padding:'9px 14px', color:C.text2, fontSize:13, minHeight:40, cursor:'pointer' }}>🔑 Reset password</button>
+        <button onClick={()=>setModal('delete')} style={{ flex:'1 1 auto', minWidth:110, background:C.dangerDim, border:`1px solid rgba(248,113,113,0.3)`, borderRadius:10, padding:'9px 14px', color:C.danger, fontSize:13, minHeight:40, cursor:'pointer' }}>🗑 Eliminar</button>
       </div>
 
       {msg && <div style={{ background:C.successDim, border:`1px solid rgba(74,222,128,0.25)`, borderRadius:10, padding:'10px 14px', marginBottom:12, color:C.success, fontSize:13 }}>{msg}</div>}
@@ -1367,15 +1457,22 @@ function UsersTab() {
   const [users, setUsers] = useState([])
   const [search, setSearch] = useState('')
   const [accountFilter, setAccountFilter] = useState('all') // BETA.1.32 — 'all' | 'real' | 'test'
+  // BETA.2.4 — 'active' (default, excludes DELETED) | 'DELETED' | 'ALL'.
+  // Mirrors the server's GET /admin/users status semantics exactly — 'active'
+  // sends no status param (server defaults to excluding DELETED).
+  const [statusFilter, setStatusFilter] = useState('active')
   const [selectedId, setSelectedId] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [loadErr, setLoadErr] = useState('')
   const load = useCallback(() => {
     const params = new URLSearchParams()
     if (search) params.set('search', search)
     if (accountFilter !== 'all') params.set('accountFilter', accountFilter)
+    if (statusFilter !== 'active') params.set('status', statusFilter)
     const q = params.toString() ? `?${params.toString()}` : ''
-    api.get(`/admin/users${q}`).then(r => setUsers(r.data.users||[]))
-  }, [search, accountFilter])
+    setLoadErr('')
+    api.get(`/admin/users${q}`).then(r => setUsers(r.data.users||[])).catch(e => setLoadErr(e.response?.data?.error || 'Erro ao carregar utilizadores.'))
+  }, [search, accountFilter, statusFilter])
   useEffect(() => { load() }, [load])
   if (selectedId) return <UserDetail userId={selectedId} onBack={() => { setSelectedId(null); load() }}/>
   return (
@@ -1388,22 +1485,35 @@ function UsersTab() {
           <option value="real" style={{background:C.surface}}>Contas reais</option>
           <option value="test" style={{background:C.surface}}>Contas de teste</option>
         </select>
+        <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{ ...INP, marginBottom:0, width:'auto', cursor:'pointer' }}>
+          <option value="active" style={{background:C.surface}}>Activas (padrão)</option>
+          <option value="DELETED" style={{background:C.surface}}>Eliminadas</option>
+          <option value="ALL" style={{background:C.surface}}>Todas (inclui eliminadas)</option>
+        </select>
         {me?.adminRole==='SUPER_ADMIN' && (
           <button onClick={()=>setShowCreate(true)} style={{ background:C.primary, border:'none', borderRadius:12, padding:'0 14px', color:'#0A141A', fontWeight:600, fontSize:13, minHeight:46, flexShrink:0, cursor:'pointer' }}>+ Criar</button>
         )}
       </div>
+      {loadErr && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{loadErr}</div>}
+      {!loadErr && users.length===0 && <div style={{ color:C.muted, fontSize:13, padding:20, textAlign:'center' }}>Nenhum utilizador encontrado com estes filtros.</div>}
       {users.map(u => (
-        <div key={u.id} onClick={()=>setSelectedId(u.id)} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:14, marginBottom:8, cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+        <div key={u.id} onClick={()=>setSelectedId(u.id)} style={{ background:C.surface, border:`1px solid ${u.status==='DELETED'?'rgba(248,113,113,0.25)':C.border}`, borderRadius:14, padding:14, marginBottom:8, cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
           <div>
             <div style={{ fontSize:13, fontWeight:500, color:C.text, marginBottom:3 }}>
               {u.email}
               {u.adminRole && <span style={{ color:C.primary, fontSize:11, marginLeft:8, background:C.primaryDim, borderRadius:4, padding:'1px 6px' }}>{u.adminRole}</span>}
               {u.isTestAccount && <span style={{ color:'#C9956B', fontSize:11, marginLeft:8, background:'rgba(201,149,107,0.15)', borderRadius:4, padding:'1px 6px', fontWeight:600 }}>TEST</span>}
+              {u.status==='DELETED' && <span style={{ color:C.danger, fontSize:11, marginLeft:8, background:C.dangerDim, borderRadius:4, padding:'1px 6px', fontWeight:600 }}>ELIMINADA</span>}
             </div>
             <div style={{ fontSize:12, color:C.muted }}>
               {u.profile?.displayName||'sem perfil'} · {u.status}
               {u.riskScore>30&&<span style={{color:C.danger}}> · risco {u.riskScore}</span>}
             </div>
+            {u.status==='DELETED' && u.deletedAt && (
+              <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>
+                Eliminada em {new Date(u.deletedAt).toLocaleDateString('pt-PT')} · remoção definitiva prevista {new Date(u.hardDeleteScheduledAt).toLocaleDateString('pt-PT')}
+              </div>
+            )}
           </div>
           <span style={{ color:C.muted, fontSize:18 }}>›</span>
         </div>
@@ -2713,8 +2823,21 @@ function IntentionsManager() {
   const [form, setForm] = useState({ name:'', slug:'', description:'', category:'', active:true })
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
+  // BETA.2.10 — catalogs were rendering as silently "empty" whenever the
+  // GET failed (network error, 500, expired session) because the .then()
+  // had no .catch(): the promise rejected, items stayed [], and the UI
+  // had no way to tell "really empty" apart from "request failed". loading
+  // starts true so the very first render (before the request settles)
+  // doesn't flash the empty state either.
+  const [loading, setLoading] = useState(true); const [loadErr, setLoadErr] = useState('')
 
-  const load = useCallback(() => { api.get('/catalog/admin/intentions').then(r => setItems(r.data.intentions||[])) }, [])
+  const load = useCallback(() => {
+    setLoading(true); setLoadErr('')
+    api.get('/catalog/admin/intentions')
+      .then(r => setItems(r.data.intentions||[]))
+      .catch(e => setLoadErr(e.response?.data?.error || 'Não foi possível carregar as intenções.'))
+      .finally(() => setLoading(false))
+  }, [])
   useEffect(() => { load() }, [load])
 
   const openNew = () => { setForm({ name:'', slug:'', description:'', category:'', active:true }); setEditing('new'); setMsg(''); setErr('') }
@@ -2775,6 +2898,8 @@ function IntentionsManager() {
       </div>
       {msg && <div style={{ color:C.success, fontSize:13, marginBottom:10 }}>{msg}</div>}
       {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+      {loadErr && <div style={{ color:C.danger, fontSize:13, marginBottom:10, display:'flex', alignItems:'center', gap:8 }}>{loadErr} <button onClick={load} style={{ background:'none', border:`1px solid ${C.danger}`, borderRadius:6, padding:'3px 10px', color:C.danger, fontSize:12, cursor:'pointer' }}>Tentar novamente</button></div>}
+      {!loading && !loadErr && items.length===0 && <div style={{ color:C.muted, fontSize:13, padding:'20px 0', textAlign:'center' }}>Não existem intenções configuradas.</div>}
       {items.map(i => (
         <div key={i.id} style={{ background:C.surface, border:`1px solid ${i.active?C.border:'rgba(248,113,113,0.2)'}`, borderRadius:14, padding:'12px 14px', marginBottom:8 }}>
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
@@ -2808,8 +2933,17 @@ function CatalogOptionsManager({ apiPath, singularLabel, basePath, dataKey, show
   const [form, setForm] = useState({ label:'', slug:'', description:'', category:'', active:true })
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
+  // BETA.2.10 — same fix as IntentionsManager/BoundariesManager: an API
+  // error must render as an error, never silently as "no options exist".
+  const [loading, setLoading] = useState(true); const [loadErr, setLoadErr] = useState('')
 
-  const load = useCallback(() => { api.get(base).then(r => setItems(r.data[key]||[])) }, [])
+  const load = useCallback(() => {
+    setLoading(true); setLoadErr('')
+    api.get(base)
+      .then(r => setItems(r.data[key]||[]))
+      .catch(e => setLoadErr(e.response?.data?.error || `Não foi possível carregar ${singularLabel}.`))
+      .finally(() => setLoading(false))
+  }, [])
   useEffect(() => { load() }, [load])
 
   const openNew = () => { setForm({ label:'', slug:'', description:'', category:'', active:true }); setEditing('new'); setErr('') }
@@ -2871,6 +3005,8 @@ function CatalogOptionsManager({ apiPath, singularLabel, basePath, dataKey, show
         <button onClick={openNew} style={{ background:C.primary, border:'none', borderRadius:10, padding:'9px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>+ Nova</button>
       </div>
       {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+      {loadErr && <div style={{ color:C.danger, fontSize:13, marginBottom:10, display:'flex', alignItems:'center', gap:8 }}>{loadErr} <button onClick={load} style={{ background:'none', border:`1px solid ${C.danger}`, borderRadius:6, padding:'3px 10px', color:C.danger, fontSize:12, cursor:'pointer' }}>Tentar novamente</button></div>}
+      {!loading && !loadErr && items.length===0 && <div style={{ color:C.muted, fontSize:13, padding:'20px 0', textAlign:'center' }}>Não existem opções de {singularLabel} configuradas.</div>}
       {items.map(g => (
         <div key={g.id} style={{ background:C.surface, border:`1px solid ${g.active?C.border:'rgba(248,113,113,0.2)'}`, borderRadius:14, padding:'12px 14px', marginBottom:8 }}>
           <div style={{ fontSize:14, fontWeight:500, color:C.text }}>{g.label} {!g.active && <span style={{color:C.muted, fontSize:11}}>(inactiva)</span>}</div>
@@ -2915,8 +3051,18 @@ function BoundariesManager() {
   const [form, setForm] = useState({ name:'', slug:'', category:BOUNDARY_CATEGORIES[0], description:'', isHardBoundary:false, ruleType:'MUTUAL_ALIGNMENT', constraintType:'', sensitive:false, active:true })
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
+  // BETA.2.10 — see IntentionsManager's identical comment: distinguish a
+  // failed request from a genuinely empty catalog instead of silently
+  // rendering nothing either way.
+  const [loading, setLoading] = useState(true); const [loadErr, setLoadErr] = useState('')
 
-  const load = useCallback(() => { api.get('/catalog/admin/boundaries').then(r => setItems(r.data.boundaries||[])) }, [])
+  const load = useCallback(() => {
+    setLoading(true); setLoadErr('')
+    api.get('/catalog/admin/boundaries')
+      .then(r => setItems(r.data.boundaries||[]))
+      .catch(e => setLoadErr(e.response?.data?.error || 'Não foi possível carregar os limites.'))
+      .finally(() => setLoading(false))
+  }, [])
   useEffect(() => { load() }, [load])
 
   const openNew = () => { setForm({ name:'', slug:'', category:BOUNDARY_CATEGORIES[0], description:'', isHardBoundary:false, ruleType:'MUTUAL_ALIGNMENT', constraintType:'', sensitive:false, active:true }); setEditing('new'); setErr('') }
@@ -3002,6 +3148,8 @@ function BoundariesManager() {
         <button onClick={openNew} style={{ background:C.primary, border:'none', borderRadius:10, padding:'9px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>+ Novo</button>
       </div>
       {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+      {loadErr && <div style={{ color:C.danger, fontSize:13, marginBottom:10, display:'flex', alignItems:'center', gap:8 }}>{loadErr} <button onClick={load} style={{ background:'none', border:`1px solid ${C.danger}`, borderRadius:6, padding:'3px 10px', color:C.danger, fontSize:12, cursor:'pointer' }}>Tentar novamente</button></div>}
+      {!loading && !loadErr && items.length===0 && <div style={{ color:C.muted, fontSize:13, padding:'20px 0', textAlign:'center' }}>Não existem limites configurados.</div>}
       {[...BOUNDARY_CATEGORIES, ...otherCategories].map(cat => (grouped[cat] || items.filter(i=>i.category===cat)).length > 0 && (
         <div key={cat} style={{ marginBottom:18 }}>
           <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:8 }}>{cat}</div>
