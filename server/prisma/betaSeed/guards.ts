@@ -6,7 +6,16 @@
 import prisma from '../../src/lib/prisma'
 
 export const BETA_SEED_NAME = 'beta-seed'
-export const BETA_SEED_VERSION = 'beta-v1'
+// BETA.2 (FASE E) — bumped from beta-v1 to beta-v2: the Profile
+// architecture changed materially this sprint (Individual Profile
+// ownership vs Shared Profile membership, Active Profile Context,
+// individualDiscoveryPolicy, N-party match participant approval) — a
+// fresh version marker keeps TestSeedRun history honest about which
+// architecture generation produced which data, per BETA.2.30's explicit
+// recommendation. Re-running against an existing beta-v1 database is
+// still safe (every phase is idempotent/upsert-based), it just now also
+// backfills/creates the FASE C/D/E additions on top.
+export const BETA_SEED_VERSION = 'beta-v2'
 
 // BETA.1.7 — reserved email namespace. Every account this seed creates
 // uses this domain; nothing else in the schema is allowed to. Used by
