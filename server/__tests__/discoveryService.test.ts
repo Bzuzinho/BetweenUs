@@ -281,3 +281,60 @@ describe('DiscoveryService — regression (Discovery validation follow-up must n
     expect(result.items.map(i => i.profile.id)).not.toContain(candidateId)
   })
 })
+
+// BETA.2 (FASE C/E) — Shared Profile individualDiscoveryPolicy: an
+// Individual Profile whose owner also belongs to a Shared Profile is
+// hidden from Discovery unless that Shared Profile unanimously opted into
+// INDIVIDUAL_AND_SHARED (default SHARED_ONLY). Exercises the real
+// getCandidates() pipeline end to end, not passesIndividualDiscoveryPolicy
+// in isolation — it's an internal (non-exported) step of that pipeline.
+describe('DiscoveryService.getCandidates — Shared Profile individualDiscoveryPolicy (BETA.2 FASE C)', () => {
+  const createCoupleMember = async (email: string, policy: 'INDIVIDUAL_AND_SHARED' | 'SHARED_ONLY') => {
+    const user = await createTestUser({ email })
+    const individualProfileId = await createTestProfile(user.id, { type: 'INDIVIDUAL' })
+    await withPhoto(individualProfileId)
+    const coupleProfile = await prisma.profile.create({
+      data: {
+        type: 'COUPLE', status: 'APPROVED', displayName: `Couple ${email}`, relationshipStatus: 'OPEN',
+        discretionLevel: 'SELECTIVE', individualDiscoveryPolicy: policy as any,
+        privacySettings: { create: { visibleInDiscovery: true } },
+      }
+    })
+    await (prisma as any).profileMember.create({ data: { profileId: coupleProfile.id, userId: user.id, isCreator: true, status: 'ACCEPTED' } })
+    return { user, individualProfileId, coupleProfileId: coupleProfile.id }
+  }
+
+  it("SHARED_ONLY (default): the member's own Individual Profile is excluded from everyone's Discovery", async () => {
+    const { individualProfileId } = await createCoupleMember('policy-shared-only-member@test.com', 'SHARED_ONLY')
+
+    const viewer = await createTestUser({ email: 'policy-shared-only-viewer@test.com' })
+    const viewerProfileId = await createTestProfile(viewer.id)
+    await withPhoto(viewerProfileId)
+
+    const result = await getCandidates(viewerProfileId, {}, null, 50)
+    expect(result.items.map(i => i.profile.id)).not.toContain(individualProfileId)
+  })
+
+  it("INDIVIDUAL_AND_SHARED: the member's own Individual Profile DOES appear in Discovery", async () => {
+    const { individualProfileId } = await createCoupleMember('policy-and-shared-member@test.com', 'INDIVIDUAL_AND_SHARED')
+
+    const viewer = await createTestUser({ email: 'policy-and-shared-viewer@test.com' })
+    const viewerProfileId = await createTestProfile(viewer.id)
+    await withPhoto(viewerProfileId)
+
+    const result = await getCandidates(viewerProfileId, {}, null, 50)
+    expect(result.items.map(i => i.profile.id)).toContain(individualProfileId)
+  })
+
+  it("a Shared Profile (COUPLE/GROUP) itself is never filtered by its own individualDiscoveryPolicy — only its members' Individual Profiles are", async () => {
+    const { coupleProfileId } = await createCoupleMember('policy-self-not-filtered@test.com', 'SHARED_ONLY')
+    await withPhoto(coupleProfileId)
+
+    const viewer = await createTestUser({ email: 'policy-self-not-filtered-viewer@test.com' })
+    const viewerProfileId = await createTestProfile(viewer.id)
+    await withPhoto(viewerProfileId)
+
+    const result = await getCandidates(viewerProfileId, {}, null, 50)
+    expect(result.items.map(i => i.profile.id)).toContain(coupleProfileId)
+  })
+})

@@ -4,6 +4,20 @@
 import { createFromMatch } from '../src/lib/privateRoomService'
 import { createTestUser, createTestProfile, prisma } from './helpers'
 
+const createApprovedGroup = async (emails: string[]) => {
+  const users = await Promise.all(emails.map(email => createTestUser({ email })))
+  const profile = await prisma.profile.create({
+    data: {
+      type: 'GROUP', status: 'APPROVED', displayName: 'Test Group', relationshipStatus: 'POLYAMOROUS',
+      discretionLevel: 'SELECTIVE', privacySettings: { create: { visibleInDiscovery: true } },
+    }
+  })
+  for (let i = 0; i < users.length; i++) {
+    await (prisma as any).profileMember.create({ data: { profileId: profile.id, userId: users[i].id, isCreator: i === 0, status: 'ACCEPTED' } })
+  }
+  return { users, profileId: profile.id }
+}
+
 const createActiveCouple = async (emailA: string, emailB: string) => {
   const userA = await createTestUser({ email: emailA })
   const userB = await createTestUser({ email: emailB })
@@ -85,5 +99,26 @@ describe('PrivateRoomService.createFromMatch', () => {
     expect(first.created).toBe(true)
     expect(second.created).toBe(false)
     expect(second.room.id).toBe(first.room.id)
+  })
+
+  // BETA.2 (FASE E) — GROUP + INDIVIDUAL: proves membership creation is
+  // genuinely N-party (not hardcoded to 2 logical sides). roomType
+  // deliberately falls through to CUSTOM for any composition involving
+  // GROUP (see inferRoomType's comment — "no clean label yet, don't
+  // guess"), not a bug, just an intentionally undecided label.
+  it('GROUP + INDIVIDUAL -> membership includes all 3 group members plus the individual (4 total)', async () => {
+    const { users: groupUsers, profileId: groupId } = await createApprovedGroup(['room-gi-a@test.com', 'room-gi-b@test.com', 'room-gi-c@test.com'])
+    const individualUser = await createTestUser({ email: 'room-gi-solo@test.com' })
+    const individualProfileId = await createTestProfile(individualUser.id)
+    const match = await prisma.match.create({ data: { profileOneId: groupId, profileTwoId: individualProfileId, status: 'ACTIVE', matchedAt: new Date() } })
+
+    const result = await createFromMatch(match.id)
+    expect(result.ok).toBe(true)
+    expect(result.room.roomType).toBe('CUSTOM')
+
+    const members = await (prisma as any).privateRoomMember.findMany({ where: { privateRoomId: result.room.id } })
+    const expectedUserIds = [...groupUsers.map(u => u.id), individualUser.id].sort()
+    expect(members.map((m: any) => m.userId).sort()).toEqual(expectedUserIds)
+    expect(members.length).toBe(4)
   })
 })
