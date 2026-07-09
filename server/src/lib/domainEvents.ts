@@ -148,9 +148,12 @@ on('MATCH_APPROVAL_REQUIRED', async (event) => {
     getRequiredApprovers(event.profileOneId), getRequiredApprovers(event.profileTwoId)
   ])
   const approvers = [...new Set([...oneApprovers, ...twoApprovers])]
+  // BETA.2 (FASE D) — this notification now also fires for GROUP profiles
+  // (3+ members), not just couples, since getRequiredApprovers is generic.
+  // Copy kept neutral rather than hardcoded "do casal".
   await Promise.all(approvers.map(uid => notifyUser(
     uid, 'match_approval_required', '💫 Aprovação necessária',
-    'Há um match à espera da aprovação do casal.',
+    'Há um match à espera da tua aprovação.',
     { matchId: event.matchId, tab: 'matches' }
   )))
 })

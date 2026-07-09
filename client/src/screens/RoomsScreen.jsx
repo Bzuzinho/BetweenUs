@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import api from '../lib/api'
 import { getSocket } from '../lib/socket'
 import { useAuth } from '../context/AuthContext'
@@ -782,12 +783,25 @@ export default function RoomsScreen() {
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [activeRoom, setActiveRoom] = useState(null)
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const load = useCallback(() => {
     api.get('/rooms').then(r => setRooms(r.data.rooms || [])).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // BETA.2 (FASE D) — match→room deep link (?matchId=...), used by
+  // MatchesScreen's openMatch(). Auto-opens the room created for that
+  // match (every ACTIVE match gets one — PrivateRoomService.createFromMatch,
+  // 7.9) and clears the param so a later manual "back" doesn't re-trigger it.
+  useEffect(() => {
+    const matchId = searchParams.get('matchId')
+    if (!matchId || rooms.length === 0) return
+    const room = rooms.find(r => r.matchId === matchId)
+    if (room) setActiveRoom(room)
+    setSearchParams({}, { replace: true })
+  }, [rooms, searchParams, setSearchParams])
 
   if (activeRoom) return <RoomChat room={activeRoom} onBack={() => { setActiveRoom(null); load() }}/>
 
