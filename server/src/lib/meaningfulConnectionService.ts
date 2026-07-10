@@ -10,6 +10,7 @@
 // sent >=1 message) + atividade em pelo menos 3 dias distintos + sem
 // block + sem report.
 import prisma from './prisma'
+import { getActiveMembers } from './profileMembershipService'
 
 export interface MeaningfulConnectionResult {
   matchId: string
@@ -42,13 +43,22 @@ const wasEverBlocked = async (profileOneId: string, profileTwoId: string): Promi
 // "sem report" — a report from either user's account against the other,
 // in either direction. Uses Report.reporterUserId/reportedUserId (user-
 // level, since Report is anchored to User not Profile) — resolved from
-// each profile's owning userId first.
-const wasEverReported = async (userOneId: string, userTwoId: string): Promise<boolean> => {
+// EVERY active member of each side, not a single profile.userId. A
+// Shared Profile (COUPLE/GROUP) has userId=null post-FASE-C (see
+// schema.prisma's Profile.userId comment) and can itself be a match
+// participant (BETA.2 FASE E's COUPLE+COUPLE / GROUP+INDIVIDUAL
+// scenarios) — passing a null userId straight into a required
+// Report.reporterUserId filter throws a Prisma validation error
+// ("Argument reporterUserId is missing"), caught live by the beta
+// validator. Report is a report BY one person AGAINST another, so any
+// member on either side counts.
+const wasEverReported = async (userOneIds: string[], userTwoIds: string[]): Promise<boolean> => {
+  if (userOneIds.length === 0 || userTwoIds.length === 0) return false
   const count = await prisma.report.count({
     where: {
       OR: [
-        { reporterUserId: userOneId, reportedUserId: userTwoId },
-        { reporterUserId: userTwoId, reportedUserId: userOneId },
+        { reporterUserId: { in: userOneIds }, reportedUserId: { in: userTwoIds } },
+        { reporterUserId: { in: userTwoIds }, reportedUserId: { in: userOneIds } },
       ]
     }
   })
@@ -66,6 +76,17 @@ export const evaluateMeaningfulConnection = async (matchId: string): Promise<Mea
   })
   if (!match) return null
 
+  // BETA.2 (FASE E hotfix #2) — resolve EVERY active member on each side,
+  // not just profile.userId (null for a Shared Profile post-FASE-C, and a
+  // Shared Profile can itself be a match participant since FASE E's
+  // COUPLE+COUPLE / GROUP+INDIVIDUAL scenarios). Mirrors the same
+  // getActiveMembers pattern already used by discoveryService/blockService
+  // /consentPhasePolicy for exactly this reason.
+  const [profileOneMemberIds, profileTwoMemberIds] = await Promise.all([
+    getActiveMembers(match.profileOneId).then(ms => ms.map((m: any) => m.userId)),
+    getActiveMembers(match.profileTwoId).then(ms => ms.map((m: any) => m.userId)),
+  ])
+
   const base: Omit<MeaningfulConnectionResult, 'isMeaningful'> = {
     matchId,
     mutualConversation: false,
@@ -80,12 +101,17 @@ export const evaluateMeaningfulConnection = async (matchId: string): Promise<Mea
 
   const messages = match.conversation.messages
   const senderUserIds = new Set(messages.map((m: any) => m.senderUserId))
-  const mutualConversation = senderUserIds.has(match.profileOne.userId) && senderUserIds.has(match.profileTwo.userId)
+  // "both sides sent >=1 message" — ANY active member of each side, not
+  // just a single userId (same Shared Profile reasoning as above: any
+  // couple/group member can send from that shared context).
+  const mutualConversation =
+    profileOneMemberIds.some((id: string) => senderUserIds.has(id)) &&
+    profileTwoMemberIds.some((id: string) => senderUserIds.has(id))
   const distinctActiveDays = new Set(messages.map((m: any) => m.createdAt.toISOString().slice(0, 10))).size
 
   const [wasBlocked, wasReported] = await Promise.all([
     wasEverBlocked(match.profileOneId, match.profileTwoId),
-    wasEverReported(match.profileOne.userId, match.profileTwo.userId),
+    wasEverReported(profileOneMemberIds, profileTwoMemberIds),
   ])
 
   const isMeaningful = mutualConversation && distinctActiveDays >= MIN_DISTINCT_DAYS && !wasBlocked && !wasReported

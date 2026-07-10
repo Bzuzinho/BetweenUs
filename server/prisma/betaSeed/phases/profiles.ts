@@ -10,6 +10,7 @@ import {
 } from '../scenarios'
 import { isGroupProfilesEnabled } from '../../../src/lib/profileTypePolicy'
 import { getOrCreateCurrentAgreement, submitAnswer } from '../../../src/lib/profileAgreementService'
+import { ensurePhoto } from './media'
 
 const catalogIds = async () => {
   const [intentions, boundaries] = await Promise.all([
@@ -159,7 +160,7 @@ const ensureMemberIndividualProfile = async (
     await prisma.profile.update({ where: { id: legacyOwned.id }, data: { userId: null } })
   }
 
-  await prisma.profile.upsert({
+  const memberProfile = await prisma.profile.upsert({
     where: { userId: user.id },
     update: { gender: m.gender, orientation: m.orientation },
     create: {
@@ -167,6 +168,21 @@ const ensureMemberIndividualProfile = async (
       gender: m.gender, orientation: m.orientation, city, country,
       privacySettings: { create: defaultPrivacy() as any },
     },
+  })
+
+  // BETA.2 (FASE E hotfix #2) — confirmed live: this member's Individual
+  // Profile otherwise has zero ProfilePhoto rows, which trips Discovery's
+  // PRIMARY_PHOTO completeness gate (profileCompletenessService.ts) and
+  // silently excludes it from every other viewer's Discovery feed —
+  // caught by the discovery-policy validator check ("Ana aparece no
+  // Discovery de individual_noa"). seedPhotosForProfiles (media.ts) never
+  // sees these profiles since it's only ever called with the top-level
+  // individuals/couples maps (index.ts), not per-member profiles created
+  // here — so give it a real primary photo directly, same pipeline
+  // (uploadFile, never a fake storagePath) as everything else in
+  // media.ts.
+  await ensurePhoto(memberProfile.id, `member_${user.id}`, 0, {
+    label: `TEST ${m.accountName}`, bg: '#2D1B4E', visibilityLevel: 'PUBLIC', moderationStatus: 'APPROVED', isPrimary: true,
   })
 }
 
