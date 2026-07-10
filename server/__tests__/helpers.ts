@@ -102,4 +102,31 @@ export const createBetaInvite = async (adminId: string, overrides: {
   })
 }
 
+// Recommendation signals are deliberately fire-and-forget in production:
+// matchService.createLikeOrMatch/recordPass call
+// recordSignal(...).catch(() => {}) WITHOUT awaiting it, so a user-facing
+// like/pass action's HTTP response isn't gated on a non-critical
+// side-channel write (recordSignal itself does 2 sequential DB round
+// trips — see recommendationSignalService.ts) completing first. That's a
+// deliberate perf choice for the real endpoint, not a bug — but it means
+// a test that awaits the action and then immediately does a single
+// synchronous read for the resulting RecommendationSignal row is
+// inherently racing that background write over a real network
+// connection (Railway's remote Postgres), not a local one. Polling
+// briefly (instead of a single read) respects the production
+// fire-and-forget design while making the test deterministic regardless
+// of DB round-trip latency.
+export const waitForCondition = async <T>(
+  check: () => Promise<T | null | undefined | false>,
+  { timeoutMs = 2000, intervalMs = 25 }: { timeoutMs?: number; intervalMs?: number } = {}
+): Promise<T | null> => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const result = await check()
+    if (result) return result
+    await new Promise(r => setTimeout(r, intervalMs))
+  }
+  return null
+}
+
 export { prisma }

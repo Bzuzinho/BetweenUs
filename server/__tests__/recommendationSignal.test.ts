@@ -1,6 +1,6 @@
 // 11.14 — RecommendationSignal capture, aggregation damping, and the "no
 // sensitive payload" structural guarantee.
-import { prisma, createTestUser, createTestProfile, createTestMatch } from './helpers'
+import { prisma, createTestUser, createTestProfile, createTestMatch, waitForCondition } from './helpers'
 import { recordSignal, getAggregatedSignalQuality, evaluateSustainedConversation, evaluateConversationStarted } from '../src/lib/recommendationSignalService'
 import { createLikeOrMatch, recordPass } from '../src/lib/matchService'
 
@@ -33,12 +33,12 @@ describe('RecommendationSignal — capture', () => {
     const bId = await createTestProfile(b.id)
 
     await createLikeOrMatch(aId, bId)
-    const likeRow = await (prisma as any).recommendationSignal.findFirst({ where: { actorProfileId: aId, targetProfileId: bId, signalType: 'LIKE' } })
+    const likeRow = await waitForCondition(() => (prisma as any).recommendationSignal.findFirst({ where: { actorProfileId: aId, targetProfileId: bId, signalType: 'LIKE' } }))
     expect(likeRow).toBeTruthy()
 
     await createLikeOrMatch(bId, aId) // reciprocal -> match
-    const matchAtoB = await (prisma as any).recommendationSignal.findFirst({ where: { actorProfileId: aId, targetProfileId: bId, signalType: 'MATCH' } })
-    const matchBtoA = await (prisma as any).recommendationSignal.findFirst({ where: { actorProfileId: bId, targetProfileId: aId, signalType: 'MATCH' } })
+    const matchAtoB = await waitForCondition(() => (prisma as any).recommendationSignal.findFirst({ where: { actorProfileId: aId, targetProfileId: bId, signalType: 'MATCH' } }))
+    const matchBtoA = await waitForCondition(() => (prisma as any).recommendationSignal.findFirst({ where: { actorProfileId: bId, targetProfileId: aId, signalType: 'MATCH' } }))
     expect(matchAtoB).toBeTruthy()
     expect(matchBtoA).toBeTruthy()
   })
@@ -50,7 +50,7 @@ describe('RecommendationSignal — capture', () => {
     const bId = await createTestProfile(b.id)
 
     await recordPass(aId, bId)
-    const row = await (prisma as any).recommendationSignal.findFirst({ where: { actorProfileId: aId, targetProfileId: bId, signalType: 'PASS' } })
+    const row = await waitForCondition(() => (prisma as any).recommendationSignal.findFirst({ where: { actorProfileId: aId, targetProfileId: bId, signalType: 'PASS' } }))
     expect(row).toBeTruthy()
   })
 })

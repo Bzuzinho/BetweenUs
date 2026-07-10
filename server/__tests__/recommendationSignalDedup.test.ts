@@ -3,7 +3,7 @@
 // retried leave calls) would silently inflate the signals that feed both
 // the ranker's cold-start/aggregation logic and the guardrail comparison
 // (blockRate/safeExitRate) used for the recommendDisable decision.
-import { prisma, createTestUser, createTestProfile, createTestMatch } from './helpers'
+import { prisma, createTestUser, createTestProfile, createTestMatch, waitForCondition } from './helpers'
 import { recordProfileViewSignal } from '../src/lib/recommendationSignalService'
 import { createLikeOrMatch, recordPass } from '../src/lib/matchService'
 
@@ -35,6 +35,10 @@ describe('RecommendationSignal dedup — LIKE / PASS (11.5.6)', () => {
     await createLikeOrMatch(aId, bId)
     await createLikeOrMatch(aId, bId) // repeat — e.g. a client retry
 
+    // Only the first call fires a fire-and-forget recordSignal write (see
+    // helpers.ts's waitForCondition comment) — wait for that one write to
+    // land before asserting the repeat call didn't add a second row.
+    await waitForCondition(() => (prisma as any).recommendationSignal.findFirst({ where: { actorProfileId: aId, targetProfileId: bId, signalType: 'LIKE' } }))
     const rows = await (prisma as any).recommendationSignal.findMany({
       where: { actorProfileId: aId, targetProfileId: bId, signalType: 'LIKE' }
     })
@@ -50,6 +54,7 @@ describe('RecommendationSignal dedup — LIKE / PASS (11.5.6)', () => {
     await recordPass(aId, bId)
     await recordPass(aId, bId)
 
+    await waitForCondition(() => (prisma as any).recommendationSignal.findFirst({ where: { actorProfileId: aId, targetProfileId: bId, signalType: 'PASS' } }))
     const rows = await (prisma as any).recommendationSignal.findMany({
       where: { actorProfileId: aId, targetProfileId: bId, signalType: 'PASS' }
     })

@@ -329,6 +329,18 @@ describe('DiscoveryService.getCandidates — Shared Profile individualDiscoveryP
   it("a Shared Profile (COUPLE/GROUP) itself is never filtered by its own individualDiscoveryPolicy — only its members' Individual Profiles are", async () => {
     const { coupleProfileId } = await createCoupleMember('policy-self-not-filtered@test.com', 'SHARED_ONLY')
     await withPhoto(coupleProfileId)
+    // Test fixture gap: createCoupleMember only attaches ONE accepted
+    // ProfileMember (the creator). profileCompletenessService's MEMBERS
+    // check (4.9) requires >=2 active members for a COUPLE/GROUP profile
+    // to be considered complete, and isProfileEligible excludes anything
+    // missing MEMBERS at Step 3 of the pipeline — before
+    // passesIndividualDiscoveryPolicy (Step 4.5) is ever reached. The
+    // other two tests using createCoupleMember only assert on the
+    // member's own Individual Profile, so this never mattered there; this
+    // is the only test asserting on the Shared Profile itself, so it
+    // needs a second accepted member to be Discovery-eligible at all.
+    const partner = await createTestUser({ email: 'policy-self-not-filtered-partner@test.com' })
+    await (prisma as any).profileMember.create({ data: { profileId: coupleProfileId, userId: partner.id, isCreator: false, status: 'ACCEPTED' } })
 
     const viewer = await createTestUser({ email: 'policy-self-not-filtered-viewer@test.com' })
     const viewerProfileId = await createTestProfile(viewer.id)

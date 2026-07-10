@@ -182,8 +182,26 @@ router.post('/:id/block', requireAuth, async (req: AuthRequest, res: Response) =
 router.post('/:id/report', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const { reason, details } = req.body
+    // Pre-existing bug: Report has no `reportedProfileId` column (schema
+    // only has `reportedUserId` — see reports.ts's own /api/reports
+    // route, which always took a userId, never a profileId). This
+    // endpoint passed req.params.id (a Profile id from Discovery)
+    // straight through as `reportedProfileId`, which never existed on
+    // the Prisma model — a TS2769/TS2353 compile error that every
+    // suite importing this route (directly or transitively) inherited.
+    // It was masked until now by an unrelated compile error elsewhere
+    // failing first. Fixed by resolving the target Profile to its
+    // owning user via getActiveMembers (same helper used for Shared
+    // Profile membership elsewhere) — for an Individual Profile this is
+    // its one user; for a Shared Profile (COUPLE/GROUP) Report only has
+    // room for a single reportedUserId, so we record the first active
+    // member (consistent with there being no per-member report target
+    // in the schema).
+    const { getActiveMembers } = await import('../lib/profileMembershipService')
+    const targetMembers = await getActiveMembers(req.params.id)
+    const reportedUserId = targetMembers[0]?.userId
     const report = await prisma.report.create({
-      data: { reporterUserId: req.userId!, reportedProfileId: req.params.id, reason: reason || 'other', details }
+      data: { reporterUserId: req.userId!, reportedUserId, reason: reason || 'other', details }
     })
     notifyAdmins('new_report', '⚠️ Nova denúncia', `Denúncia: ${reason}`, { reportId: report.id, tab: 'reports' }).catch(()=>{})
 
