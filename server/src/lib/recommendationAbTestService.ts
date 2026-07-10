@@ -39,6 +39,25 @@ const seededFraction = (seed: string): number => {
   for (let i = 0; i < seed.length; i++) {
     h = (Math.imul(31, h) + seed.charCodeAt(i)) | 0
   }
+  // Murmur3-style finalizer (fmix32). The plain polynomial rolling hash
+  // above has weak avalanche behavior for inputs sharing a long common
+  // prefix and differing only in a short numeric suffix — exactly the
+  // shape of `${EXPERIMENT_KEY}:profile-0`, `${EXPERIMENT_KEY}:profile-1`,
+  // etc. Confirmed empirically (first real npm test run this sprint,
+  // after the jest.config.js setupFiles fix let tests execute at all):
+  // without this step, 1000 sequential profileIds skewed ~91%/9% instead
+  // of ~50/50, and 500 sequential profileIds landed 100% in one cohort.
+  // Real profile IDs are random UUIDs (schema.prisma's Profile.id
+  // @default(uuid())), so this almost certainly never biased a live
+  // cohort — but the function should be robust regardless of input
+  // shape, not rely on callers happening to pass high-entropy IDs. This
+  // finisher spreads bits fully without changing the stability guarantee
+  // (same input still always produces the same output).
+  h ^= h >>> 16
+  h = Math.imul(h, 0x85ebca6b)
+  h ^= h >>> 13
+  h = Math.imul(h, 0xc2b2ae35)
+  h ^= h >>> 16
   return (h >>> 0) / 4294967296
 }
 

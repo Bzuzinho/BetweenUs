@@ -38,7 +38,13 @@ export const getPendingReacceptance = async (userId: string): Promise<PendingRea
   const pending: PendingReacceptance[] = []
   for (const doc of latestDocs) {
     if (!doc.requiresReacceptance) continue
-    const accepted = userConsents.find((c: { consentType: string; version: number }) => c.consentType === doc.consentType)
+    // (was explicitly typed as `{ consentType: string; version: number }` —
+    // wrong: UserConsent.version is a string in the schema, not a number.
+    // That mismatched annotation made every `.find()` call here fail to
+    // typecheck under strict ts-jest, which is why 19 test suites failed
+    // to even load once `npm test` could run end-to-end for the first
+    // time this sprint. Corrected to match schema.prisma's UserConsent.version (String).
+    const accepted = userConsents.find((c: { consentType: string; version: string }) => c.consentType === doc.consentType)
     if (!accepted || accepted.version !== doc.version) {
       pending.push({
         consentType: doc.consentType,
