@@ -32,7 +32,7 @@ const uploadForSpec = async (profileKey: string, index: number, spec: PhotoSpec)
   return { storagePath: result.key, blurredPath: null }
 }
 
-const ensurePhoto = async (profileId: string, profileKey: string, index: number, spec: PhotoSpec) => {
+export const ensurePhoto = async (profileId: string, profileKey: string, index: number, spec: PhotoSpec) => {
   const existing = await prisma.profilePhoto.findFirst({
     where: { profileId, sortOrder: index },
   })

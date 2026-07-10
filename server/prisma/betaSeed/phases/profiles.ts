@@ -10,6 +10,7 @@ import {
 } from '../scenarios'
 import { isGroupProfilesEnabled } from '../../../src/lib/profileTypePolicy'
 import { getOrCreateCurrentAgreement, submitAnswer } from '../../../src/lib/profileAgreementService'
+import { ensurePhoto } from './media'
 
 const catalogIds = async () => {
   const [intentions, boundaries] = await Promise.all([
@@ -138,7 +139,28 @@ interface CoupleResult {
 const ensureMemberIndividualProfile = async (
   user: { id: string }, m: CoupleMemberSeed, city: string, country: string
 ): Promise<void> => {
-  await prisma.profile.upsert({
+  // BETA.2 (FASE E hotfix) — confirmed live against a Railway DB that
+  // already had beta-v1 data: on such a DB, this member's userId can
+  // still be attached to the SHARED Profile row itself (the pre-FASE-C
+  // conflation — a couple/group creation used to convert the creator's
+  // own Profile row in place, see schema.prisma's Profile.userId
+  // comment). Profile.userId is unique, so the upsert-by-userId below
+  // would otherwise silently resolve to that WRONG (Shared) row and just
+  // overwrite its gender/orientation instead of creating a real, separate
+  // Individual Profile — which is exactly what happened (validator caught
+  // it: 5 couples + 1 group creator all had Profile.userId still set on
+  // the Shared row, and "own Individual Profile" checks resolved to
+  // type=COUPLE/GROUP instead of INDIVIDUAL). Detect and null it out
+  // first — mirrors exactly what backfillIndividualProfiles.ts's CREATOR
+  // case does for production data, inlined here so re-seeding beta-v2
+  // over existing beta-v1 data self-heals instead of requiring a
+  // separate manual backfill run first.
+  const legacyOwned = await prisma.profile.findUnique({ where: { userId: user.id }, select: { id: true, type: true } })
+  if (legacyOwned && legacyOwned.type !== 'INDIVIDUAL') {
+    await prisma.profile.update({ where: { id: legacyOwned.id }, data: { userId: null } })
+  }
+
+  const memberProfile = await prisma.profile.upsert({
     where: { userId: user.id },
     update: { gender: m.gender, orientation: m.orientation },
     create: {
@@ -146,6 +168,21 @@ const ensureMemberIndividualProfile = async (
       gender: m.gender, orientation: m.orientation, city, country,
       privacySettings: { create: defaultPrivacy() as any },
     },
+  })
+
+  // BETA.2 (FASE E hotfix #2) — confirmed live: this member's Individual
+  // Profile otherwise has zero ProfilePhoto rows, which trips Discovery's
+  // PRIMARY_PHOTO completeness gate (profileCompletenessService.ts) and
+  // silently excludes it from every other viewer's Discovery feed —
+  // caught by the discovery-policy validator check ("Ana aparece no
+  // Discovery de individual_noa"). seedPhotosForProfiles (media.ts) never
+  // sees these profiles since it's only ever called with the top-level
+  // individuals/couples maps (index.ts), not per-member profiles created
+  // here — so give it a real primary photo directly, same pipeline
+  // (uploadFile, never a fake storagePath) as everything else in
+  // media.ts.
+  await ensurePhoto(memberProfile.id, `member_${user.id}`, 0, {
+    label: `TEST ${m.accountName}`, bg: '#2D1B4E', visibilityLevel: 'PUBLIC', moderationStatus: 'APPROVED', isPrimary: true,
   })
 }
 
