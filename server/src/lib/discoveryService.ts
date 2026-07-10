@@ -105,11 +105,23 @@ const isUserEligible = async (ownerUserId: string): Promise<boolean> => {
 // safety-relevant eligibility is only as good as its least-eligible
 // member; one suspended/banned member hides the whole shared profile
 // rather than showing a partial/misleading card).
+//
+// Uses eligibilityService.forSharedProfileMember, NOT isUserEligible /
+// forUser — forUser's canAppearInDiscovery gates on the member's own
+// individually-owned Profile being APPROVED, which a Shared Profile
+// member legitimately may not have at all (SHARED_ONLY policy, the
+// default). That wrongly excluded the whole Shared Profile whenever a
+// member had no separate individual profile — see
+// eligibilityService.ts's forSharedProfileMember comment for the full
+// account of the bug and the discoveryService.test.ts case that caught
+// it. Account-level checks only here; the Shared Profile's OWN
+// status/visibility is already checked at Step 1 (pool query) and Step 4
+// (passesVisibilityPolicy) above.
 const isSharedProfileEligible = async (profileId: string): Promise<boolean> => {
   const members = await getActiveMembers(profileId)
   if (members.length === 0) return false
-  const results = await Promise.all(members.map(m => isUserEligible(m.userId)))
-  return results.every(Boolean)
+  const results = await Promise.all(members.map(m => eligibilityService.forSharedProfileMember(m.userId)))
+  return results.every(r => r.eligible)
 }
 
 // ── Step 3: Profile Eligibility (4.9 ProfileCompletenessService) ──────────

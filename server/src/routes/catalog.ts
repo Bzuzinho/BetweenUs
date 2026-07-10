@@ -124,7 +124,26 @@ router.get('/admin/intentions', requireAdmin('catalog'), async (_req: AuthReques
 router.post('/admin/intentions', requireAdmin('catalog'), async (req: AuthRequest, res: Response) => {
   try {
     const data = intentionSchema.parse(req.body)
-    const intention = await prisma.intention.create({ data })
+    // Pre-existing bug, newly surfaced (masked until now by other compile
+    // errors failing these same 22 suites first): under the strict main
+    // tsconfig.json this compiles clean, but jest.config.js's ts-jest
+    // transform runs with `{ strict: false }`, and under that config TS
+    // widens `data`'s required fields (name/slug) to optional when
+    // checked against Prisma's IntentionCreateInput XOR type — passing
+    // `data` straight through as the whole `data:` value tripped it.
+    // Rebuilding the object explicitly (name/slug reference data.name/
+    // data.slug directly, which zod's schema DOES type as required
+    // strings either way) sidesteps the inference gap.
+    const intention = await prisma.intention.create({
+      data: {
+        name: data.name,
+        slug: data.slug,
+        description: data.description,
+        category: data.category,
+        sortOrder: data.sortOrder,
+        active: data.active,
+      }
+    })
     await logAdminAction(req.userId!, 'CREATE_INTENTION', 'intention', intention.id, { newData: data, ipAddress: req.ip })
     res.status(201).json(intention)
   } catch (err: any) {

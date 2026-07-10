@@ -115,6 +115,47 @@ export async function forUser(userId: string): Promise<Eligibility> {
   return { canLogin, canUseApp, canAppearInDiscovery, canLike, canMatch, canChat, canRequestPrivatePhotos, reasons }
 }
 
+// BETA.2 (FASE C) follow-up — forUser()'s canAppearInDiscovery gates on
+// `user.profile` (the legacy DIRECT Profile.userId relation: the profile
+// this user personally owns). That's correct when checking an Individual
+// Profile's own owner. It's WRONG when discoveryService.ts's
+// isSharedProfileEligible calls it per ACTIVE MEMBER of a Shared Profile
+// (couple/group) — a member can legitimately have no individually-owned
+// Profile at all (that's the literal meaning of individualDiscoveryPolicy
+// SHARED_ONLY, the default), and previously that made `user.profile` null,
+// profileApproved false, and canAppearInDiscovery false for that member —
+// which excluded the ENTIRE Shared Profile from everyone's Discovery,
+// even though the Shared Profile itself was APPROVED and visible (already
+// checked independently at discoveryService.ts's Step 1 pool query and
+// Step 4 passesVisibilityPolicy). Confirmed via discoveryService.test.ts's
+// "a Shared Profile itself is never filtered by its own
+// individualDiscoveryPolicy" test: adding a second ProfileMember (to
+// satisfy the unrelated MEMBERS completeness gate) still failed until
+// this was fixed, because isSharedProfileEligible required that new
+// member's OWN nonexistent individual profile to be approved.
+//
+// This checks only ACCOUNT-level eligibility (not banned/suspended/
+// deleted, not an admin account) — never a specific Profile's own
+// approval/visibility, since for a Shared Profile member that's simply
+// the wrong profile to be checking.
+//
+// NOTE: canLike/canMatch above have the same `!!user.profile` conflation
+// and would misfire the same way for a Shared-Profile-only member calling
+// those actions on behalf of their couple/group — not exercised by any
+// failing test today, so left as a flagged follow-up rather than expanded
+// scope here.
+export async function forSharedProfileMember(userId: string): Promise<{ eligible: boolean; reasons: string[] }> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { status: true, adminRole: true } })
+  if (!user) return { eligible: false, reasons: ['USER_NOT_FOUND'] }
+  const reasons: string[] = []
+  const blocked = BLOCKED_APP_STATUSES.has(user.status)
+  if (blocked) reasons.push(`ACCOUNT_${user.status}`)
+  const isAdmin = !!user.adminRole
+  if (isAdmin) reasons.push('ADMIN_ACCOUNT')
+  const eligible = !blocked && user.status === 'ACTIVE' && !isAdmin
+  return { eligible, reasons }
+}
+
 // ── Recommendation (not implemented in this pass) ──────────────────────────
 // This service currently only *reports* eligibility (used by the admin
 // AdminAccountTab/UserDetail views so admins can see why a user isn't
