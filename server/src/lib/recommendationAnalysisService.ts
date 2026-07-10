@@ -199,7 +199,16 @@ const computeGuardrailsForCohort = async (
     (prisma as any).recommendationSignal.count({ where: { signalType: 'REPORT', actorProfileId: { in: cohortProfileIds }, createdAt: { gte: since }, ...signalTestFilter } }),
     (prisma as any).recommendationSignal.count({ where: { signalType: 'SAFE_EXIT', actorProfileId: { in: cohortProfileIds }, createdAt: { gte: since }, ...signalTestFilter } }),
     prisma.match.count({ where: { OR: [{ profileOneId: { in: cohortProfileIds } }, { profileTwoId: { in: cohortProfileIds } }], createdAt: { gte: since } } }),
-    prisma.match.count({ where: { OR: [{ profileOneId: { in: cohortProfileIds } }, { profileTwoId: { in: cohortProfileIds } }], createdAt: { gte: since }, status: { in: ['REJECTED', 'ENDED'] } } }),
+    // Pre-existing bug: 'REJECTED' was never a valid MatchStatus value
+    // (schema.prisma's enum: PENDING, PENDING_COUPLE_APPROVAL, ACTIVE,
+    // PAUSED, ENDED, BLOCKED). matchStateMachine.ts's REJECT event
+    // transitions PENDING_COUPLE_APPROVAL -> ENDED (a distinct
+    // MATCH_REJECTED domain event fires for notification copy, but the
+    // DB status itself is just ENDED, same as any other abandoned
+    // match) -- so a rejected match is already fully captured by
+    // status: 'ENDED' alone. Masked until now by other compile errors
+    // failing these same 22 suites first.
+    prisma.match.count({ where: { OR: [{ profileOneId: { in: cohortProfileIds } }, { profileTwoId: { in: cohortProfileIds } }], createdAt: { gte: since }, status: 'ENDED' } }),
   ])
 
   return {
