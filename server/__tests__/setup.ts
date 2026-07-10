@@ -1,7 +1,11 @@
-import { PrismaClient } from '@prisma/client'
-
-// Expose prisma globally so test files can import it
-const prisma = new PrismaClient()
+// (test infra fix) — this used to instantiate its OWN `new PrismaClient()`,
+// a THIRD separate client alongside __tests__/helpers.ts's (now also
+// fixed) and the app's singleton (src/lib/prisma.ts). Reusing the same
+// singleton here means the $connect/$disconnect below actually manage
+// the one client every test file's helpers and every real service use —
+// see helpers.ts's comment for the full "Too many database connections
+// opened" root-cause writeup.
+import prisma from '../src/lib/prisma'
 
 beforeAll(async () => {
   await prisma.$connect()

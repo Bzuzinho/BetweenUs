@@ -1,8 +1,19 @@
-import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import { generateTokens } from '../src/utils/jwt'
-
-const prisma = new PrismaClient()
+// (test infra fix) — this used to instantiate its OWN `new PrismaClient()`,
+// separate from both __tests__/setup.ts's client AND the actual
+// application singleton (src/lib/prisma.ts) that every real service
+// (matchService, recommendationSignalService, etc.) uses. Since Jest
+// resets the module registry per test FILE, that meant up to 3 separate
+// PrismaClient instances (each opening its own pooled connections) were
+// created per file and never all disconnected — confirmed as the root
+// cause of "Too many database connections opened: FATAL: sorry, too many
+// clients already" partway through the first real full `npm test` run
+// this sprint (after the jest.config.js setupFiles fix let tests execute
+// at all). Reusing the app's singleton here means there's only ONE client
+// per test file, and setup.ts's existing afterAll now actually
+// disconnects it.
+import prisma from '../src/lib/prisma'
 
 export interface TestUser {
   id: string
