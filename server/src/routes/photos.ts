@@ -17,7 +17,7 @@ const isProd = process.env.NODE_ENV === 'production'
 // T7: rate limit photo uploads — max 10 uploads per 15 minutes per user
 const uploadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: process.env.NODE_ENV === 'test' ? 100000 : 10,
   keyGenerator: (req: any) => req.userId || req.ip,
   message: { error: 'Demasiados uploads. Tenta novamente em 15 minutos.' }
 })

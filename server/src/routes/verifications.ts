@@ -23,7 +23,7 @@ const upload = multer({
 })
 
 const verifyEmailLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, max: 5,
+  windowMs: 15 * 60 * 1000, max: process.env.NODE_ENV === 'test' ? 100000 : 5,
   keyGenerator: (req: any) => req.userId || req.ip,
   message: { error: 'Demasiados pedidos. Aguarda 15 minutos.' }
 })

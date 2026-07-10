@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs'
+import { createHash } from 'crypto'
 import { generateTokens } from '../src/utils/jwt'
 // (test infra fix) — this used to instantiate its OWN `new PrismaClient()`,
 // separate from both __tests__/setup.ts's client AND the actual
@@ -52,6 +53,21 @@ export const createTestUser = async (overrides: {
   })
 
   const { accessToken, refreshToken } = generateTokens(user.id)
+  // BETA.2 fix — real register/login always store a hash of the issued
+  // refresh token in Redis (`refresh:${userId}`), and POST /api/auth/refresh
+  // rejects with 401 if that key is missing, regardless of whether the JWT
+  // itself is valid (src/routes/auth.ts's /refresh handler). This helper
+  // never mirrored that side effect, so any test that used a
+  // createTestUser()-issued refreshToken against the real /refresh route
+  // always failed — not a bug in /refresh itself, just an incomplete test
+  // fixture. Best-effort: if Redis isn't reachable, fall through silently
+  // like the rest of the app's getRedis() call sites already do.
+  try {
+    const redis = (await import('../src/lib/redis')).default
+    if (!redis.isOpen) await redis.connect()
+    const hashToken = (t: string) => createHash('sha256').update(t).digest('hex')
+    await redis.setEx(`refresh:${user.id}`, 30 * 24 * 60 * 60, hashToken(refreshToken))
+  } catch {}
   return { id: user.id, email, accessToken, refreshToken }
 }
 
