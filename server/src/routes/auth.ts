@@ -14,8 +14,22 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
 const router = Router()
-const isProd = process.env.NODE_ENV === 'production'
-const BETA_CLOSED = process.env.BETA_CLOSED === 'true'
+// BETA.2 fix — both were module-level constants, captured ONCE when this
+// file is first imported. That's fine in production (NODE_ENV/BETA_CLOSED
+// never change during a running process), but it silently broke every
+// test that flips process.env.NODE_ENV or process.env.BETA_CLOSED at
+// runtime (auth.test.ts's "does not auto-verify email in production
+// mode" and the whole "Auth — beta closed" describe block, which sets
+// BETA_CLOSED in beforeAll) — those runtime mutations happen long after
+// this module already evaluated the constant, so they had zero effect.
+// This was masked for this entire sprint by a separate, now-fixed bug:
+// NODE_ENV was ALWAYS actually 'production' on Railway regardless of
+// .env.test (see package.json's test script), so isProd was already true
+// at module load time and the "does not auto-verify" test's runtime
+// flip was a redundant no-op that happened to still pass. Converting
+// both to functions, re-evaluated on every call, fixes this for real.
+const isProd = () => process.env.NODE_ENV === 'production'
+const isBetaClosed = () => process.env.BETA_CLOSED === 'true'
 
 // BETA.2 fix — this limiter is wired directly onto the route (not via the
 // app-level noop limiter __tests__/app.ts installs), so integration tests
@@ -79,7 +93,7 @@ const clearAuthCookies = (res: Response) => {
 }
 
 const validateBetaCode = async (code: string|undefined, email: string) => {
-  if (!BETA_CLOSED) return { ok:true, invite:null }
+  if (!isBetaClosed()) return { ok:true, invite:null }
   if (!code) return { ok:false, error:'O Between Us está em beta fechado. Precisas de um código de convite.', errCode:'BETA_REQUIRED' }
   const invite = await prisma.betaInvite.findUnique({ where: { code: code.toUpperCase() } })
   if (!invite || !invite.active) return { ok:false, error:'Código de convite inválido.', errCode:'BETA_INVALID' }
@@ -104,8 +118,8 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
       data: {
         email: data.email, passwordHash,
         dateOfBirth: new Date(data.dateOfBirth),
-        emailVerifiedAt: isProd ? null : new Date(),
-        status: isProd ? 'PENDING_VERIFICATION' : 'ACTIVE',
+        emailVerifiedAt: isProd() ? null : new Date(),
+        status: isProd() ? 'PENDING_VERIFICATION' : 'ACTIVE',
         termsAcceptedAt: new Date(), privacyAcceptedAt: new Date(),
         consents: { create: [
           { consentType:'TERMS',          version:'1.0', ipAddress, userAgent },
@@ -133,7 +147,7 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
       recordReferral(user.id, data.refCode).catch(() => {})
     }
     // Send verification email async — never block the response
-    if (isProd) {
+    if (isProd()) {
       const verifyToken = randomBytes(32).toString('hex')
       const redis = await getRedis()
       if (redis) await redis.setEx(`email_verify:${user.id}`, 3600, hashToken(verifyToken))
@@ -150,10 +164,10 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
     if (redis) await redis.setEx(`refresh:${user.id}`, 30*24*60*60, hashToken(refreshToken))
     setAuthCookies(res, accessToken, refreshToken)
     res.status(201).json({
-      message: isProd ? 'Conta criada! Verifica o teu email para activar a conta.' : 'Conta criada com sucesso!',
+      message: isProd() ? 'Conta criada! Verifica o teu email para activar a conta.' : 'Conta criada com sucesso!',
       accessToken, refreshToken,
       user: { id:user.id, email:user.email, status:user.status },
-      emailVerificationRequired: isProd
+      emailVerificationRequired: isProd()
     })
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
@@ -358,7 +372,7 @@ router.post('/email/verify', authLimiter, async (req: Request, res: Response) =>
         .then(() => console.log('[EMAIL] Verify resent:', user.email))
         .catch(e => console.error('[EMAIL] Resend failed:', e.message))
     })
-    const devPayload = !isProd ? { devToken: verifyToken, devUrl:`${process.env.CLIENT_URL}/verify-email?userId=${userId}&token=${encodeURIComponent(verifyToken)}` } : {}
+    const devPayload = !isProd() ? { devToken: verifyToken, devUrl:`${process.env.CLIENT_URL}/verify-email?userId=${userId}&token=${encodeURIComponent(verifyToken)}` } : {}
     res.json({ ok:true, message:'Email de verificação enviado.', ...devPayload })
   } catch (err: any) { res.status(500).json({ error: 'Erro ao enviar email.' }) }
 })
