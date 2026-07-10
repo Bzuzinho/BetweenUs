@@ -4,24 +4,58 @@ import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { createLikeOrMatch } from '../lib/matchService'
 import { removeMember, resolveMyProfileId } from '../lib/profileMembershipService'
+import { getAvailableContexts } from '../lib/activeProfileContextService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
 const router = Router()
 
+// BETA.2 (FASE C/E) — Couple Profiles never carry userId (ownership is
+// ProfileMember-only, same as Group — see schema.prisma's Profile.userId
+// comment and the matching fix already applied to routes/groups.ts). This
+// resolves "the Couple Profile I belong to" the same way groups.ts's
+// GET /me does: via an ACCEPTED ProfileMember row whose profile.type is
+// COUPLE, never via Profile.userId (which now always means this user's
+// own, separate Individual Profile).
+async function resolveMyCoupleProfile(userId: string) {
+  const membership = await (prisma as any).profileMember.findFirst({
+    where: { userId, status: 'ACCEPTED' },
+    include: { profile: { include: { coupleProfile: true } } }
+  })
+  return membership?.profile?.type === 'COUPLE' ? membership.profile : null
+}
+
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const { coupleDescription, partnerEmail } = req.body
-    const myProfile = await prisma.profile.findUnique({
-      where: { userId: req.userId! }, include: { coupleProfile: true }
+    const { coupleDescription, partnerEmail, displayName } = req.body
+
+    // BETA.2 (FASE C/E) — "already in a couple/group" is a membership
+    // question now, not "does my owned Profile row already say COUPLE" —
+    // the creator's Individual Profile (if any) is left completely
+    // untouched by this route; the Couple Profile is always a brand new,
+    // separate Profile row. Same fix already applied to routes/groups.ts.
+    const existingContexts = await getAvailableContexts(req.userId!)
+    if (existingContexts.some(c => c.type !== 'INDIVIDUAL')) {
+      return res.status(409).json({ error: 'Já tens um perfil de casal.' })
+    }
+
+    const profile = await prisma.profile.create({
+      data: {
+        type: 'COUPLE',
+        displayName: displayName || 'Casal',
+        sharedDescription: coupleDescription || null,
+        status: process.env.NODE_ENV === 'production' ? 'PENDING_REVIEW' : 'APPROVED',
+        privacySettings: { create: {
+          visibleInDiscovery: false, showDistance: true,
+          showOnlineStatus: false, invisibleMode: false, notificationMode: 'DISCREET'
+        }}
+      }
     })
-    if (!myProfile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
-    if (myProfile.coupleProfile) return res.status(409).json({ error: 'Já tens um perfil de casal.' })
 
     const inviteToken = uuidv4()
     const couple = await prisma.coupleProfile.create({
       data: {
-        profileId: myProfile.id,
+        profileId: profile.id,
         partnerOneUserId: req.userId!,
         partnerTwoInviteEmail: partnerEmail || null,
         coupleDescription: coupleDescription || null,
@@ -29,21 +63,20 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
         coupleStatus: 'PENDING_PARTNER'
       }
     })
-    await prisma.profile.update({ where: { id: myProfile.id }, data: { type: 'COUPLE' } })
 
     // Sprint 3: dual-write into the generalized ProfileMember model so
-    // couple approvals can run through the same code path as future groups.
+    // couple approvals can run through the same code path as groups.
     await (prisma as any).profileMember.create({
-      data: { profileId: myProfile.id, userId: req.userId!, isCreator: true, status: 'ACCEPTED' }
+      data: { profileId: profile.id, userId: req.userId!, isCreator: true, status: 'ACCEPTED' }
     }).catch((e: any) => console.error('[PROFILE MEMBER DUAL-WRITE]', e.message))
     if (partnerEmail) {
       await (prisma as any).profileMember.create({
-        data: { profileId: myProfile.id, invitedEmail: partnerEmail, status: 'PENDING', inviteToken }
+        data: { profileId: profile.id, invitedEmail: partnerEmail, status: 'PENDING', inviteToken }
       }).catch((e: any) => console.error('[PROFILE MEMBER DUAL-WRITE]', e.message))
     }
 
     res.status(201).json({
-      couple, inviteToken,
+      couple, inviteToken, profile,
       inviteUrl: `${CLIENT_URL}/couple-invite/${inviteToken}`
     })
   } catch (err: any) {
@@ -54,9 +87,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const profile = await prisma.profile.findUnique({
-      where: { userId: req.userId! }, include: { coupleProfile: true }
-    })
+    const profile = await resolveMyCoupleProfile(req.userId!)
     if (!profile?.coupleProfile) return res.status(404).json({ error: 'Sem perfil de casal.' })
     res.json(profile.coupleProfile)
   } catch (err: any) {
@@ -101,9 +132,7 @@ router.post('/join/:token', requireAuth, async (req: AuthRequest, res: Response)
 // but the actual match-creation decision is centralized.
 router.post('/like/:targetProfileId', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const myProfile = await prisma.profile.findUnique({
-      where: { userId: req.userId! }, include: { coupleProfile: true }
-    })
+    const myProfile = await resolveMyCoupleProfile(req.userId!)
     if (!myProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
     if (!myProfile.coupleProfile) return res.status(400).json({ error: 'Perfil de casal necessário.' })
     if (myProfile.coupleProfile.coupleStatus !== 'ACTIVE') {
@@ -291,9 +320,7 @@ router.post('/matches/:matchId/reject', requireAuth, async (req: AuthRequest, re
 
 router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const profile = await prisma.profile.findUnique({
-      where: { userId: req.userId! }, include: { coupleProfile: true }
-    })
+    const profile = await resolveMyCoupleProfile(req.userId!)
     if (!profile?.coupleProfile) return res.status(404).json({ error: 'Sem perfil de casal.' })
     const updated = await prisma.coupleProfile.update({
       where: { id: profile.coupleProfile.id },
@@ -307,12 +334,15 @@ router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
 
 router.delete('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const profile = await prisma.profile.findUnique({
-      where: { userId: req.userId! }, include: { coupleProfile: true }
-    })
+    const profile = await resolveMyCoupleProfile(req.userId!)
     if (!profile?.coupleProfile) return res.status(404).json({ error: 'Sem perfil de casal.' })
     await prisma.coupleProfile.update({ where: { id: profile.coupleProfile.id }, data: { coupleStatus: 'SEPARATED' } })
-    await prisma.profile.update({ where: { id: profile.id }, data: { type: 'INDIVIDUAL' } })
+    // BETA.2 (FASE C/E) — no longer converts the Couple Profile row back
+    // to type INDIVIDUAL: it was never the creator's Individual Profile
+    // to begin with (that's now always a separate row, untouched by this
+    // whole flow). The Couple Profile row just stays type COUPLE with
+    // coupleStatus SEPARATED and zero active members — a defunct shared
+    // profile, same as how a Group with all members removed behaves.
 
     // 4.1 fix: this used to only flip CoupleProfile.coupleStatus, leaving
     // ProfileMember rows ACCEPTED — the two models disagreed about who

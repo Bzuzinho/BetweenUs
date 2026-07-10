@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { resolvePostLoginRoute } from '../lib/postLoginRoute'
 
 const C = {
   bg:'#0A141A', surface:'#102129', border:'#1E3340', input:'#0F1E26',
@@ -27,9 +28,12 @@ export default function LoginPage() {
     setLoading(true); setError('')
     try {
       const me = await login(form.email, form.password)
-      if (me?.adminRole) navigate('/admin', { replace: true })
-      else if (!me?.profile) navigate('/create-profile', { replace: true })
-      else navigate('/explore', { replace: true })
+      // BETA.2.5 — was its own third copy of the admin/profile/explore
+      // if-else chain (App.jsx's RootRedirect and PublicRoute each had
+      // their own too, with subtly different behavior). Single source of
+      // truth now: lib/postLoginRoute.js.
+      const { route } = resolvePostLoginRoute(me)
+      navigate(route, { replace: true })
     } catch (err) {
       const code = err.response?.data?.code
       const msg  = err.response?.data?.error

@@ -4,6 +4,7 @@ import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { inviteMember } from '../lib/profileMembershipService'
 import { assertGroupProfilesEnabled } from '../lib/profileTypePolicy'
+import { getAvailableContexts } from '../lib/activeProfileContextService'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
 
@@ -22,26 +23,35 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     const { sharedDescription, inviteEmails } = req.body
     const emails: string[] = Array.isArray(inviteEmails) ? inviteEmails.filter(Boolean) : []
 
-    const existing = await prisma.profile.findUnique({ where: { userId: req.userId! } })
-    if (existing && existing.type !== 'INDIVIDUAL') {
+    // BETA.2 (FASE C) — "already in a couple/group" used to be answered by
+    // checking whether the caller's OWNED Profile row (Profile.userId) had
+    // type !== 'INDIVIDUAL', because creating a group used to convert that
+    // very row in place. Now a Shared Profile never sets userId at all
+    // (ownership is ProfileMember-only — see schema.prisma's Profile.userId
+    // comment), so the owned row is always the caller's Individual Profile
+    // and this check must instead look at Shared Profile membership.
+    const existingContexts = await getAvailableContexts(req.userId!)
+    const existingShared = existingContexts.find(c => c.type !== 'INDIVIDUAL')
+    if (existingShared) {
       return res.status(409).json({ error: 'Já tens um perfil de casal ou de grupo.' })
     }
 
-    const profile = existing
-      ? await prisma.profile.update({ where: { id: existing.id }, data: { type: 'GROUP', sharedDescription: sharedDescription || null } })
-      : await prisma.profile.create({
-          data: {
-            userId: req.userId!,
-            type: 'GROUP',
-            displayName: req.body.displayName || 'Grupo',
-            sharedDescription: sharedDescription || null,
-            status: process.env.NODE_ENV === 'production' ? 'PENDING_REVIEW' : 'APPROVED',
-            privacySettings: { create: {
-              visibleInDiscovery: false, showDistance: true,
-              showOnlineStatus: false, invisibleMode: false, notificationMode: 'DISCREET'
-            }}
-          }
-        })
+    // The creator's own Individual Profile is left completely untouched —
+    // the Group Profile is always a brand new, separate Profile row
+    // (userId: null; ownership expressed via the ProfileMember upsert
+    // below), never the creator's individual row converted in place.
+    const profile = await prisma.profile.create({
+      data: {
+        type: 'GROUP',
+        displayName: req.body.displayName || 'Grupo',
+        sharedDescription: sharedDescription || null,
+        status: process.env.NODE_ENV === 'production' ? 'PENDING_REVIEW' : 'APPROVED',
+        privacySettings: { create: {
+          visibleInDiscovery: false, showDistance: true,
+          showOnlineStatus: false, invisibleMode: false, notificationMode: 'DISCREET'
+        }}
+      }
+    })
 
     await (prisma as any).profileMember.upsert({
       where: { profileId_userId: { profileId: profile.id, userId: req.userId! } },
@@ -68,12 +78,14 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
 // GET /api/groups/me — the group profile I belong to (creator or accepted member)
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
+    // BETA.2 (FASE C) — Group Profiles never carry userId, so membership is
+    // the only source of truth now (the direct Profile.userId fallback
+    // this used to have would only ever match legacy pre-backfill rows).
     const membership = await (prisma as any).profileMember.findFirst({
       where: { userId: req.userId!, status: 'ACCEPTED' },
       include: { profile: true }
     })
-    const profile = membership?.profile?.type === 'GROUP' ? membership.profile
-      : await prisma.profile.findFirst({ where: { userId: req.userId!, type: 'GROUP' } })
+    const profile = membership?.profile?.type === 'GROUP' ? membership.profile : null
 
     if (!profile) return res.status(404).json({ error: 'Sem perfil de grupo.' })
 
@@ -119,8 +131,15 @@ router.post('/join/:token', requireAuth, async (req: AuthRequest, res: Response)
     const invite = await (prisma as any).profileMember.findUnique({ where: { inviteToken: req.params.token } })
     if (!invite || invite.status !== 'PENDING') return res.status(404).json({ error: 'Convite inválido ou expirado.' })
 
-    const myOwnProfile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
-    if (myOwnProfile && myOwnProfile.id !== invite.profileId && myOwnProfile.type !== 'INDIVIDUAL') {
+    // BETA.2 (FASE C) — "already in another couple/group" is now a
+    // membership question, not an owned-profile-type question (see the
+    // matching comment in POST '/' above — a Shared Profile never sets
+    // userId, so the caller's owned row is always their Individual
+    // Profile and can no longer be used to detect this).
+    const existingSharedMembership = await (prisma as any).profileMember.findFirst({
+      where: { userId: req.userId!, status: 'ACCEPTED', profileId: { not: invite.profileId } }
+    })
+    if (existingSharedMembership) {
       return res.status(409).json({ error: 'Já pertences a outro casal ou grupo.' })
     }
 
@@ -129,11 +148,14 @@ router.post('/join/:token', requireAuth, async (req: AuthRequest, res: Response)
       data: { userId: req.userId!, status: 'ACCEPTED', respondedAt: new Date(), inviteToken: null }
     })
 
-    // If the accepting user had their own individual profile, retire it —
-    // they now act through the shared group profile.
-    if (myOwnProfile && myOwnProfile.type === 'INDIVIDUAL') {
-      await prisma.profile.update({ where: { id: myOwnProfile.id }, data: { status: 'HIDDEN' } })
-    }
+    // BETA.2 (FASE C) — the accepting user's Individual Profile (if they
+    // have one) is deliberately left untouched. Before this sprint it was
+    // hidden on the theory that "you now act through the shared group
+    // profile" — but the whole point of this sprint is that Individual and
+    // Shared are independent, simultaneous identities (Active Profile
+    // Context decides which one a given screen acts as; the Group's
+    // individualDiscoveryPolicy decides whether the Individual Profile is
+    // additionally visible in Discovery — see EligibilityService).
 
     const { notifyUser } = await import('../lib/notify')
     const otherMembers = await (prisma as any).profileMember.findMany({

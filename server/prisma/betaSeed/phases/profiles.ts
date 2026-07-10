@@ -6,7 +6,7 @@ import prisma from '../../../src/lib/prisma'
 import { upsertTestUser, hashSeedPassword } from './accounts'
 import {
   INDIVIDUAL_SCENARIOS, COUPLE_SCENARIOS, GROUP_SCENARIO,
-  type IndividualScenario, type CoupleScenario,
+  type IndividualScenario, type CoupleScenario, type CoupleMemberSeed,
 } from '../scenarios'
 import { isGroupProfilesEnabled } from '../../../src/lib/profileTypePolicy'
 import { getOrCreateCurrentAgreement, submitAnswer } from '../../../src/lib/profileAgreementService'
@@ -128,6 +128,27 @@ interface CoupleResult {
   memberUserIds: string[]
 }
 
+// BETA.2 (FASE E) — gives a couple/group member their own separate
+// Individual Profile, matching what routes/couples.ts and routes/
+// groups.ts now actually do in production (FASE C's schema change: a
+// Shared Profile never carries userId — see schema.prisma's Profile.
+// userId comment). Idempotent via Profile.userId (still unique). Minimal
+// but real (APPROVED, not a DRAFT stub) since the seed's job is to
+// demonstrate the target architecture, not just avoid crashing.
+const ensureMemberIndividualProfile = async (
+  user: { id: string }, m: CoupleMemberSeed, city: string, country: string
+): Promise<void> => {
+  await prisma.profile.upsert({
+    where: { userId: user.id },
+    update: { gender: m.gender, orientation: m.orientation },
+    create: {
+      userId: user.id, type: 'INDIVIDUAL', status: 'APPROVED', displayName: m.accountName,
+      gender: m.gender, orientation: m.orientation, city, country,
+      privacySettings: { create: defaultPrivacy() as any },
+    },
+  })
+}
+
 export const createCoupleProfiles = async (): Promise<Record<string, CoupleResult>> => {
   const passwordHash = await hashSeedPassword()
   const { intentionIdBySlug } = await catalogIds()
@@ -138,6 +159,12 @@ export const createCoupleProfiles = async (): Promise<Record<string, CoupleResul
     for (const m of c.members) {
       const u = await upsertTestUser({ email: m.email, accountName: m.accountName, testScenarioKey: c.key, passwordHash, status: 'ACTIVE' })
       memberUsers.push(u)
+      // BETA.2 (FASE E) — separate from the Couple Profile below; this is
+      // the member's OWN Individual Profile, never converted/consumed by
+      // becoming a couple (that legacy conflation is exactly what FASE C
+      // fixed — see backfillIndividualProfiles.ts for the migration of
+      // pre-FASE-C production data created the old way).
+      await ensureMemberIndividualProfile(u, c.members[memberUsers.length - 1], c.city, c.country)
     }
     const creatorUserId = memberUsers[0].id
 
@@ -146,24 +173,25 @@ export const createCoupleProfiles = async (): Promise<Record<string, CoupleResul
     const discretionLevel = c.maxPrivacy ? 'MAXIMUM' : 'SELECTIVE'
     const visibilityMode = c.maxPrivacy ? 'MATCHES_ONLY' : 'PUBLIC'
 
-    // Profile is owned (userId) by the creator for schema-compat with
-    // pre-ProfileMember code paths still reading Profile.userId directly
-    // — ProfileMember below is the real membership source of truth
-    // (profileMembershipService.getActiveMembers), matching how
-    // production couple creation works today.
-    const profile = await prisma.profile.upsert({
-      where: { userId: creatorUserId },
-      update: { type: 'COUPLE', status: 'APPROVED', displayName: c.displayName, bio: c.bio, city: c.city, country: c.country, discretionLevel: discretionLevel as any, visibilityMode: visibilityMode as any },
-      create: {
-        userId: creatorUserId, type: 'COUPLE', status: 'APPROVED', displayName: c.displayName, bio: c.bio,
-        city: c.city, country: c.country, discretionLevel: discretionLevel as any, visibilityMode: visibilityMode as any,
-        privacySettings: { create: defaultPrivacy(c.maxPrivacy ? { visibleInDiscovery: true, showDistance: false } : undefined) as any },
-      },
-    })
-    await (prisma as any).privacySettings.upsert({
-      where: { profileId: profile.id },
-      update: {}, create: { profileId: profile.id, ...defaultPrivacy() } as any,
-    }).catch(() => {})
+    // BETA.2 (FASE E) — idempotency key changed from Profile.userId
+    // (which now always means the CREATOR's own Individual Profile, set
+    // above) to CoupleProfile.partnerOneUserId, which is just as stable
+    // per scenario across repeated seed runs but correctly identifies the
+    // Shared Profile row instead.
+    const existingCouple = await (prisma as any).coupleProfile.findFirst({ where: { partnerOneUserId: creatorUserId } })
+    const profile = existingCouple
+      ? await prisma.profile.update({
+          where: { id: existingCouple.profileId },
+          data: { type: 'COUPLE', status: 'APPROVED', displayName: c.displayName, bio: c.bio, city: c.city, country: c.country, discretionLevel: discretionLevel as any, visibilityMode: visibilityMode as any, individualDiscoveryPolicy: (c.individualDiscoveryPolicy || 'SHARED_ONLY') as any },
+        })
+      : await prisma.profile.create({
+          data: {
+            type: 'COUPLE', status: 'APPROVED', displayName: c.displayName, bio: c.bio,
+            city: c.city, country: c.country, discretionLevel: discretionLevel as any, visibilityMode: visibilityMode as any,
+            individualDiscoveryPolicy: (c.individualDiscoveryPolicy || 'SHARED_ONLY') as any,
+            privacySettings: { create: defaultPrivacy(c.maxPrivacy ? { visibleInDiscovery: true, showDistance: false } : undefined) as any },
+          },
+        })
 
     await (prisma as any).coupleProfile.upsert({
       where: { profileId: profile.id },
@@ -255,18 +283,37 @@ export const createGroupProfile = async (): Promise<CoupleResult | null> => {
   for (const m of g.members) {
     const u = await upsertTestUser({ email: m.email, accountName: m.accountName, testScenarioKey: g.key, passwordHash, status: 'ACTIVE' })
     memberUsers.push(u)
+    // BETA.2 (FASE E) — same separation as createCoupleProfiles above:
+    // each group member gets their OWN Individual Profile, never
+    // consumed by the Group Profile (which is always a separate row,
+    // userId: null — see schema.prisma's Profile.userId comment).
+    await ensureMemberIndividualProfile(u, m, 'Lisboa', 'Portugal')
   }
   const creatorUserId = memberUsers[0].id
 
-  const profile = await prisma.profile.upsert({
-    where: { userId: creatorUserId },
-    update: { type: 'GROUP', status: 'APPROVED', displayName: g.displayName },
-    create: {
-      userId: creatorUserId, type: 'GROUP', status: 'APPROVED', displayName: g.displayName,
-      bio: 'Trio poliamoroso, juntos há cerca de um ano.', city: 'Lisboa', country: 'Portugal',
-      privacySettings: { create: defaultPrivacy() as any },
-    },
+  // BETA.2 (FASE E) — idempotency key changed from Profile.userId (now
+  // always the creator's own Individual Profile, set above) to the
+  // creator's ProfileMember(isCreator=true) row pointing at a GROUP
+  // profile — stable per scenario across repeated seed runs.
+  const existingMembership = await (prisma as any).profileMember.findFirst({
+    where: { userId: creatorUserId, isCreator: true },
+    include: { profile: true },
   })
+  const existingGroupProfile = existingMembership?.profile?.type === 'GROUP' ? existingMembership.profile : null
+
+  const profile = existingGroupProfile
+    ? await prisma.profile.update({
+        where: { id: existingGroupProfile.id },
+        data: { type: 'GROUP', status: 'APPROVED', displayName: g.displayName, individualDiscoveryPolicy: 'SHARED_ONLY' as any },
+      })
+    : await prisma.profile.create({
+        data: {
+          type: 'GROUP', status: 'APPROVED', displayName: g.displayName,
+          bio: 'Trio poliamoroso, juntos há cerca de um ano.', city: 'Lisboa', country: 'Portugal',
+          individualDiscoveryPolicy: 'SHARED_ONLY' as any,
+          privacySettings: { create: defaultPrivacy() as any },
+        },
+      })
 
   for (const [i, u] of memberUsers.entries()) {
     await (prisma as any).profileMember.upsert({

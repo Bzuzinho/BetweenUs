@@ -119,23 +119,22 @@ export const declineMembership = async (inviteToken: string) => {
 // 6.1 — lifted out of routes/profiles.ts (where it was a private, unexported
 // helper duplicated in spirit across couples.ts's older Profile.userId-only
 // routes) so every new Sprint 6 router (agreements, travel, photos) resolves
-// "my profile" the same correct way: owned profile, OR accepted
-// ProfileMember row, OR (pre-backfill legacy safety net) CoupleProfile's
-// partnerTwoUserId. Behavior is unchanged from the profiles.ts original —
-// this is a relocation, not a rewrite.
+// "my profile" the same correct way.
+//
+// BETA.2 (FASE C) — before this, "owned profile" (Profile.userId) and "the
+// profile I act as" were the same thing, because a couple/group creator's
+// individual Profile row WAS their couple/group row (converted in place).
+// Now that every user has a separate Individual Profile from any Shared
+// Profile they belong to, those two questions are different, and this
+// function answers the second one (delegates to
+// activeProfileContextService.resolveActiveProfileId, which is also what
+// decides Profile Switcher defaults) rather than the first. Dynamic import
+// to avoid a circular require — activeProfileContextService imports
+// getActiveMembers from this file, same pattern already used below for
+// scoreInvalidationService/profileAgreementService.
 export const resolveMyProfileId = async (userId: string): Promise<string | null> => {
-  const owned = await prisma.profile.findUnique({ where: { userId }, select: { id: true } })
-  if (owned) return owned.id
-
-  const membership = await (prisma as any).profileMember.findFirst({
-    where: { userId, status: 'ACCEPTED' }, select: { profileId: true }
-  })
-  if (membership) return membership.profileId
-
-  const coupleProfile = await prisma.coupleProfile.findFirst({
-    where: { partnerTwoUserId: userId }, select: { profileId: true }
-  })
-  return coupleProfile?.profileId || null
+  const { resolveActiveProfileId } = await import('./activeProfileContextService')
+  return resolveActiveProfileId(userId)
 }
 
 // Removes (or marks declined, if never fully joined) a member from a

@@ -91,10 +91,23 @@ export const createLikeOrMatch = async (
         : { kind: 'MATCH_PENDING_COUPLE_APPROVAL', matchId: existing.id }
     }
 
-    // Point 9: decide if double consent is required on EITHER side
-    const actorIsActiveCouple = actor.type === 'COUPLE' && actor.coupleProfile?.coupleStatus === 'ACTIVE'
-    const targetIsActiveCouple = target.type === 'COUPLE' && target.coupleProfile?.coupleStatus === 'ACTIVE'
-    const requiresDoubleConsent = actorIsActiveCouple || targetIsActiveCouple
+    // Point 9: decide if double consent is required on EITHER side.
+    // BETA.2 (FASE E) — this used to check `type === 'COUPLE'` only, which
+    // silently skipped GROUP profiles entirely: a GROUP liking/being liked
+    // would jump straight to ACTIVE, bypassing N-party approval altogether
+    // (found while seeding a GROUP x INDIVIDUAL match scenario — no seed
+    // data existed yet to exercise this path). A Shared Profile (COUPLE or
+    // GROUP) requires consent once it's actually usable: COUPLE only once
+    // coupleStatus=ACTIVE (matches the pre-existing rule — a
+    // PENDING_PARTNER couple can't match yet at all), GROUP once its own
+    // Profile.status=APPROVED (GROUP has no separate coupleStatus-like
+    // sub-state machine, so Profile.status is the equivalent signal).
+    const requiresApproval = (p: typeof actor): boolean => {
+      if (p.type === 'COUPLE') return p.coupleProfile?.coupleStatus === 'ACTIVE'
+      if (p.type === 'GROUP') return p.status === 'APPROVED'
+      return false
+    }
+    const requiresDoubleConsent = requiresApproval(actor) || requiresApproval(target)
 
     // 5.9 — creation now goes through MatchStateMachine.transition() instead
     // of a raw prisma.match.create with an inline status value, so this is

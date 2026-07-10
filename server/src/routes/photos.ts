@@ -243,11 +243,22 @@ router.post('/:id/request-access', requireAuth, async (req: AuthRequest, res: Re
     // was fine when only the uploading member's own image was at stake;
     // it's wrong the moment a partner or fellow group member is also
     // depicted and hasn't had any say.
+    // BETA.2 (FASE C) — PhotoAccessRequest.ownerId is required, but a
+    // Shared Profile's Profile.userId is now null (see schema.prisma).
+    // Before this sprint, a Shared Profile's userId was always the
+    // creator (only the creator ever held that slot), so falling back to
+    // the profile's creator here reproduces the exact same owner identity
+    // as before — not a behavior change, just resolving it through
+    // ProfileMember now that userId can't answer it directly.
+    const ownerId = photo.profile.userId
+      || (await getActiveMembers(photo.profileId)).find(m => m.isCreator)?.userId
+      || req.userId!
+
     if (photo.visibilityLevel === 'PRIVATE_AFTER_MATCH' && photo.memberScope === 'SINGLE_MEMBER') {
       const existing = await prisma.photoAccessRequest.upsert({
         where: { photoId_requesterId: { photoId: photo.id, requesterId: req.userId! } },
         update: { status: 'APPROVED', respondedAt: new Date() },
-        create: { photoId: photo.id, requesterId: req.userId!, ownerId: photo.profile.userId, status: 'APPROVED', respondedAt: new Date() }
+        create: { photoId: photo.id, requesterId: req.userId!, ownerId, status: 'APPROVED', respondedAt: new Date() }
       })
       return res.json({ ok: true, status: 'APPROVED', request: existing })
     }
@@ -255,7 +266,7 @@ router.post('/:id/request-access', requireAuth, async (req: AuthRequest, res: Re
     const request = await prisma.photoAccessRequest.upsert({
       where: { photoId_requesterId: { photoId: photo.id, requesterId: req.userId! } },
       update: { status: 'PENDING', respondedAt: null },
-      create: { photoId: photo.id, requesterId: req.userId!, ownerId: photo.profile.userId, status: 'PENDING' }
+      create: { photoId: photo.id, requesterId: req.userId!, ownerId, status: 'PENDING' }
     })
     res.json({ ok: true, status: 'PENDING', request })
   } catch (err: any) {
@@ -305,10 +316,10 @@ router.put('/access-requests/:id', requireAuth, async (req: AuthRequest, res: Re
   const maybeRecordGrantSignal = async (finalStatus: string) => {
     if (finalStatus !== 'APPROVED' || wasAlreadyApproved) return
     try {
-      const requesterProfile = await prisma.profile.findUnique({ where: { userId: request.requesterId }, select: { id: true } })
-      if (requesterProfile) {
+      const requesterProfileId = await resolveMyProfileId(request.requesterId)
+      if (requesterProfileId) {
         const { recordSignal } = await import('../lib/recommendationSignalService')
-        recordSignal(photo.profileId, requesterProfile.id, 'PHOTO_ACCESS_GRANTED', { photoId: photo.id }).catch(() => {})
+        recordSignal(photo.profileId, requesterProfileId, 'PHOTO_ACCESS_GRANTED', { photoId: photo.id }).catch(() => {})
       }
     } catch { /* best-effort */ }
   }

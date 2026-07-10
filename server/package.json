@@ -15,6 +15,7 @@
     "db:seed:beta:validate": "ts-node --transpile-only prisma/betaSeed/validate.ts",
     "db:seed:beta:cleanup": "ts-node --transpile-only prisma/betaSeed/cleanup.ts",
     "db:backfill-members": "ts-node --transpile-only src/scripts/backfillProfileMembers.ts",
+    "db:backfill-individual-profiles": "ts-node --transpile-only src/scripts/backfillIndividualProfiles.ts",
     "reset-password": "ts-node --transpile-only src/scripts/resetPassword.ts",
     "hard-delete": "ts-node --transpile-only src/scripts/hardDelete.ts",
     "db:seed-performance": "ts-node --transpile-only src/scripts/seedPerformanceDataset.ts"

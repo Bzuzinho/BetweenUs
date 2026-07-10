@@ -3,10 +3,21 @@ import { reconnectSocketWithToken, disconnectSocket } from './socket'
 
 const baseURL = import.meta.env.VITE_API_URL || '/api'
 
+// BETA.2.5 — no timeout was configured at all before this: if a request
+// hangs server-side (a route handler that never reaches res.json() for a
+// specific malformed row, a stuck query, a dropped connection with no
+// server-side response), the returned promise never settles, AuthContext's
+// `loading` state never flips to false, and the UI shows a permanent
+// spinner (or, on PublicRoute before this same fix, a blank screen) with
+// no way out short of a hard refresh. This is a generic safety net (per
+// the explicit instruction: timeout as safety net, not as the root-cause
+// fix) — it does not address WHY a specific request might hang, only
+// guarantees no request can hang the UI forever.
 const api = axios.create({
   baseURL,
   headers: { 'Content-Type': 'application/json' },
-  withCredentials: true
+  withCredentials: true,
+  timeout: 15000
 })
 
 // Primary: localStorage (Safari ITP safe)

@@ -372,17 +372,96 @@ function ChatRoom({ match, onBack }) {
 }
 
 // ─── Lista de Matches ─────────────────────────────────────────────────────────
+// BETA.2 (FASE D) — REQUESTS / WAITING FOR EVERYONE section.
+// Reuses GET /api/couples/matches/pending as-is (already fully generic —
+// resolveMyProfileId + getRequiredApproverUserIds + getActiveMembers, no
+// couple-only logic despite living under /couples — see routes/couples.ts's
+// comment). Before this, that data only ever reached CouplePage.jsx, so an
+// individual or group profile's own pending N-party matches were invisible
+// anywhere in the app.
+function PendingMatchesSection({ pending, onApprove }) {
+  if (!pending || pending.length === 0) return null
+  const needsMe = pending.filter(p => !p.mySideConfirmed)
+  const waitingOnOthers = pending.filter(p => p.mySideConfirmed && !p.otherSideConfirmed)
+  if (needsMe.length === 0 && waitingOnOthers.length === 0) return null
+
+  return (
+    <div style={{ marginBottom:24 }}>
+      {needsMe.length > 0 && (
+        <>
+          <div style={{ fontSize:11, color:C.warning, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:8, fontWeight:600 }}>
+            Pedidos — precisam da tua confirmação
+          </div>
+          {needsMe.map(p => (
+            <div key={p.matchId} style={{ background:C.surface, border:`1px solid ${C.warning}`, borderRadius:14, padding:14, marginBottom:10 }}>
+              <div style={{ fontSize:14, fontWeight:600, color:C.text, marginBottom:6 }}>{p.profile?.displayName}</div>
+              <div style={{ fontSize:12, color:C.muted, marginBottom:10 }}>
+                {p.myApprovals?.length > 1
+                  ? `${p.myApprovals.filter(a => a.approved).length}/${p.myApprovals.length} do teu lado já confirmaram`
+                  : 'Confirma o teu interesse para avançar.'}
+              </div>
+              <button onClick={() => onApprove(p.matchId)} style={{ background:C.primary, border:'none', borderRadius:10, padding:'8px 16px', color:'#0A141A', fontWeight:600, fontSize:12, cursor:'pointer' }}>
+                Confirmar interesse
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+      {waitingOnOthers.length > 0 && (
+        <>
+          <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', margin:'14px 0 8px', fontWeight:600 }}>
+            À espera de todos
+          </div>
+          {waitingOnOthers.map(p => (
+            <div key={p.matchId} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:14, marginBottom:10, opacity:0.85 }}>
+              <div style={{ fontSize:14, fontWeight:600, color:C.text, marginBottom:4 }}>{p.profile?.displayName}</div>
+              <div style={{ fontSize:12, color:C.muted }}>Já confirmaste — a aguardar confirmação do outro lado.</div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function MatchesScreen() {
   const [matches, setMatches] = useState([])
+  const [pending, setPending] = useState([])
   const [loading, setLoading] = useState(true)
   const [active, setActive] = useState(null)
+  const navigate = useNavigate()
+
+  const loadPending = () => {
+    api.get('/couples/matches/pending').then(res => setPending(res.data.pending || [])).catch(() => setPending([]))
+  }
 
   useEffect(() => {
     api.get('/matches')
       .then(res => setMatches(res.data.matches || []))
       .catch(console.error)
       .finally(() => setLoading(false))
+    loadPending()
   }, [])
+
+  const handleApprove = async (matchId) => {
+    try { await api.post(`/couples/matches/${matchId}/approve`); loadPending() } catch {}
+  }
+
+  // BETA.2 (FASE D) — match→room navigation. Every match reaching ACTIVE
+  // now gets a Private Room created automatically (domainEvents.ts's
+  // MATCH_ACTIVATED handler -> PrivateRoomService.createFromMatch, 7.9) —
+  // so an ACTIVE match's real conversation now lives in Salas Privadas,
+  // not the legacy inline ChatRoom below. Falls back to the legacy chat
+  // only if no room exists yet for this match (defensive — shouldn't
+  // normally happen for a match created after Sprint 7).
+  const openMatch = async (m) => {
+    try {
+      const res = await api.get('/rooms')
+      const room = (res.data.rooms || []).find(r => r.matchId === m.id)
+      if (room) { navigate(`/rooms?matchId=${m.id}`); return }
+    } catch {}
+    setActive(m)
+  }
 
   if (active) return <ChatRoom match={active} onBack={() => setActive(null)} />
 
@@ -395,13 +474,15 @@ export default function MatchesScreen() {
         Os teus Matches
       </div>
 
+      <PendingMatchesSection pending={pending} onApprove={handleApprove} />
+
       {loading && (
         <div style={{ textAlign:'center', color:C.muted, fontSize:13, padding:60 }}>
           A carregar...
         </div>
       )}
 
-      {!loading && matches.length === 0 && (
+      {!loading && matches.length === 0 && pending.length === 0 && (
         <div style={{ textAlign:'center', padding:'60px 20px' }}>
           <div style={{ fontSize:60, marginBottom:16 }}>💫</div>
           <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22,
@@ -412,8 +493,13 @@ export default function MatchesScreen() {
         </div>
       )}
 
+      {matches.length > 0 && (
+        <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:8, fontWeight:600 }}>
+          Ligações ativas
+        </div>
+      )}
       {matches.map(m => (
-        <div key={m.id} onClick={() => setActive(m)}
+        <div key={m.id} onClick={() => openMatch(m)}
           style={{ background:C.bgCard, border:`1px solid ${C.border}`,
             borderRadius:18, padding:16, display:'flex', alignItems:'center',
             gap:14, marginBottom:12, cursor:'pointer', transition:'all 0.2s' }}>

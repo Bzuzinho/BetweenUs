@@ -225,22 +225,43 @@ router.get('/me', async (req: Request, res: Response) => {
       select: {
         id:true, email:true, status:true, adminRole:true, emailVerifiedAt:true, createdAt:true, ageVerifiedAt:true,
         accountName:true, nif:true, avatarPath:true, dateOfBirth:true,
-        profile: { select:{ id:true, displayName:true, type:true, status:true, city:true } },
         subscription: { select:{ plan:true, status:true, currentPeriodEnd:true } }
       }
     })
     if (!user) return res.status(404).json({ error: 'Utilizador não encontrado.' })
 
-    // Sprint 3: invited couple/group members have no owned Profile row —
-    // fall back to the shared profile they've been accepted into, so the
-    // frontend's PrivateRoute doesn't wrongly send them to /create-profile.
-    if (!user.profile) {
-      const membership = await (prisma as any).profileMember.findFirst({
-        where: { userId, status: 'ACCEPTED' },
-        include: { profile: { select: { id:true, displayName:true, type:true, status:true, city:true } } }
-      })
-      if (membership?.profile) (user as any).profile = membership.profile
-    }
+    // BETA.2 (FASE C) — every user now potentially has TWO different
+    // things worth returning: their own Individual Profile (owned row,
+    // may not exist yet or may still be a DRAFT stub from the backfill
+    // script — see backfillIndividualProfiles.ts), and whichever profile
+    // they're currently "acting as" (Active Profile Context — could be
+    // that same Individual Profile, or a Shared Profile they belong to).
+    // `profile` is kept in the response with its historical shape/meaning
+    // (the ACTING profile) so existing frontend routing code
+    // (postLoginRoute.js, App.jsx's PrivateRoute) doesn't need to change —
+    // it just now comes from activeProfileContextService instead of the
+    // raw Profile.userId relation, which is what actually fixes the "second
+    // couple/group member 404s" class of bug (BETA.2 audit).
+    const { getAvailableContexts, resolveActiveProfileId } = await import('../lib/activeProfileContextService')
+    const availableProfileContexts = await getAvailableContexts(userId)
+    const activeProfileId = await resolveActiveProfileId(userId)
+    const activeProfileContext = activeProfileId
+      ? availableProfileContexts.find(c => c.profileId === activeProfileId) || null
+      : null
+
+    const individualProfileRow = await prisma.profile.findUnique({
+      where: { userId },
+      select: { id:true, displayName:true, type:true, status:true, city:true }
+    })
+
+    const activeProfileRow = activeProfileContext
+      ? (activeProfileContext.profileId === individualProfileRow?.id
+          ? individualProfileRow
+          : await prisma.profile.findUnique({
+              where: { id: activeProfileContext.profileId },
+              select: { id:true, displayName:true, type:true, status:true, city:true }
+            }))
+      : null
 
     // 3.3: flag any legal document the user accepted an outdated version of
     // (or never accepted at all, for documents published after they signed
@@ -249,8 +270,34 @@ router.get('/me', async (req: Request, res: Response) => {
     const pendingLegalReacceptance = await getPendingReacceptance(userId).catch(() => [])
     const avatarPath = await signMediaUrl(user.avatarPath)
 
-    res.json({ ...user, avatarPath, pendingLegalReacceptance })
+    res.json({
+      ...user,
+      avatarPath,
+      pendingLegalReacceptance,
+      profile: activeProfileRow,
+      individualProfile: individualProfileRow,
+      availableProfileContexts,
+      activeProfileContext
+    })
   } catch { res.status(401).json({ error: 'Token inválido.' }) }
+})
+
+// POST /api/auth/active-profile — BETA.2 (FASE C) Profile Switcher backend.
+// Body: { profileId }. Only succeeds if the caller actually belongs to
+// that profile (activeProfileContextService re-validates, never trusts the
+// client blindly) — see its switchActiveProfile().
+router.post('/active-profile', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { profileId } = req.body
+    if (!profileId) return res.status(400).json({ error: 'profileId é obrigatório.' })
+    const { switchActiveProfile } = await import('../lib/activeProfileContextService')
+    const context = await switchActiveProfile(req.userId!, profileId)
+    if (!context) return res.status(403).json({ error: 'Não pertences a esse perfil.' })
+    res.json({ activeProfileContext: context })
+  } catch (err: any) {
+    console.error('[ACTIVE PROFILE SWITCH]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
 })
 
 // POST /api/auth/consents/reaccept — accept the currently published version

@@ -217,6 +217,11 @@ export interface CoupleScenario {
   agreementOutcome: 'ALIGNED' | 'CONFLICT' | 'WAITING_MEMBERS' | 'NONE'
   travelMode?: { city: string; status: 'SCHEDULED' | 'WAITING_MEMBER_APPROVAL' }
   maxPrivacy?: boolean
+  // BETA.2 (FASE E) — Shared Profile individual-discovery policy end
+  // state to seed (see schema.prisma's IndividualDiscoveryPolicy enum).
+  // Undefined = SHARED_ONLY (the real default — most couples shouldn't
+  // need to touch this).
+  individualDiscoveryPolicy?: 'INDIVIDUAL_AND_SHARED' | 'SHARED_ONLY'
   scenario: string
   expected: string[]
 }
@@ -235,7 +240,11 @@ export const COUPLE_SCENARIOS: CoupleScenario[] = [
     ],
     intentions: [{ slug: 'seek_third', preference: 'YES' }],
     agreementOutcome: 'ALIGNED',
-    scenario: 'Third match happy path', expected: ['ProfileAgreement.status=ALIGNED', 'CoupleProfile.coupleStatus=ACTIVE', 'match com individual_marta via double consent ALL'] },
+    // BETA.2 (FASE E) — this is the INDIVIDUAL_AND_SHARED demo: both
+    // Ana's and Pedro's own Individual Profiles are also discoverable
+    // separately from the couple, unanimous-approved end state.
+    individualDiscoveryPolicy: 'INDIVIDUAL_AND_SHARED',
+    scenario: 'Third match happy path + Individual Discovery policy', expected: ['ProfileAgreement.status=ALIGNED', 'CoupleProfile.coupleStatus=ACTIVE', 'match com individual_marta via double consent ALL', 'individualDiscoveryPolicy=INDIVIDUAL_AND_SHARED — Ana e Pedro aparecem também como indivíduos no Discovery'] },
   { key: 'couple_2_conflict', displayName: 'Carla & Nuno', city: 'Porto', country: 'Portugal',
     bio: 'Casal a explorar limites em conjunto — ainda a alinhar alguns pontos.',
     members: [

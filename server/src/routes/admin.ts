@@ -4,6 +4,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { requireAdmin, logAdminAction, roleHasPermission } from '../middleware/admin'
 import { recalculateRiskScore, recalculateAllRiskScores } from '../lib/riskScore'
 import { evaluateAndActivateUser, canTransitionStatus } from '../lib/userActivationService'
+import { getActiveMembers } from '../lib/profileMembershipService'
 import { forUser as getEligibility } from '../lib/eligibilityService'
 import { mergePhotosForViewer, signMediaUrl } from '../lib/mediaAccessService'
 import { getKeyVersionStats, getActiveKeyVersion } from '../lib/contactHashService'
@@ -56,7 +57,16 @@ router.post('/gdpr/hard-delete/run', requireAdmin('users'), async (req: AuthRequ
 // SUPER_ADMIN-only (same convention as recommendations.ts's wantsTestData)
 // — ADMIN/others always see the production-honest numbers, with no way to
 // silently blend seeded beta accounts into what looks like real traction.
-router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: Response) => {
+// BETA.2.3 — was requireAdmin('metrics'), which only SUPER_ADMIN/ADMIN/
+// FINANCE have. MODERATOR/SUPPORT/CONTENT_REVIEWER got a blanket 403 on
+// this single endpoint and the frontend's silent .catch(() => {}) turned
+// that into a permanent "A carregar..." spinner (DashboardTab never left
+// `data === null`). Gate relaxed to "any authenticated admin role" — the
+// response itself is now filtered per-section by filterDashboardForRole()
+// below, so a MODERATOR still never receives revenue/subscription data,
+// it just gets a 200 with only the sections it has permission for instead
+// of a 403 with nothing.
+router.get('/dashboard', requireAdmin(), async (req: AuthRequest, res: Response) => {
   try {
     const today = new Date(); today.setHours(0,0,0,0)
     const week  = new Date(Date.now() - 7  * 24 * 60 * 60 * 1000)
@@ -98,7 +108,8 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
       prisma.user.count({ where: { isTestAccount: true } }),
     ])
 
-    res.json({
+    const { filterDashboardForRole } = await import('../lib/adminWorkQueueService')
+    const full = {
       includeTestData,
       testAccountCount,
       users: { total: totalUsers, newToday, newWeek, newMonth, suspended: suspendedUsers, banned: bannedUsers, highRisk: highRiskUsers },
@@ -109,6 +120,11 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
       reports: { pending: pendingReports },
       subscriptions: { premium: premiumSubs, couple: coupleSubs, total: premiumSubs + coupleSubs },
       verifications: { pending: pendingVerifications }
+    }
+    res.json({
+      includeTestData,
+      testAccountCount,
+      ...filterDashboardForRole(full, (req as any).adminRole || null)
     })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
@@ -123,7 +139,20 @@ router.get('/dashboard', requireAdmin('metrics'), async (req: AuthRequest, res: 
 router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
   const { limit = 20, offset = 0, status, search, sortByRisk, accountFilter } = req.query
   const where: any = {}
-  if (status) where.status = status
+  // BETA.2.4 — deleted (anonymised) accounts stay in the users table forever
+  // (soft-delete/retention, see hardDeleteJob.ts) but must not clutter the
+  // default admin listing as if they were normal users. Explicit opt-in via
+  // ?status=DELETED shows only deleted accounts; ?status=ALL removes the
+  // filter entirely (audit/export use case). Any other explicit ?status=X
+  // behaves exactly as before (exact match). No status param = default =
+  // everything except DELETED.
+  if (status === 'ALL') {
+    // no filter
+  } else if (status) {
+    where.status = status
+  } else {
+    where.status = { not: 'DELETED' }
+  }
   if (accountFilter === 'test') where.isTestAccount = true
   if (accountFilter === 'real') where.isTestAccount = false
   if (search) where.OR = [
@@ -137,7 +166,7 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
       orderBy: sortByRisk === 'true' ? { riskScore: 'desc' } : { createdAt: 'desc' },
       select: {
         id: true, email: true, status: true, adminRole: true, avatarPath: true,
-        createdAt: true, lastSeenAt: true, riskScore: true,
+        createdAt: true, lastSeenAt: true, riskScore: true, updatedAt: true,
         isTestAccount: true, testScenarioKey: true,
         profile: { select: { id: true, displayName: true, type: true, city: true, status: true } },
         subscription: { select: { plan: true, status: true } },
@@ -160,6 +189,7 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
     createdAt: Date
     lastSeenAt: Date | null
     riskScore: number | null
+    updatedAt: Date
     isTestAccount: boolean
     testScenarioKey: string | null
     profile: { id: string; displayName: string; type: string; city: string | null; status: string } | null
@@ -167,8 +197,20 @@ router.get('/users', requireAdmin('users'), async (req: AuthRequest, res: Respon
     verification: { status: string } | null
     _count: { reportsMade: number; reportsReceived: number }
   }
+  // BETA.2.4 — for a DELETED (anonymised) account, expose when the
+  // anonymisation happened and when hardDeleteJob.ts is scheduled to
+  // permanently remove the row, so admin can distinguish "recently
+  // deleted, still in retention window" from stale data — reuses
+  // hardDeleteJob.ts's own GRACE_DAYS/updatedAt-cutoff logic rather than
+  // inventing a second definition of the retention window.
+  const HARD_DELETE_GRACE_DAYS = Number(process.env.HARD_DELETE_GRACE_DAYS || 30)
   const usersWithAvatars = await Promise.all((users as AdminUserListRow[]).map(async (u: AdminUserListRow) => ({
-    ...u, avatarPath: await signAvatarUrl(u.avatarPath)
+    ...u,
+    avatarPath: await signAvatarUrl(u.avatarPath),
+    ...(u.status === 'DELETED' ? {
+      deletedAt: u.updatedAt,
+      hardDeleteScheduledAt: new Date(u.updatedAt.getTime() + HARD_DELETE_GRACE_DAYS * 24 * 60 * 60 * 1000)
+    } : {})
   })))
   res.json({ users: usersWithAvatars, total })
 })
@@ -217,21 +259,41 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
   // member-facing routes get (getAgreementSummary) — per-member agreement
   // answers are NOT included here by default; that's the separate, always-
   // explicitly-logged GET /api/agreements/admin/:profileId/raw route.
+  //
+  // BETA.2 (FASE C) — user.profile is now ALWAYS this user's own
+  // Individual Profile (Shared Profiles no longer carry userId — see
+  // schema.prisma's Profile.userId comment), so `user.profile.type !==
+  // 'INDIVIDUAL'` can never be true anymore and this block would silently
+  // stop firing for every user post-backfill. Shared Profile membership is
+  // now resolved via ProfileMember instead, independent of whether this
+  // user also owns an Individual Profile — which is exactly the
+  // ownership-vs-membership distinction this admin view needs to show.
   let coupleContext: any = null
-  if (user.profile && user.profile.type !== 'INDIVIDUAL') {
+  const sharedMembership = await (prisma as any).profileMember.findFirst({
+    where: { userId: req.params.id, status: 'ACCEPTED' },
+    include: { profile: true }
+  })
+  const sharedProfile = sharedMembership?.profile && sharedMembership.profile.type !== 'INDIVIDUAL'
+    ? sharedMembership.profile
+    : null
+  if (sharedProfile) {
     const { getActiveMembers } = await import('../lib/profileMembershipService')
     const { getAgreementSummary } = await import('../lib/profileAgreementService')
     const [activeMembers, memberRows, agreementSummary] = await Promise.all([
-      getActiveMembers(user.profile.id),
+      getActiveMembers(sharedProfile.id),
       (prisma as any).profileMember.findMany({
-        where: { profileId: user.profile.id },
+        where: { profileId: sharedProfile.id },
         include: { user: { select: { id: true, email: true, status: true } } },
         orderBy: { createdAt: 'asc' }
       }),
-      getAgreementSummary(user.profile.id).catch(() => null),
+      getAgreementSummary(sharedProfile.id).catch(() => null),
     ])
     coupleContext = {
-      approvalPolicy: (user.profile as any).approvalPolicy,
+      profileId: sharedProfile.id,
+      type: sharedProfile.type,
+      displayName: sharedProfile.displayName,
+      individualDiscoveryPolicy: sharedProfile.individualDiscoveryPolicy,
+      approvalPolicy: sharedProfile.approvalPolicy,
       activeMemberCount: activeMembers.length,
       members: memberRows.map((m: any) => ({
         id: m.id, userId: m.userId, email: m.user?.email || m.invitedEmail,
@@ -261,9 +323,24 @@ router.get('/users/:id', requireAdmin('users'), async (req: AuthRequest, res: Re
     }
   }
   safeUser.avatarPath = await signAvatarUrl(safeUser.avatarPath)
+
+  // BETA.2.7 — financial summary, computed only when a Subscription row
+  // exists (a FREE-plan user with no subscription row has no payment
+  // history to summarise, and hasLocalPaymentHistory:false covers it).
+  let financials: any = null
+  if (safeUser.subscription) {
+    const { getSubscriptionFinancialSummary } = await import('../lib/subscriptionFinancialService')
+    financials = await getSubscriptionFinancialSummary(
+      req.params.id,
+      safeUser.subscription.currentPeriodStart,
+      safeUser.subscription.currentPeriodEnd
+    )
+  }
+
   res.json({
     ...safeUser,
     coupleContext,
+    financials,
     referral: {
       invitedBy: referredAs?.referralCode?.user || null,
       invitedByAt: referredAs?.createdAt || null,
@@ -558,20 +635,42 @@ router.put('/profiles/:id/status', requireAdmin('profiles'), async (req: AuthReq
   // Users to reactivate the account. Sprint 2.5.5: routed through the central
   // activation rule instead of an unconditional updateMany, so it's consistent
   // with email confirmation / identity verification approval.
+  // BETA.2 (FASE C) — Profile.userId is null for Shared Profiles
+  // (COUPLE/GROUP — see schema.prisma's comment), so approving one now
+  // activates every active member instead of a single owner. `activation`
+  // in the response keeps its old single-result shape for the Individual
+  // Profile case (still the common path); Shared Profile approvals return
+  // an array under `activations` instead.
   let activation = null
+  let activations: any[] | null = null
   if (status === 'APPROVED') {
-    activation = await evaluateAndActivateUser(profile.userId)
-    if (activation.activated) {
-      await logAdminAction(req.userId!, 'ACTIVE_USER', 'user', profile.userId, {
-        targetUserId: profile.userId,
-        reason: 'Activação automática após aprovação de perfil.',
-        newData: { status: 'ACTIVE' }, ipAddress: req.ip
-      })
+    if (profile.userId) {
+      activation = await evaluateAndActivateUser(profile.userId)
+      if (activation.activated) {
+        await logAdminAction(req.userId!, 'ACTIVE_USER', 'user', profile.userId, {
+          targetUserId: profile.userId,
+          reason: 'Activação automática após aprovação de perfil.',
+          newData: { status: 'ACTIVE' }, ipAddress: req.ip
+        })
+      }
+    } else {
+      const members = await getActiveMembers(profile.id)
+      activations = await Promise.all(members.map(async (m) => {
+        const result = await evaluateAndActivateUser(m.userId)
+        if (result.activated) {
+          await logAdminAction(req.userId!, 'ACTIVE_USER', 'user', m.userId, {
+            targetUserId: m.userId,
+            reason: 'Activação automática após aprovação de perfil (partilhado).',
+            newData: { status: 'ACTIVE' }, ipAddress: req.ip
+          })
+        }
+        return { userId: m.userId, ...result }
+      }))
     }
   }
 
   await logAdminAction(req.userId!, `${status}_PROFILE`, 'profile', req.params.id, { reason, ipAddress: req.ip })
-  res.json({ ok: true, profile, activation })
+  res.json({ ok: true, profile, activation, activations })
 })
 
 // ─── Photos ───────────────────────────────────────────────────────────────────
@@ -606,7 +705,18 @@ router.put('/photos/:id', requireAdmin('photos'), async (req: AuthRequest, res: 
   })
   if (moderationStatus === 'REJECTED') {
     const full = await prisma.profilePhoto.findUnique({ where: { id: req.params.id }, include: { profile: true } })
-    if (full) await recalculateRiskScore(full.profile.userId)
+    if (full) {
+      // BETA.2 (FASE C) — a Shared Profile's photo has no single owning
+      // user (Profile.userId is null — see schema.prisma), so a rejected
+      // photo's risk-score hit is applied to every active member instead
+      // of just one.
+      if (full.profile.userId) {
+        await recalculateRiskScore(full.profile.userId)
+      } else {
+        const members = await getActiveMembers(full.profile.id)
+        await Promise.all(members.map(m => recalculateRiskScore(m.userId)))
+      }
+    }
   }
   await logAdminAction(req.userId!, `${moderationStatus}_PHOTO`, 'photo', req.params.id, { reason: moderationNotes, ipAddress: req.ip })
   res.json({ ok: true, photo })
@@ -1148,6 +1258,25 @@ router.put('/referral-rule', requireAdmin('configuracoes'), async (req: AuthRequ
 
 export default router
 // ─── Notifications ────────────────────────────────────────────────────────────
+// BETA.2.2 — the bell used to ONLY show event-driven Notification rows
+// (never anything for pre-existing/seeded pending work, and never anything
+// at all for MODERATOR/SUPPORT/FINANCE/CONTENT_REVIEWER — notifyAdmins()
+// only targets SUPER_ADMIN/ADMIN). This endpoint is additive: unread
+// Notification rows (unchanged) PLUS a role-filtered, derived work queue
+// (adminWorkQueueService.ts) computed fresh from the actual pending
+// tables every call — no new Notification rows are created for this, per
+// the explicit instruction not to fabricate seed notifications when the
+// information can be derived from real queues.
+router.get('/notifications/summary', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  try {
+    const { getAdminNotificationSummary } = await import('../lib/adminWorkQueueService')
+    const summary = await getAdminNotificationSummary(req.userId!, ((req as any).adminRole || null))
+    res.json(summary)
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 router.get('/notifications', requireAdmin(), async (req: AuthRequest, res: Response) => {
   const notifs = await (prisma as any).notification.findMany({
     where: { userId: req.userId! },

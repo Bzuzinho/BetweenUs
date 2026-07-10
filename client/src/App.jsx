@@ -21,6 +21,7 @@ import LegalPage from './pages/LegalPage'
 import AdminPage from './pages/AdminPage'
 import OtpLoginPage from './pages/OtpLoginPage'
 import AppShell from './AppShell'
+import { resolvePostLoginRoute } from './lib/postLoginRoute'
 
 const C = { bg:'#0A141A' }
 
@@ -33,8 +34,32 @@ const LoadingScreen = () => (
   </div>
 )
 
+// BETA.2.5 — recoverable fallback for a route that ends up in a state
+// resolvePostLoginRoute/PrivateRoute genuinely cannot classify (should not
+// normally happen — this is a safety net, not the primary fix). The
+// primary fix is (a) lib/api.js now has a request timeout, so a hung
+// backend request rejects instead of leaving `loading` true forever, and
+// (b) a single resolvePostLoginRoute() definition instead of four
+// divergent copies. This component exists so that IF some future state
+// still slips through, the user sees an actionable screen — never a
+// spinner with no way out.
+function AuthErrorScreen({ onRetry }) {
+  const { logout } = useAuth()
+  return (
+    <div style={{ minHeight:'100vh', background:C.bg, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:24, textAlign:'center', gap:14 }}>
+      <div style={{ color:'#F5F7FA', fontSize:16, fontWeight:600, maxWidth:320 }}>Não conseguimos concluir a entrada na tua conta.</div>
+      <div style={{ color:'#7E8FA3', fontSize:13, maxWidth:320 }}>Isto pode ser temporário. Tenta novamente ou termina sessão.</div>
+      <div style={{ display:'flex', gap:10, marginTop:6 }}>
+        <button onClick={onRetry} style={{ background:'#B8A7FF', border:'none', borderRadius:10, padding:'10px 18px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>Tentar novamente</button>
+        <button onClick={() => logout().then(() => window.location.href = '/login')} style={{ background:'none', border:'1px solid #1E3340', borderRadius:10, padding:'10px 18px', color:'#AAB6C2', fontSize:13, cursor:'pointer' }}>Terminar sessão</button>
+      </div>
+      <div style={{ color:'#4A6B7A', fontSize:11, marginTop:4 }}>Se o problema persistir, contacta o suporte com esta referência: AUTH_ROUTE_UNRESOLVED</div>
+    </div>
+  )
+}
+
 function PrivateRoute({ children, requireProfile = true }) {
-  const { user, loading } = useAuth()
+  const { user, loading, refreshUser } = useAuth()
   if (loading) return <LoadingScreen />
   if (!user) return <Navigate to="/login" replace />
   if (user.adminRole) return children
@@ -52,21 +77,30 @@ function AdminRoute({ children }) {
 
 function PublicRoute({ children }) {
   const { user, loading } = useAuth()
-  if (loading) return null
+  // Was `if (loading) return null` — rendered a genuinely blank page (not
+  // even a spinner) for the entire duration of the initial /auth/me call.
+  // Combined with no axios timeout (lib/api.js), a hung request here
+  // looked exactly like "a aplicação fica permanentemente a pensar" with
+  // nothing on screen to even suggest something was loading.
+  if (loading) return <LoadingScreen />
   if (user) {
-    if (user.adminRole) return <Navigate to="/admin" replace />
-    return <Navigate to={user.profile ? '/explore' : '/create-profile'} replace />
+    const { route } = resolvePostLoginRoute(user)
+    return <Navigate to={route} replace />
   }
   return children
 }
 
 function RootRedirect() {
-  const { user, loading } = useAuth()
+  const { user, loading, refreshUser } = useAuth()
   if (loading) return <LoadingScreen />
-  if (!user) return <Navigate to="/login" replace />
-  if (user.adminRole) return <Navigate to="/admin" replace />
-  if (!user.profile) return <Navigate to="/create-profile" replace />
-  return <Navigate to="/explore" replace />
+  const { route, reason } = resolvePostLoginRoute(user)
+  if (reason === 'NOT_AUTHENTICATED') return <Navigate to={route} replace />
+  // Defensive: resolvePostLoginRoute is total (always returns a route for
+  // any input), so this branch is unreachable in practice — kept as an
+  // explicit safety net per the "nenhum estado válido deve produzir
+  // loading infinito" requirement, not as the primary fix.
+  if (!route) return <AuthErrorScreen onRetry={refreshUser} />
+  return <Navigate to={route} replace />
 }
 
 export default function App() {

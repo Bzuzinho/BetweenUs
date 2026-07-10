@@ -1,4 +1,4 @@
-# Between Us — Beta Test Account Manifest (beta-v1)
+# Between Us — Beta Test Account Manifest (beta-v2)
 
 Este documento lista todas as contas de teste criadas por `npm run db:seed:beta`. Todas as contas usam o domínio reservado `@betweenus.test`, têm `isTestAccount=true` e nunca recebem email real (o seed escreve diretamente na base de dados, sem passar por `/api/auth/register`).
 
@@ -49,10 +49,16 @@ Pré-requisito: `npm run db:seed` (catálogos estruturais) tem de ter corrido pr
 
 ## Perfis de casal
 
+Desde a FASE C (beta-v2), cada membro de casal/grupo tem também o seu
+PRÓPRIO Individual Profile separado (nunca copia bio/intenções/limites
+partilhados — ver `ensureMemberIndividualProfile` em `phases/profiles.ts`).
+O Casal/Grupo em si nunca tem `Profile.userId` — pertence exclusivamente
+via `ProfileMember`.
+
 | Casal | Emails | Cenário | Testes esperados |
 |---|---|---|---|
-| Casal 1 — Ana & Pedro | beta.couple1.ana@betweenus.test, beta.couple1.pedro@betweenus.test | Third match happy path | Agreement ALIGNED, double consent ALL |
-| Casal 2 — Carla & Nuno | beta.couple2.carla@betweenus.test, beta.couple2.nuno@betweenus.test | Agreement conflict | UI "não estão alinhados" sem revelar quem |
+| Casal 1 — Ana & Pedro | beta.couple1.ana@betweenus.test, beta.couple1.pedro@betweenus.test | Third match happy path + `individualDiscoveryPolicy=INDIVIDUAL_AND_SHARED` | Agreement ALIGNED, double consent ALL, Ana e Pedro também aparecem como Individual no Discovery |
+| Casal 2 — Carla & Nuno | beta.couple2.carla@betweenus.test, beta.couple2.nuno@betweenus.test | Agreement conflict + `individualDiscoveryPolicy=SHARED_ONLY` (default) | UI "não estão alinhados" sem revelar quem; Carla/Nuno NUNCA aparecem como Individual no Discovery |
 | Casal 3 — Vera + convite pendente | beta.couple3.vera@betweenus.test | Pending partner | coupleStatus=PENDING_PARTNER, excluído do Discovery |
 | Casal 4 — Beatriz & Hugo | beta.couple4.beatriz@betweenus.test, beta.couple4.hugo@betweenus.test | Couple Travel Mode | Aprovação de ambos |
 | Casal 5 — Rita & Filipe | beta.couple5.rita@betweenus.test, beta.couple5.filipe@betweenus.test | Máxima privacidade | Galeria privada + Soft Reveal |
@@ -61,13 +67,16 @@ Pré-requisito: `npm run db:seed` (catálogos estruturais) tem de ter corrido pr
 
 | Grupo | Emails | Cenário |
 |---|---|---|
-| Trio Aurora | beta.group.luna@betweenus.test, beta.group.davi@betweenus.test, beta.group.iris@betweenus.test | 3 ProfileMembers, badge de Grupo, membership de Private Room |
+| Trio Aurora | beta.group.luna@betweenus.test, beta.group.davi@betweenus.test, beta.group.iris@betweenus.test | 3 ProfileMembers, badge de Grupo, membership de Private Room, `individualDiscoveryPolicy=SHARED_ONLY` |
 
 ## Cenários adicionais cobertos (não são contas próprias — usam o roster acima)
 
 - Discovery/Between Score: pares de alta/média/baixa compatibilidade, conflito de hard boundary, conflito de intenção, bloqueio, invisível, contact block.
 - Like/Pass/Match: like unilateral, match ativo, pass, match de casal pendente (0 e 1 aprovação), match de casal ativo, match terminado, match bloqueado, match pausado.
+- **(beta-v2) Match Casal+Casal**: Carla&Nuno x Rita&Filipe — `match_couple_couple_pending`, 4 aprovadores únicos exigidos, parcial (1/4).
+- **(beta-v2) Match Grupo+Individual**: Trio Aurora x Miguel — `match_group_individual_active`, N+1=4 aprovadores exigidos, ACTIVE (todos aprovaram).
 - Private Rooms A-F: INDIVIDUAL_PAIR ativo, COUPLE_SINGLE em espera de consentimento, COUPLE_COUPLE ativo, pausado, fechado, SAFETY_LOCKED.
+- **(beta-v2) Room G**: Trio Aurora x Miguel — ACTIVE, 4 membros (3 do grupo + 1 individual), todas as regras aceites.
 - Consent Check: 7 fases (MATCH, CHAT, PHOTO_REQUEST, FACE_REVEAL, VIDEO_CALL, MEETING_PROPOSAL, SAFETY_CHECKIN) em vários estados.
 - Shared Intentions (IntentAlignment): versionamento V1 ativo, V1 ativo + V2 em aprovação, V1 arquivado + V2 ativo.
 - Reports: 6 motivos (FAKE_PROFILE, HARASSMENT, MINOR, NON_CONSENSUAL_IMAGE, THREAT, COERCION) com evidência.
@@ -78,6 +87,8 @@ Pré-requisito: `npm run db:seed` (catálogos estruturais) tem de ter corrido pr
 - Guide: 5 artigos publicados, 3 rascunhos.
 - Events: 5 eventos (políticas de venue distintas), com attendance em todos os estados.
 - Circles: 4 circles, memberships em todos os estados.
+- Beta Invites: 4 (PENDING, ACCEPTED, EXPIRED, REVOKED) — criados por `individual_diogo`, INVITE_B aceite por `individual_ines`.
+- **(beta-v2) Active Profile Context**: Ana (Casal 1) tem 2 contextos disponíveis (Individual + Casal); `individual_marta` (sem Shared Profile) tem só 1.
 
 ## Comandos
 

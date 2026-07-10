@@ -116,11 +116,29 @@ export const acceptRuleSet = async (roomId: string, userId: string): Promise<Rul
   const check = canTransitionRoom(room.status, 'ACTIVATE')
   if (!check.allowed) return { ok: false, error: check.reason }
 
+  const wasAlreadyActive = room.status === 'ACTIVE'
+
   await prisma.$transaction([
     (prisma as any).roomRuleSet.updateMany({ where: { roomId, status: 'ACTIVE' }, data: { status: 'SUPERSEDED' } }),
     (prisma as any).roomRuleSet.update({ where: { id: ruleSet.id }, data: { status: 'ACTIVE', activatedAt: new Date() } }),
     (prisma as any).privateRoom.update({ where: { id: roomId }, data: { status: check.toState } }),
   ])
+
+  // BETA.2 (FASE D) — the room-ready notification was missing entirely:
+  // MATCH_ACTIVATED (domainEvents.ts) sends "sala desbloqueada" the moment
+  // the room is CREATED (still WAITING_CONSENT — rules not accepted yet),
+  // but nothing told members when the room actually became ACTIVE (chat
+  // genuinely open). Only fires on a real DRAFT/WAITING_CONSENT -> ACTIVE
+  // transition, not on the already-ACTIVE no-op path above (idempotent
+  // re-accept shouldn't re-notify).
+  if (!wasAlreadyActive) {
+    const { notifyUser } = await import('./notify')
+    await Promise.all(required.map(uid => notifyUser(
+      uid, 'private_room', '✅ Sala pronta para conversar',
+      'Todos aceitaram as regras da sala — já podem trocar mensagens.',
+      { roomId, tab: 'rooms' }
+    ).catch(() => {})))
+  }
 
   return { ok: true, ruleSetId: ruleSet.id, roomStatus: check.toState! }
 }

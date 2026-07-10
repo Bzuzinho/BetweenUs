@@ -352,4 +352,40 @@ router.delete('/admin/orientations/:id', requireAdmin('catalog'), async (req: Au
   res.json({ ok: true })
 })
 
+// ─── Profile Type Config (BETA.2.9) ───────────────────────────────────────────
+// Presentational metadata only — see schema.prisma's ProfileTypeConfig
+// comment. No POST/DELETE: the 3 structural types (INDIVIDUAL/COUPLE/
+// GROUP) are fixed, ProfileTypePolicy's own header comment explains why
+// admin cannot invent a 4th one through this or any other route.
+const profileTypeConfigSchema = z.object({
+  label:       z.string().min(1).max(60).optional(),
+  description: z.string().max(300).optional().nullable(),
+  active:      z.boolean().optional(),
+  sortOrder:   z.number().int().optional(),
+})
+
+router.get('/admin/profile-type-config', requireAdmin('catalog'), async (_req: AuthRequest, res: Response) => {
+  const configs = await (prisma as any).profileTypeConfig.findMany({ orderBy: { sortOrder: 'asc' } })
+  res.json({ profileTypeConfigs: configs })
+})
+
+router.put('/admin/profile-type-config/:type', requireAdmin('catalog'), async (req: AuthRequest, res: Response) => {
+  try {
+    if (!['INDIVIDUAL', 'COUPLE', 'GROUP'].includes(req.params.type)) {
+      return res.status(400).json({ error: 'Tipo estrutural desconhecido.' })
+    }
+    const data = profileTypeConfigSchema.parse(req.body)
+    const existing = await (prisma as any).profileTypeConfig.findUnique({ where: { type: req.params.type } })
+    if (!existing) return res.status(404).json({ error: 'Não encontrado — corre npm run db:seed primeiro.' })
+    const updated = await (prisma as any).profileTypeConfig.update({ where: { type: req.params.type }, data })
+    await logAdminAction(req.userId!, 'UPDATE_PROFILE_TYPE_CONFIG', 'profile_type_config', req.params.type, {
+      previousData: { label: existing.label, active: existing.active }, newData: data, ipAddress: req.ip
+    })
+    res.json(updated)
+  } catch (err: any) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 export default router

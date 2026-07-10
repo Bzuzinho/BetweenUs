@@ -280,6 +280,30 @@ Para questões sobre privacidade: privacy@betweenus.app`,
   }
   console.log(`Seeded ${agreementQuestions.length} agreement questions`)
 
+  // BETA.2.9 — presentational metadata for the 3 fixed structural
+  // ProfileType values. Upsert syncs label/description/active/sortOrder
+  // on every reseed (same discipline as the boundary upsert fix from the
+  // Discovery validation follow-up) so an admin edit made via
+  // /catalog/admin/profile-type-config is never silently reverted... but
+  // ALSO so a genuine reseed-time content change here does propagate.
+  // These 3 rows are the entire universe — never more, never fewer (see
+  // schema.prisma's ProfileTypeConfig comment for why no create/delete
+  // route exists).
+  console.log('Seeding profile type config...')
+  const profileTypeConfigs = [
+    { type: 'INDIVIDUAL' as const, label: 'Individual', description: 'Uma pessoa, perfil próprio.', sortOrder: 0 },
+    { type: 'COUPLE'     as const, label: 'Casal',      description: 'Duas pessoas, perfil partilhado.', sortOrder: 1 },
+    { type: 'GROUP'       as const, label: 'Grupo',      description: 'Três ou mais pessoas, perfil partilhado.', sortOrder: 2 },
+  ]
+  for (const cfg of profileTypeConfigs) {
+    await (prisma as any).profileTypeConfig.upsert({
+      where: { type: cfg.type },
+      update: { label: cfg.label, description: cfg.description, sortOrder: cfg.sortOrder },
+      create: { type: cfg.type, label: cfg.label, description: cfg.description, sortOrder: cfg.sortOrder, active: true },
+    })
+  }
+  console.log(`Seeded ${profileTypeConfigs.length} profile type configs`)
+
   console.log('Seed complete')
 }
 

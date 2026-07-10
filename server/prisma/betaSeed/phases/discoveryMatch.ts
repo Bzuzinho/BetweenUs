@@ -31,7 +31,7 @@ const approveAsUser = async (matchId: string, userId: string): Promise<boolean> 
   return false
 }
 
-export const seedLikePassMatchScenarios = async (individuals: ProfileMap, couples: ProfileMap): Promise<Record<string, string>> => {
+export const seedLikePassMatchScenarios = async (individuals: ProfileMap, couples: ProfileMap, group?: { profileId: string; memberUserIds: string[] } | null): Promise<Record<string, string>> => {
   const matchIds: Record<string, string> = {}
   const pid = (m: ProfileMap, key: string) => m[key]?.profileId
 
@@ -97,6 +97,45 @@ export const seedLikePassMatchScenarios = async (individuals: ProfileMap, couple
   if (r9.kind === 'MATCH_CREATED' || r9.kind === 'ALREADY_MATCHED') {
     matchIds['match_paused'] = r9.matchId
     await transition(r9.matchId, 'PAUSE')
+  }
+
+  // 10. COUPLE x COUPLE — Carla&Nuno (couple_2_conflict) x Rita&Filipe
+  // (couple_5_privacy). BETA.2 (FASE E) — demonstrates the 4-required-
+  // approver case (getRequiredApproverUserIds resolves 2 active members
+  // per side, isApprovalSatisfied is checked independently on EACH side).
+  // Left PARTIAL deliberately: only Carla (couple_2_conflict's creator)
+  // approves, so this stays in PENDING_COUPLE_APPROVAL with 1 of 4 total
+  // approvals — proves the two sides are tracked independently rather
+  // than as one pooled counter.
+  await createLikeOrMatch(pid(couples, 'couple_2_conflict'), pid(couples, 'couple_5_privacy'))
+  const r10 = await createLikeOrMatch(pid(couples, 'couple_5_privacy'), pid(couples, 'couple_2_conflict'))
+  if (r10.kind === 'MATCH_PENDING_COUPLE_APPROVAL') {
+    matchIds['match_couple_couple_pending'] = r10.matchId
+    const members = couples['couple_2_conflict']?.memberUserIds || []
+    if (members[0]) await approveAsUser(r10.matchId, members[0])
+  }
+
+  // 11. GROUP x INDIVIDUAL — Trio Aurora (group_poly_trio, 3 members) x
+  // individual_miguel (otherwise only used passively in the
+  // HIGH_COMPATIBILITY_DISCOVERY pairing with Sofia — never liked/matched
+  // — so free to use here). createLikeOrMatch itself doesn't filter on
+  // boundaries (that's Discovery-only, see discoveryService.ts), so no
+  // boundary conflict to worry about. BETA.2 (FASE E) — demonstrates N+1
+  // required approvers (3 group members on one side, Miguel alone on the
+  // other; matchService.ts's requiresApproval() now also recognises GROUP,
+  // not just COUPLE — see that file's FASE E fix). Taken all the way to
+  // ACTIVE so seedPrivateRooms can build a room demonstrating 4-person
+  // Private Room membership (3 group + 1 individual).
+  if (group) {
+    await createLikeOrMatch(group.profileId, pid(individuals, 'individual_miguel'))
+    const r11 = await createLikeOrMatch(pid(individuals, 'individual_miguel'), group.profileId)
+    if (r11.kind === 'MATCH_PENDING_COUPLE_APPROVAL') {
+      matchIds['match_group_individual_active'] = r11.matchId
+      for (const uid of group.memberUserIds) await approveAsUser(r11.matchId, uid)
+      if (individuals['individual_miguel']?.userId) await approveAsUser(r11.matchId, individuals['individual_miguel'].userId)
+    } else if (r11.kind === 'ALREADY_MATCHED') {
+      matchIds['match_group_individual_active'] = r11.matchId
+    }
   }
 
   console.log(`  Like/Pass/Match scenarios: ${Object.keys(matchIds).length} matches + 1 like + 1 pass`)

@@ -12,6 +12,7 @@ import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { requireAdmin, logAdminAction } from '../middleware/admin'
 import { countAlignedPrivateInterests } from '../lib/privateInterestService'
+import { resolveMyProfileId } from '../lib/profileMembershipService'
 
 const router = Router()
 
@@ -27,10 +28,10 @@ router.get('/', requireAuth, async (_req: AuthRequest, res: Response) => {
 // GET /api/private-interests/me — the caller's OWN selections (full detail
 // is fine here — you're allowed to see your own choices)
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
-  const profile = await prisma.profile.findUnique({ where: { userId: req.userId! }, select: { id: true } })
-  if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+  const profileId = await resolveMyProfileId(req.userId!)
+  if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
   const selections = await (prisma as any).profilePrivateInterest.findMany({
-    where: { profileId: profile.id },
+    where: { profileId },
     include: { interest: true }
   })
   res.json({ selections })
@@ -38,16 +39,16 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
 
 // PUT /api/private-interests/me — replace the caller's selections
 router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
-  const profile = await prisma.profile.findUnique({ where: { userId: req.userId! }, select: { id: true } })
-  if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+  const profileId = await resolveMyProfileId(req.userId!)
+  if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
   const { selections } = req.body
   if (!Array.isArray(selections)) return res.status(400).json({ error: 'Formato inválido.' })
 
-  await (prisma as any).profilePrivateInterest.deleteMany({ where: { profileId: profile.id } })
+  await (prisma as any).profilePrivateInterest.deleteMany({ where: { profileId } })
   await (prisma as any).profilePrivateInterest.createMany({
     data: selections
       .filter((s: any) => s.interestId && ['YES', 'MAYBE', 'NO'].includes(s.preference))
-      .map((s: any) => ({ profileId: profile.id, interestId: s.interestId, preference: s.preference }))
+      .map((s: any) => ({ profileId, interestId: s.interestId, preference: s.preference }))
   })
   // 5.8 note: private interests deliberately do NOT need score
   // invalidation here - they're not part of BetweenScoreService's weighted
@@ -63,9 +64,9 @@ router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
 // of which ones, never even to the two people it's about, without a
 // future explicit-consent reveal flow.
 router.get('/alignment/:profileId', requireAuth, async (req: AuthRequest, res: Response) => {
-  const myProfile = await prisma.profile.findUnique({ where: { userId: req.userId! }, select: { id: true } })
-  if (!myProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
-  const alignedCount = await countAlignedPrivateInterests(myProfile.id, req.params.profileId)
+  const myProfileId = await resolveMyProfileId(req.userId!)
+  if (!myProfileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+  const alignedCount = await countAlignedPrivateInterests(myProfileId, req.params.profileId)
   res.json({ alignedCount })
 })
 

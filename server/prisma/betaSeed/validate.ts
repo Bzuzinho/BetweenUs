@@ -16,6 +16,9 @@ import { computeAndCacheStatus } from '../../src/lib/consentCheckService'
 import { resolveVenueForViewer } from '../../src/lib/eventVenuePolicy'
 import { computeMeaningfulConnectionRateSince } from '../../src/lib/meaningfulConnectionService'
 import { evaluateCandidateConstraints } from '../../src/lib/candidateConstraintService'
+import { getActiveMembers, getRequiredApprovers } from '../../src/lib/profileMembershipService'
+import { getAvailableContexts, resolveActiveProfileId } from '../../src/lib/activeProfileContextService'
+import { isApprovalSatisfied } from '../../src/lib/approvalPolicyService'
 import {
   ADMIN_ACCOUNTS, LIFECYCLE_ACCOUNTS, INDIVIDUAL_SCENARIOS, COUPLE_SCENARIOS, GROUP_SCENARIO,
 } from './scenarios'
@@ -37,6 +40,24 @@ const check = async (area: string, name: string, fn: () => Promise<boolean | { p
 
 const userByKey = async (key: string) => prisma.user.findFirst({ where: { testScenarioKey: key, isTestAccount: true } })
 const profileByUserId = async (userId: string | undefined) => userId ? prisma.profile.findUnique({ where: { userId } }) : null
+
+// BETA.2 (FASE E) — post-FASE-C, Profile.userId only ever points at the
+// user's own separate Individual Profile (see schema.prisma's comment on
+// that field). A couple/group member's SHARED profile must be resolved
+// via ProfileMember membership instead — profileByUserId(memberUserId)
+// would silently return the wrong (Individual) profile for every couple/
+// group check below, which is exactly the class of regression FASE C
+// introduced and this validator needs to catch, not paper over.
+const sharedProfileByScenarioKey = async (key: string) => {
+  const u = await prisma.user.findFirst({ where: { testScenarioKey: key, isTestAccount: true } })
+  if (!u) return null
+  const member = await (prisma as any).profileMember.findFirst({
+    where: { userId: u.id, status: 'ACCEPTED', profile: { type: { in: ['COUPLE', 'GROUP'] } } },
+    include: { profile: true },
+  })
+  return member?.profile ?? null
+}
+const isSharedScenarioKey = (key: string) => COUPLE_SCENARIOS.some(c => c.key === key) || key === GROUP_SCENARIO.key
 
 const main = async () => {
   // ── Account counts + uniqueness ──────────────────────────────────────
@@ -157,18 +178,14 @@ const main = async () => {
   // ── Couples: membership counts + agreement outcomes ─────────────────
   for (const c of COUPLE_SCENARIOS) {
     await check('couples', `${c.key}: CoupleProfile.coupleStatus correto`, async () => {
-      const firstMemberEmail = c.members[0]?.email
-      const u = await prisma.user.findFirst({ where: { email: firstMemberEmail } })
-      const p = await profileByUserId(u?.id)
+      const p = await sharedProfileByScenarioKey(c.key)
       if (!p) return false
       const cp = await (prisma as any).coupleProfile.findUnique({ where: { profileId: p.id } })
       const expected = c.members.length === 2 ? 'ACTIVE' : 'PENDING_PARTNER'
       return { pass: cp?.coupleStatus === expected, detail: `got=${cp?.coupleStatus} expected=${expected}` }
     })
     await check('couples', `${c.key}: ProfileMember count correto`, async () => {
-      const firstMemberEmail = c.members[0]?.email
-      const u = await prisma.user.findFirst({ where: { email: firstMemberEmail } })
-      const p = await profileByUserId(u?.id)
+      const p = await sharedProfileByScenarioKey(c.key)
       if (!p) return false
       const accepted = await (prisma as any).profileMember.count({ where: { profileId: p.id, status: 'ACCEPTED' } })
       const pending = await (prisma as any).profileMember.count({ where: { profileId: p.id, status: 'PENDING' } })
@@ -178,12 +195,32 @@ const main = async () => {
     })
     if (c.members.length === 2 && c.agreementOutcome !== 'NONE') {
       await check('couples', `${c.key}: ProfileAgreement.status=${c.agreementOutcome}`, async () => {
-        const firstMemberEmail = c.members[0]?.email
-        const u = await prisma.user.findFirst({ where: { email: firstMemberEmail } })
-        const p = await profileByUserId(u?.id)
+        const p = await sharedProfileByScenarioKey(c.key)
         if (!p) return false
         const agreement = await (prisma as any).profileAgreement.findFirst({ where: { profileId: p.id }, orderBy: { createdAt: 'desc' } })
         return { pass: agreement?.status === c.agreementOutcome, detail: `got=${agreement?.status}` }
+      })
+    }
+    // BETA.2 (FASE E) — since FASE C, a Shared Profile NEVER carries
+    // userId; that's now the ONLY correct signal here (a leftover
+    // Profile.userId on this row would mean the old conflation bug came
+    // back).
+    await check('couples', `${c.key}: Profile.userId é null (FASE C — Shared Profile nunca tem userId)`, async () => {
+      const p = await sharedProfileByScenarioKey(c.key)
+      if (!p) return false
+      return { pass: p.userId === null, detail: `userId=${p.userId}` }
+    })
+  }
+  // BETA.2 (FASE E) — every couple member now also gets their OWN
+  // separate Individual Profile (see phases/profiles.ts's
+  // ensureMemberIndividualProfile), proving Individual and Shared
+  // identities coexist rather than one overwriting the other.
+  for (const c of COUPLE_SCENARIOS) {
+    for (const m of c.members) {
+      await check('profile-architecture', `${c.key}: membro ${m.accountName} tem Individual Profile próprio (separado do casal)`, async () => {
+        const u = await prisma.user.findFirst({ where: { email: m.email } })
+        const p = await profileByUserId(u?.id)
+        return { pass: !!p && p.type === 'INDIVIDUAL', detail: p ? `type=${p.type}` : 'sem Individual Profile próprio' }
       })
     }
   }
@@ -195,15 +232,34 @@ const main = async () => {
   })
   await check('couples', 'group_poly_trio: se GROUP_PROFILES_ENABLED, tem 3 ProfileMember ACCEPTED', async () => {
     if (process.env.GROUP_PROFILES_ENABLED === 'false') return { pass: true, detail: 'flag desativada — corretamente saltado' }
-    const u = await prisma.user.findFirst({ where: { email: GROUP_SCENARIO.members[0].email } })
-    const p = await profileByUserId(u?.id)
+    const p = await sharedProfileByScenarioKey(GROUP_SCENARIO.key)
     if (!p) return { pass: true, detail: 'grupo não criado (aceitável se a flag mudou depois do seed)' }
     const count = await (prisma as any).profileMember.count({ where: { profileId: p.id, status: 'ACCEPTED' } })
-    return { pass: p.type === 'GROUP' && count === 3, detail: `type=${p.type} members=${count}` }
+    return { pass: p.type === 'GROUP' && p.userId === null && count === 3, detail: `type=${p.type} userId=${p.userId} members=${count}` }
+  })
+  await check('profile-architecture', 'group_poly_trio: cada um dos 3 membros tem Individual Profile próprio', async () => {
+    if (process.env.GROUP_PROFILES_ENABLED === 'false') return { pass: true, detail: 'flag desativada — corretamente saltado' }
+    let missing = 0
+    for (const m of GROUP_SCENARIO.members) {
+      const u = await prisma.user.findFirst({ where: { email: m.email } })
+      const p = await profileByUserId(u?.id)
+      if (!p || p.type !== 'INDIVIDUAL') missing++
+    }
+    return { pass: missing === 0, detail: `membros sem Individual Profile próprio=${missing}/${GROUP_SCENARIO.members.length}` }
   })
 
   // ── Discovery / Between Score inclusions & exclusions ────────────────
+  // BETA.2 (FASE E) — smart about which lookup a key needs: a COUPLE/
+  // GROUP scenario key must resolve via ProfileMember membership (see
+  // sharedProfileByScenarioKey's comment above — Profile.userId no longer
+  // points there post-FASE-C), an INDIVIDUAL scenario key still resolves
+  // correctly via the classic Profile.userId path (unaffected — an
+  // individual scenario account was never conflated with a shared row).
   const profileIdOf = async (key: string) => {
+    if (isSharedScenarioKey(key)) {
+      const p = await sharedProfileByScenarioKey(key)
+      return p?.id
+    }
     const u = await prisma.user.findFirst({ where: { testScenarioKey: key, isTestAccount: true } })
     return profileByUserId(u?.id).then(p => p?.id)
   }
@@ -525,6 +581,153 @@ const main = async () => {
   await check('analytics-isolation', 'TestSeedRun regista pelo menos uma execução COMPLETED', async () => {
     const run = await (prisma as any).testSeedRun.findFirst({ where: { status: 'COMPLETED' }, orderBy: { startedAt: 'desc' } })
     return { pass: !!run, detail: run ? `version=${run.version} completedAt=${run.completedAt}` : 'nenhuma execução encontrada' }
+  })
+
+  // ── Beta invites (BETA.2.8) ─────────────────────────────────────────
+  await check('beta-invites', 'INVITE A é PENDING (active, nunca usado, não expirado)', async () => {
+    const inv = await (prisma as any).betaInvite.findUnique({ where: { code: 'BETA-INVITE-A-PENDING' } })
+    if (!inv) return { pass: false, detail: 'não encontrado' }
+    const isPending = inv.active && !inv.usedById && (!inv.expiresAt || inv.expiresAt > new Date())
+    return { pass: isPending, detail: `active=${inv.active} usedById=${inv.usedById} expiresAt=${inv.expiresAt}` }
+  })
+  await check('beta-invites', 'INVITE B é ACCEPTED (usedById definido)', async () => {
+    const inv = await (prisma as any).betaInvite.findUnique({ where: { code: 'BETA-INVITE-B-ACCEPTED' } })
+    if (!inv) return { pass: false, detail: 'não encontrado' }
+    return { pass: !!inv.usedById && !!inv.usedAt && inv.useCount === 1, detail: `usedById=${inv.usedById} useCount=${inv.useCount}` }
+  })
+  await check('beta-invites', 'INVITE C é EXPIRED (active, nunca usado, expiresAt no passado)', async () => {
+    const inv = await (prisma as any).betaInvite.findUnique({ where: { code: 'BETA-INVITE-C-EXPIRED' } })
+    if (!inv) return { pass: false, detail: 'não encontrado' }
+    const isExpired = inv.active && !inv.usedById && inv.expiresAt && inv.expiresAt < new Date()
+    return { pass: !!isExpired, detail: `active=${inv.active} usedById=${inv.usedById} expiresAt=${inv.expiresAt}` }
+  })
+  await check('beta-invites', 'INVITE D é REVOKED (active=false, nunca usado)', async () => {
+    const inv = await (prisma as any).betaInvite.findUnique({ where: { code: 'BETA-INVITE-D-REVOKED' } })
+    if (!inv) return { pass: false, detail: 'não encontrado' }
+    return { pass: inv.active === false && !inv.usedById, detail: `active=${inv.active} usedById=${inv.usedById}` }
+  })
+  await check('beta-invites', 'usedById de INVITE B é único (@unique no schema — não reutilizado noutro invite)', async () => {
+    const accepted = await (prisma as any).betaInvite.findUnique({ where: { code: 'BETA-INVITE-B-ACCEPTED' } })
+    if (!accepted?.usedById) return { pass: false, detail: 'INVITE B sem usedById' }
+    const count = await (prisma as any).betaInvite.count({ where: { usedById: accepted.usedById } })
+    return { pass: count === 1, detail: `invites com este usedById=${count}` }
+  })
+
+  // ── FASE E: Active Profile Context ──────────────────────────────────
+  await check('active-context', 'couple_1_third_match: Ana tem 2 contextos disponíveis (Individual + Casal)', async () => {
+    const c = COUPLE_SCENARIOS.find(x => x.key === 'couple_1_third_match')!
+    const u = await prisma.user.findFirst({ where: { email: c.members[0].email } })
+    if (!u) return false
+    const contexts = await getAvailableContexts(u.id)
+    const types = contexts.map(ctx => ctx.type).sort()
+    return { pass: types.length === 2 && types.includes('INDIVIDUAL') && types.includes('COUPLE'), detail: `contexts=${JSON.stringify(types)}` }
+  })
+  await check('active-context', 'couple_1_third_match: resolveActiveProfileId(Ana) devolve um perfil que ela pode gerir', async () => {
+    const c = COUPLE_SCENARIOS.find(x => x.key === 'couple_1_third_match')!
+    const u = await prisma.user.findFirst({ where: { email: c.members[0].email } })
+    if (!u) return false
+    const activeId = await resolveActiveProfileId(u.id)
+    if (!activeId) return { pass: false, detail: 'resolveActiveProfileId devolveu null' }
+    const members = await getActiveMembers(activeId)
+    const isMember = members.some(m => m.userId === u.id)
+    return { pass: isMember, detail: `activeProfileId=${activeId} isMember=${isMember}` }
+  })
+  await check('active-context', 'individual_marta (sem Shared Profile): só 1 contexto disponível (Individual)', async () => {
+    const u = await userByKey('individual_marta')
+    if (!u) return false
+    const contexts = await getAvailableContexts(u.id)
+    return { pass: contexts.length === 1 && contexts[0].type === 'INDIVIDUAL', detail: `contexts=${JSON.stringify(contexts.map(c => c.type))}` }
+  })
+
+  // ── FASE E: Individual Discovery Policy (Shared Profile eligibility) ─
+  await check('discovery-policy', 'couple_1_third_match: individualDiscoveryPolicy=INDIVIDUAL_AND_SHARED', async () => {
+    const p = await sharedProfileByScenarioKey('couple_1_third_match')
+    return { pass: p?.individualDiscoveryPolicy === 'INDIVIDUAL_AND_SHARED', detail: `got=${p?.individualDiscoveryPolicy}` }
+  })
+  await check('discovery-policy', 'couple_2_conflict: individualDiscoveryPolicy=SHARED_ONLY (default)', async () => {
+    const p = await sharedProfileByScenarioKey('couple_2_conflict')
+    return { pass: p?.individualDiscoveryPolicy === 'SHARED_ONLY', detail: `got=${p?.individualDiscoveryPolicy}` }
+  })
+  // Viewer = individual_noa deliberately: zero boundaries seeded (cold
+  // start scenario), so neither check below can produce a false result
+  // via an unrelated hard-boundary conflict (e.g. verified_only) — it
+  // isolates the individualDiscoveryPolicy behavior specifically.
+  await check('discovery-policy', 'couple_1_third_match: Ana aparece no Discovery de individual_noa como INDIVIDUAL (policy=INDIVIDUAL_AND_SHARED)', async () => {
+    const c = COUPLE_SCENARIOS.find(x => x.key === 'couple_1_third_match')!
+    const anaUser = await prisma.user.findFirst({ where: { email: c.members[0].email } })
+    const anaIndividualProfile = await profileByUserId(anaUser?.id)
+    const viewer = await profileIdOf('individual_noa')
+    if (!anaIndividualProfile || !viewer) return false
+    const result = await getCandidates(viewer, {}, null, 100)
+    const found = result.items.find(i => i.profile.id === anaIndividualProfile.id)
+    return { pass: !!found, detail: found ? 'Ana (individual) apareceu — policy respeitada' : 'não apareceu — verificar passesIndividualDiscoveryPolicy' }
+  })
+  await check('discovery-policy', 'couple_2_conflict: Carla NÃO aparece como INDIVIDUAL em nenhum Discovery (policy=SHARED_ONLY)', async () => {
+    const c = COUPLE_SCENARIOS.find(x => x.key === 'couple_2_conflict')!
+    const carlaUser = await prisma.user.findFirst({ where: { email: c.members[0].email } })
+    const carlaIndividualProfile = await profileByUserId(carlaUser?.id)
+    const viewer = await profileIdOf('individual_noa')
+    if (!carlaIndividualProfile || !viewer) return false
+    const result = await getCandidates(viewer, {}, null, 100)
+    const found = result.items.find(i => i.profile.id === carlaIndividualProfile.id)
+    return { pass: !found, detail: found ? 'Carla (individual) apareceu — policy SHARED_ONLY quebrada' : 'corretamente ausente' }
+  })
+
+  // ── FASE E: N-party match approval (Couple x Couple, Group x Individual) ─
+  await check('matches', 'match couple_2_conflict x couple_5_privacy = PENDING_COUPLE_APPROVAL com 1 de 4 aprovações', async () => {
+    const m = await matchByProfiles('couple_2_conflict', 'couple_5_privacy')
+    if (!m) return false
+    const approvals = await prisma.coupleMatchApproval.count({ where: { matchId: m.id, approvedAt: { not: null } } })
+    return { pass: m.status === 'PENDING_COUPLE_APPROVAL' && approvals === 1, detail: `status=${m.status} approvals=${approvals}/4` }
+  })
+  await check('matches', 'match couple_2_conflict x couple_5_privacy: getRequiredApproverUserIds resolve 2+2 (4 no total, únicos)', async () => {
+    const c2 = await profileIdOf('couple_2_conflict')
+    const c5 = await profileIdOf('couple_5_privacy')
+    if (!c2 || !c5) return false
+    const [approversC2, approversC5] = await Promise.all([getRequiredApprovers(c2), getRequiredApprovers(c5)])
+    const allUnique = new Set([...approversC2, ...approversC5])
+    return { pass: approversC2.length === 2 && approversC5.length === 2 && allUnique.size === 4, detail: `c2=${approversC2.length} c5=${approversC5.length} únicos=${allUnique.size}` }
+  })
+  if (process.env.GROUP_PROFILES_ENABLED !== 'false') {
+    await check('matches', 'match group_poly_trio x individual_miguel = ACTIVE (N+1=4 aprovadores, todos aprovaram)', async () => {
+      const m = await matchByProfiles('group_poly_trio', 'individual_miguel')
+      if (!m) return { pass: true, detail: 'grupo não criado (flag desativada) — corretamente saltado' }
+      return { pass: m.status === 'ACTIVE', detail: `status=${m.status}` }
+    })
+    await check('matches', 'match group_poly_trio x individual_miguel: cada lado satisfaz isApprovalSatisfied independentemente', async () => {
+      const m = await matchByProfiles('group_poly_trio', 'individual_miguel')
+      if (!m) return { pass: true, detail: 'grupo não criado (flag desativada) — corretamente saltado' }
+      const approvals = await prisma.coupleMatchApproval.findMany({ where: { matchId: m.id, approvedAt: { not: null } } })
+      const approvedIds = new Set<string>(approvals.map((a: any) => a.userId))
+      const [oneSat, twoSat] = await Promise.all([
+        isApprovalSatisfied(m.profileOneId, approvedIds), isApprovalSatisfied(m.profileTwoId, approvedIds),
+      ])
+      return { pass: oneSat && twoSat, detail: `lado1=${oneSat} lado2=${twoSat} aprovações=${approvedIds.size}` }
+    })
+  }
+
+  // ── FASE E: Private Room N-party membership (Room G) ─────────────────
+  if (process.env.GROUP_PROFILES_ENABLED !== 'false') {
+    await check('rooms', 'Room G (Trio Aurora x Miguel) = ACTIVE com 4 membros (3 grupo + 1 individual)', async () => {
+      const r = await roomFor({ a: 'group_poly_trio', b: 'individual_miguel' })
+      if (!r) return { pass: true, detail: 'grupo não criado (flag desativada) — corretamente saltado' }
+      const members = await (prisma as any).privateRoomMember.count({ where: { privateRoomId: r.id, leftAt: null } })
+      return { pass: r.status === 'ACTIVE' && members === 4, detail: `status=${r.status} members=${members}/4` }
+    })
+  }
+
+  // ── FASE E: Admin coupleContext resolution mirrors ProfileMember (not Profile.userId) ─
+  await check('admin', 'Admin coupleContext: membro do casal resolve o perfil PARTILHADO (não o Individual próprio)', async () => {
+    const c = COUPLE_SCENARIOS.find(x => x.key === 'couple_1_third_match')!
+    const u = await prisma.user.findFirst({ where: { email: c.members[0].email } })
+    if (!u) return false
+    // Mirrors routes/admin.ts's GET /users/:id coupleContext resolution
+    // exactly (ProfileMember lookup, NOT profileByUserId) — this is the
+    // FASE C regression that broke admin visibility until fixed.
+    const sharedMembership = await (prisma as any).profileMember.findFirst({ where: { userId: u.id, status: 'ACCEPTED' }, include: { profile: true } })
+    const individualProfile = await profileByUserId(u.id)
+    const resolvedDifferently = sharedMembership?.profile?.id !== individualProfile?.id
+    return { pass: !!sharedMembership && sharedMembership.profile.type === 'COUPLE' && resolvedDifferently, detail: `sharedProfileId=${sharedMembership?.profile?.id} individualProfileId=${individualProfile?.id}` }
   })
 
   // ── Admin scenario coverage sanity ────────────────────────────────

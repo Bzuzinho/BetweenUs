@@ -79,6 +79,17 @@ const findSkipReason = async (userId: string): Promise<string | null> => {
   return null
 }
 
+// BETA.2 (FASE C) — Profile.findUnique({where:{userId}}) now specifically
+// means "this user's own Individual Profile" (Shared Profiles no longer
+// carry userId at all — see schema.prisma's Profile.userId comment), which
+// is exactly the right scope here: a Shared Profile's photos/signals
+// belong to the profile collectively, not to any one member, so a single
+// member's hard delete correctly leaves them alone (the Profile row itself
+// isn't cascade-deleted either, for the same reason — ProfileMember.user
+// cascades, Profile.user does not apply since userId is null for Shared
+// Profiles). Known gap, not addressed this sprint: if EVERY member of a
+// Shared Profile is eventually hard-deleted, that profile's media/signals
+// become orphaned with nothing sweeping them — needs its own audit.
 const gatherMediaKeys = async (userId: string, avatarPath: string | null): Promise<string[]> => {
   const [profile, verification] = await Promise.all([
     prisma.profile.findUnique({ where: { userId }, include: { photos: true } }),
@@ -111,6 +122,8 @@ const hardDeleteOne = async (
     }
   }
 
+  // BETA.2 (FASE C) — same scoping note as gatherMediaKeys above: this is
+  // deliberately the user's own Individual Profile only.
   const profile = await prisma.profile.findUnique({ where: { userId: user.id }, select: { id: true } })
 
   const [mediaKeys, roomMessageCount, reportCount, adminActionCount, betaInviteUsageCount] = await Promise.all([

@@ -35,6 +35,21 @@ enum ProfileType {
   GROUP
 }
 
+// BETA.2 (FASE C) — governs whether a Shared Profile's individual members'
+// own Individual Profiles are allowed to appear in Discovery separately
+// from the Shared Profile itself. Default SHARED_ONLY (conservative/safe).
+// Changing this requires unanimous member approval — see
+// SharedProfilePolicyProposal/SharedProfilePolicyApproval below, modeled
+// after CoupleMatchApproval's N-required-approvers pattern rather than
+// reusing ProfileAgreement (that machinery does a conservative merge across
+// a whole round of unrelated Q&A questions at once; entangling an
+// eligibility-critical discovery flag in that would make an unrelated
+// question edit able to silently flip discovery visibility).
+enum IndividualDiscoveryPolicy {
+  INDIVIDUAL_AND_SHARED
+  SHARED_ONLY
+}
+
 enum ProfileMemberStatus {
   PENDING
   ACCEPTED
@@ -374,6 +389,17 @@ model User {
   messages             Message[]
   coupleApprovals      CoupleMatchApproval[]
   profileMemberships   ProfileMember[]
+  sharedPolicyApprovals SharedProfilePolicyApproval[]
+
+  // BETA.2 (FASE C) — which profile context this user is currently "acting
+  // as" (their own Individual Profile, or one of the Shared Profiles they
+  // belong to). Deliberately a LOOSE reference (no @relation/FK), same
+  // pattern as Report.reportedEventId (10.8) — the referenced Profile can
+  // be deleted/reassigned independently, and activeProfileContextService.ts
+  // already validates it against the user's real available contexts on
+  // every read rather than trusting it blindly, so a dangling value is
+  // harmless (falls back to the user's own Individual Profile).
+  activeProfileId      String?
   referralCode         ReferralCode?
   referredAs           ReferralConversion? @relation("ReferredUserConversion")
   privateRoomMembers   PrivateRoomMember[]
@@ -390,6 +416,7 @@ model User {
   intentAlignmentApprovals IntentAlignmentApproval[]
   guideArticlesAuthored GuideArticle[]
   circlesCreatedByMe Circle[] @relation("CircleCreatedByAdmin")
+  paymentRecords     PaymentRecord[]
 
   // 5.11 — discovery's candidate query joins on user.status (and
   // effectively adminRole via a null check) for every request.
@@ -400,10 +427,45 @@ model User {
   @@map("users")
 }
 
+// BETA.2.9 — presentational metadata for the FIXED structural ProfileType
+// enum (INDIVIDUAL/COUPLE/GROUP). Deliberately NOT a way to create new
+// structural types — profileTypePolicy.ts's own header comment explains
+// why ProfileType stays a hardcoded enum the rest of the codebase
+// branches on (matching rules, discovery badges, double consent), not a
+// data-driven catalog. This table only lets an admin edit how each FIXED
+// type is LABELLED/DESCRIBED/ORDERED in the UI — one row per enum value,
+// never more, never fewer. Distinct from the "Perfis" naming collision
+// this fixes: before this, Admin > Configurações > Perfis showed ADMIN
+// ROLE permissions (SUPER_ADMIN/MODERATOR/etc), not profile types at all
+// — that view is renamed to "Roles de Admin" (routes/catalog.ts,
+// AdminPage.jsx ConfiguracoesTab), and THIS is the real profile-types view.
+model ProfileTypeConfig {
+  type        ProfileType @id
+  label       String
+  description String?
+  active      Boolean     @default(true)
+  sortOrder   Int         @default(0)
+  updatedAt   DateTime    @updatedAt
+
+  @@map("profile_type_configs")
+}
+
 model Profile {
   id                 String        @id @default(uuid())
-  userId             String        @unique
-  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // BETA.2 (FASE C) — relaxed from required+unique to optional+unique.
+  // Postgres allows multiple NULLs under a unique constraint, so this still
+  // guarantees "at most one Individual Profile per User" while allowing
+  // Shared Profiles (COUPLE/GROUP) to carry userId=NULL. Ownership of a
+  // Shared Profile is expressed exclusively via ProfileMember (isCreator)
+  // going forward — userId on a Profile row now means specifically "the
+  // Individual Profile owned by this user". See activeProfileContextService.ts
+  // and the FASE C backfill script for the migration of legacy rows where a
+  // couple/group creator's original individual row was converted in place
+  // (routes/couples.ts, routes/groups.ts historically did `type: 'COUPLE'`/
+  // `'GROUP'` update on the creator's existing Profile row rather than
+  // creating a separate one).
+  userId             String?       @unique
+  user               User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
   type               ProfileType   @default(INDIVIDUAL)
   status             ProfileStatus @default(PENDING_REVIEW)
   displayName        String
@@ -444,6 +506,13 @@ model Profile {
   compatibilityScoresAsTarget CompatibilityScore[] @relation("CompatibilityScoreTarget")
 
   agreements ProfileAgreement[]
+
+  // BETA.2 (FASE C) — see IndividualDiscoveryPolicy enum below. Only
+  // meaningful for type COUPLE/GROUP profiles; ignored for INDIVIDUAL.
+  // Default SHARED_ONLY per spec (members' individual profiles stay hidden
+  // from discovery unless the couple/group unanimously opts in).
+  individualDiscoveryPolicy IndividualDiscoveryPolicy @default(SHARED_ONLY)
+  policyProposals           SharedProfilePolicyProposal[]
 
   // 6.5 — ApprovalPolicy formalizes what was already implicit behavior:
   // ProfileMembershipService.getRequiredApprovers already returns every
@@ -872,6 +941,47 @@ model CoupleMatchApproval {
   @@map("couple_match_approvals")
 }
 
+// BETA.2 (FASE C) — proposal to change a Shared Profile's
+// individualDiscoveryPolicy. Requires every active member (per
+// ProfileMembershipService.getRequiredApprovers, same resolver already used
+// by match approval) to approve before the policy actually changes. Only
+// one PENDING proposal per profile at a time.
+enum SharedProfilePolicyProposalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model SharedProfilePolicyProposal {
+  id             String   @id @default(uuid())
+  profileId      String
+  profile        Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  proposedPolicy IndividualDiscoveryPolicy
+  proposedByUserId String
+  status         SharedProfilePolicyProposalStatus @default(PENDING)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  approvals SharedProfilePolicyApproval[]
+
+  @@map("shared_profile_policy_proposals")
+}
+
+model SharedProfilePolicyApproval {
+  id         String    @id @default(uuid())
+  proposalId String
+  proposal   SharedProfilePolicyProposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  approvedAt DateTime?
+  rejectedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@unique([proposalId, userId])
+  @@map("shared_profile_policy_approvals")
+}
+
 model Conversation {
   id        String           @id @default(uuid())
   matchId   String           @unique
@@ -1295,11 +1405,56 @@ model Subscription {
   status                 SubscriptionStatus @default(ACTIVE)
   currentPeriodStart     DateTime?
   currentPeriodEnd       DateTime?
+  // BETA.2.7 — was read from Stripe's customer.subscription.updated event
+  // but never stored: the admin subscription tab had no way to show
+  // "cancels at period end" vs "already cancelled" as two different
+  // states. Populated in webhooks.ts's customer.subscription.updated
+  // handler from Stripe's own `cancel_at_period_end` field.
+  cancelAtPeriodEnd      Boolean            @default(false)
   cancelledAt            DateTime?
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
 
+  payments PaymentRecord[]
+
   @@map("subscriptions")
+}
+
+// BETA.2.7 — before this there was NO local ledger of individual payment
+// events at all: Subscription only ever held the CURRENT plan/period, so
+// "lifetime revenue" or "amount paid this period" could not be computed
+// from local data without either calling Stripe on every admin page
+// render (explicitly the wrong approach per the spec) or fabricating a
+// number from currentPeriodEnd math (which the spec explicitly forbids —
+// "não calcular lifetime revenue usando apenas Subscription.currentPeriod").
+// This is the ledger: one row per Stripe invoice/payment event, written
+// only from webhooks.ts (the source of truth is the actual
+// succeeded/failed event, never a client-side guess). providerEventId is
+// Stripe's own event.id, unique — makes webhook processing idempotent if
+// Stripe redelivers the same event (which it does, by design).
+enum PaymentRecordStatus {
+  SUCCEEDED
+  FAILED
+}
+
+model PaymentRecord {
+  id                String              @id @default(uuid())
+  userId            String
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionId    String?
+  subscription      Subscription?       @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  provider          String              @default("stripe")
+  providerEventId   String              @unique
+  providerInvoiceId String?
+  amount            Int                 // minor units (cents) — same convention Stripe uses, never converted/rounded here
+  currency          String
+  status            PaymentRecordStatus
+  occurredAt        DateTime            // Stripe's own event timestamp, not our processing time
+  createdAt         DateTime            @default(now())
+
+  @@index([userId])
+  @@index([subscriptionId])
+  @@map("payment_records")
 }
 
 model Verification {
