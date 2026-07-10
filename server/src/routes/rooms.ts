@@ -265,7 +265,13 @@ router.post('/:id/rules', requireAuth, async (req: AuthRequest, res: Response) =
     const auth = await resolveRoomMembership(req.params.id, req.userId!)
     if (!auth.ok) return res.status(403).json({ error: auth.reason })
 
-    const result = await proposeRuleSet(req.params.id, req.userId!, data.rules)
+    // Same zod-under-ts-jest-strict:false widening as catalog.ts
+    // (required fields inferred as optional against a plain-object
+    // param type, though this compiles clean under the strict main
+    // tsconfig.json) -- rebuild explicitly so ruleType/label stay typed
+    // as the required strings zod's schema actually enforces at runtime.
+    const rules = data.rules.map(r => ({ ruleType: r.ruleType, label: r.label, value: r.value, sortOrder: r.sortOrder }))
+    const result = await proposeRuleSet(req.params.id, req.userId!, rules)
     if (!result.ok) return res.status(400).json({ error: result.error })
     await emitToRoom(req.params.id, 'rules:updated', { roomId: req.params.id, roomStatus: result.roomStatus })
     res.status(201).json(result)
@@ -322,7 +328,9 @@ router.post('/:id/intent-alignment', requireAuth, async (req: AuthRequest, res: 
     const auth = await resolveRoomMembership(req.params.id, req.userId!)
     if (!auth.ok) return res.status(403).json({ error: auth.reason })
 
-    const result = await proposeAlignment(req.params.id, req.userId!, data.items)
+    // Same zod-under-ts-jest-strict:false widening as above.
+    const items = data.items.map(i => ({ key: i.key, value: i.value, label: i.label }))
+    const result = await proposeAlignment(req.params.id, req.userId!, items)
     if (result.error) {
       const code = result.error === 'NOT_MEMBER' ? 403 : 400
       return res.status(code).json({ error: result.error })
