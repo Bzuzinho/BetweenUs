@@ -6,6 +6,22 @@ import { requireAdmin, logAdminAction } from '../middleware/admin'
 
 const router = Router()
 
+// BETA.2 fix — none of the /admin/* routes below (genders, orientations,
+// intentions, boundaries, profile-type-config — 22 routes total) had
+// requireAuth in their chain, only requireAdmin(...). requireAdmin
+// itself never parses the JWT; it assumes req.userId is already set by
+// an earlier middleware (exactly how admin.ts's router works, via its
+// own `router.use(requireAuth)` at the top — see src/routes/admin.ts).
+// Without that, requireAdmin's own `prisma.user.findUnique({ where: {
+// id: req.userId! } })` ran with id: undefined and threw, producing a
+// 500 on every admin catalog route regardless of the caller's actual
+// role (surfaced by genderCatalog.test.ts's two hard-delete tests).
+// Matching admin.ts's convention here. The public /intentions, /genders,
+// /orientations, /boundaries routes below already call requireAuth
+// individually — that's now redundant but harmless (idempotent), so left
+// as-is rather than touched for no reason.
+router.use(requireAuth)
+
 // GET /api/catalog/intentions — active only, for onboarding/discovery
 router.get('/intentions', requireAuth, async (_req: AuthRequest, res: Response) => {
   try {

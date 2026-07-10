@@ -88,7 +88,10 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 router.get('/:id/messages', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profileId = await getUserProfileId(req.userId!)
-    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    // BETA.2 fix — uniform 403 for "no access to this conversation",
+    // whether the caller has no profile at all or simply isn't a member;
+    // see consent.ts's identical fix for the full rationale.
+    if (!profileId) return res.status(403).json({ error: 'Sem acesso a esta conversa.' })
 
     // A.3: verify user belongs to this match
     const isMember = await verifyMatchMembership(req.params.id, profileId)
@@ -125,7 +128,7 @@ router.post('/:id/messages', requireAuth, async (req: AuthRequest, res: Response
     if (!body?.trim()) return res.status(400).json({ error: 'Mensagem vazia.' })
 
     const profileId = await getUserProfileId(req.userId!)
-    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    if (!profileId) return res.status(403).json({ error: 'Sem acesso a esta conversa.' })
 
     // A.3: verify user belongs to this match
     const isMember = await verifyMatchMembership(req.params.id, profileId)

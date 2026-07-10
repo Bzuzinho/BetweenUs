@@ -34,7 +34,7 @@ router.post('/check', requireAuth, async (req: AuthRequest, res: Response) => {
     }
 
     const profileId = await getMyProfileId(req.userId!)
-    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    if (!profileId) return res.status(403).json({ error: 'Sem acesso a este match.' })
 
     const isMember = await verifyMatchMembership(matchId, profileId)
     if (!isMember) return res.status(403).json({ error: 'Sem acesso a este match.' })
@@ -58,7 +58,7 @@ router.put('/check/:id', requireAuth, async (req: AuthRequest, res: Response) =>
     }
 
     const profileId = await getMyProfileId(req.userId!)
-    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    if (!profileId) return res.status(403).json({ error: 'Sem acesso a este match.' })
 
     const check = await prisma.consentCheck.findUnique({ where: { id: req.params.id } })
     if (!check) return res.status(404).json({ error: 'Consent check não encontrado.' })
@@ -92,7 +92,7 @@ router.put('/check/:id', requireAuth, async (req: AuthRequest, res: Response) =>
 router.post('/check/:id/revoke', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profileId = await getMyProfileId(req.userId!)
-    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    if (!profileId) return res.status(403).json({ error: 'Sem acesso a este match.' })
 
     const check = await prisma.consentCheck.findUnique({ where: { id: req.params.id } })
     if (!check) return res.status(404).json({ error: 'Consent check não encontrado.' })
@@ -121,7 +121,7 @@ router.post('/check/:id/revoke', requireAuth, async (req: AuthRequest, res: Resp
 router.get('/check/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profileId = await getMyProfileId(req.userId!)
-    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    if (!profileId) return res.status(403).json({ error: 'Sem acesso a este match.' })
 
     const check = await prisma.consentCheck.findUnique({ where: { id: req.params.id } })
     if (!check) return res.status(404).json({ error: 'Consent check não encontrado.' })
@@ -143,7 +143,7 @@ router.get('/check/:id', requireAuth, async (req: AuthRequest, res: Response) =>
 router.get('/match/:matchId', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profileId = await getMyProfileId(req.userId!)
-    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    if (!profileId) return res.status(403).json({ error: 'Sem acesso a este match.' })
 
     const isMember = await verifyMatchMembership(req.params.matchId, profileId)
     if (!isMember) return res.status(403).json({ error: 'Sem acesso a este match.' })

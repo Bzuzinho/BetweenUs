@@ -24,7 +24,9 @@ const HIGH_REASONS: ReportReasonValue[] = ['COERCION', 'HARASSMENT']
 const ELEVATED_REASONS: ReportReasonValue[] = ['PROSTITUTION_OR_ESCORT', 'PAID_SEXUAL_SERVICES']
 const MODERATE_REASONS: ReportReasonValue[] = ['FAKE_PROFILE', 'SCAM']
 const LOW_REASONS: ReportReasonValue[] = ['OFFENSIVE_CONTENT']
-const MINIMAL_REASONS: ReportReasonValue[] = ['SPAM']
+// SPAM (and anything else with no explicit rule, e.g. OTHER) intentionally
+// has no dedicated tier — it falls through to the PRIORITY_TIER.NONE
+// default below. Not a safety signal on its own.
 
 const reasonBaseRule = (reason: ReportReasonValue): number => {
   if (MAXIMUM_REASONS.includes(reason)) return PRIORITY_TIER.MAXIMUM
@@ -32,7 +34,6 @@ const reasonBaseRule = (reason: ReportReasonValue): number => {
   if (ELEVATED_REASONS.includes(reason)) return PRIORITY_TIER.ELEVATED
   if (MODERATE_REASONS.includes(reason)) return PRIORITY_TIER.MODERATE
   if (LOW_REASONS.includes(reason)) return PRIORITY_TIER.LOW
-  if (MINIMAL_REASONS.includes(reason)) return PRIORITY_TIER.MINIMAL
   return PRIORITY_TIER.NONE
 }
 

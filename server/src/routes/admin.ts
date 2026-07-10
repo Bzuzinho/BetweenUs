@@ -1009,12 +1009,19 @@ router.post('/users', requireAdmin('users'), async (req: AuthRequest, res: Respo
 router.put('/users/:id/role', requireAdmin('users'), async (req: AuthRequest, res: Response) => {
   try {
     const { adminRole, reason } = req.body
-    if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.' })
 
-    // Only SUPER_ADMIN can assign roles
+    // BETA.2 fix — authorization must be checked before payload
+    // validation, not after. This used to validate `reason` first, so a
+    // non-SUPER_ADMIN caller who simply omitted `reason` got a generic
+    // 400 "Motivo obrigatório" instead of the 403 that actually explains
+    // why the request is rejected — and, worse, a non-SUPER_ADMIN who DID
+    // include a reason would sail past this check into the SUPER_ADMIN
+    // gate below anyway, so the ordering only ever hid the real error.
     if ((req as any).adminRole !== 'SUPER_ADMIN') {
       return res.status(403).json({ error: 'Apenas SUPER_ADMIN pode atribuir roles de administrador.' })
     }
+
+    if (!reason) return res.status(400).json({ error: 'Motivo obrigatório.' })
 
     const VALID_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MODERATOR', 'SUPPORT', 'FINANCE', 'CONTENT_REVIEWER', null]
     if (!VALID_ROLES.includes(adminRole)) {

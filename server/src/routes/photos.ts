@@ -226,7 +226,7 @@ router.post('/:id/request-access', requireAuth, async (req: AuthRequest, res: Re
         ]
       }
     })
-    if (!activeMatch) return res.status(403).json({ error: 'É necessário ter um match activo com esta pessoa.' })
+    if (!activeMatch) return res.status(403).json({ error: 'É necessário ter um match ativo com esta pessoa.' })
 
     // 8.5 — a revoked FACE_REVEAL consent check blocks future media
     // access requests on this match, per the spec's explicit example.
