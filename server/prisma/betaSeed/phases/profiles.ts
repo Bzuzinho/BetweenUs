@@ -138,6 +138,27 @@ interface CoupleResult {
 const ensureMemberIndividualProfile = async (
   user: { id: string }, m: CoupleMemberSeed, city: string, country: string
 ): Promise<void> => {
+  // BETA.2 (FASE E hotfix) — confirmed live against a Railway DB that
+  // already had beta-v1 data: on such a DB, this member's userId can
+  // still be attached to the SHARED Profile row itself (the pre-FASE-C
+  // conflation — a couple/group creation used to convert the creator's
+  // own Profile row in place, see schema.prisma's Profile.userId
+  // comment). Profile.userId is unique, so the upsert-by-userId below
+  // would otherwise silently resolve to that WRONG (Shared) row and just
+  // overwrite its gender/orientation instead of creating a real, separate
+  // Individual Profile — which is exactly what happened (validator caught
+  // it: 5 couples + 1 group creator all had Profile.userId still set on
+  // the Shared row, and "own Individual Profile" checks resolved to
+  // type=COUPLE/GROUP instead of INDIVIDUAL). Detect and null it out
+  // first — mirrors exactly what backfillIndividualProfiles.ts's CREATOR
+  // case does for production data, inlined here so re-seeding beta-v2
+  // over existing beta-v1 data self-heals instead of requiring a
+  // separate manual backfill run first.
+  const legacyOwned = await prisma.profile.findUnique({ where: { userId: user.id }, select: { id: true, type: true } })
+  if (legacyOwned && legacyOwned.type !== 'INDIVIDUAL') {
+    await prisma.profile.update({ where: { id: legacyOwned.id }, data: { userId: null } })
+  }
+
   await prisma.profile.upsert({
     where: { userId: user.id },
     update: { gender: m.gender, orientation: m.orientation },
