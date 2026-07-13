@@ -94,8 +94,31 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 // place that decides whether a match needs double consent.
 router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
-    if (!viewer?.profile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
+    // BETA.3 fix — was `user.findUnique(...).profile`, the direct
+    // Profile.userId relation (the user's own individually-owned
+    // profile). That silently ignores Active Profile Context: a
+    // couple/group's non-creator member (no individually-owned Profile
+    // at all) got 404 "Cria o teu perfil primeiro" even though they can
+    // browse Discovery fine as their shared profile, and anyone who
+    // switched their active context to a shared profile still liked as
+    // their individual profile regardless. resolveMyProfileId (=
+    // activeProfileContextService.resolveActiveProfileId) is the same
+    // resolution GET / already uses for this exact reason (see the
+    // comment above this router's GET / handler).
+    const viewerProfileId = await resolveMyProfileId(req.userId!)
+    if (!viewerProfileId) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
+    // BETA.3 (Task 6) — centralized enforcement gate instead of just
+    // checking the profile exists. See eligibilityService.ts's
+    // forProfileContext for what this actually checks (account status +
+    // genuine ownership/membership of viewerProfileId) — it's stricter in
+    // shape but not in outcome for any legitimate caller, since
+    // resolveMyProfileId above already only ever returns a profile this
+    // user genuinely owns or is an ACCEPTED member of.
+    const { forProfileContext } = await import('../lib/eligibilityService')
+    const eligibility = await forProfileContext(viewerProfileId, req.userId!)
+    if (!eligibility.canLike) return res.status(403).json({ error: 'Não podes realizar esta ação.', reasons: eligibility.reasons })
+    const viewerProfile = await prisma.profile.findUnique({ where: { id: viewerProfileId } })
+    if (!viewerProfile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
 
     const target = await prisma.profile.findUnique({
       where: { id: req.params.id },
@@ -104,7 +127,7 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
     if (!target) return res.status(404).json({ error: 'Perfil não encontrado.' })
 
     const { createLikeOrMatch } = await import('../lib/matchService')
-    const result = await createLikeOrMatch(viewer.profile.id, target.id)
+    const result = await createLikeOrMatch(viewerProfile.id, target.id)
 
     switch (result.kind) {
       case 'ERROR':
@@ -116,8 +139,8 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
         // with match-creation logic.
         notifyUser(target.user.id, 'connection_request',
           '🔔 Pedido de ligação',
-          `${viewer.profile.displayName || 'Alguém'} quer ligar-se contigo. Vê o perfil e decide.`,
-          { fromProfileId: viewer.profile.id, tab: 'matches' }
+          `${viewerProfile.displayName || 'Alguém'} quer ligar-se contigo. Vê o perfil e decide.`,
+          { fromProfileId: viewerProfile.id, tab: 'matches' }
         ).catch(() => {})
         return res.json({ ok: true, matched: false, matchId: null })
 
@@ -144,10 +167,15 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
 // POST /api/discovery/:id/pass
 router.post('/:id/pass', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
-    if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    // BETA.3 fix — same Active Profile Context bug class as /:id/like above.
+    const viewerProfileId = await resolveMyProfileId(req.userId!)
+    if (!viewerProfileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    // BETA.3 (Task 6) — same forProfileContext enforcement gate as /:id/like.
+    const { forProfileContext } = await import('../lib/eligibilityService')
+    const eligibility = await forProfileContext(viewerProfileId, req.userId!)
+    if (!eligibility.canLike) return res.status(403).json({ error: 'Não podes realizar esta ação.', reasons: eligibility.reasons })
     const { recordPass } = await import('../lib/matchService')
-    await recordPass(viewer.profile.id, req.params.id)
+    await recordPass(viewerProfileId, req.params.id)
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
 })
@@ -155,24 +183,25 @@ router.post('/:id/pass', requireAuth, async (req: AuthRequest, res: Response) =>
 // POST /api/discovery/:id/block
 router.post('/:id/block', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
-    if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+    // BETA.3 fix — same Active Profile Context bug class as /:id/like above.
+    const viewerProfileId = await resolveMyProfileId(req.userId!)
+    if (!viewerProfileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
     // 11.5.6 — dedup: only fire BLOCK signal on genuine transition into
     // BLOCK (matches LIKE/PASS pattern) — a repeat POST .../block (double
     // click, client retry) must not inflate blockRate, which feeds
     // directly into the guardrail comparison's recommendDisable decision.
     const priorAction = await prisma.profileAction.findUnique({
-      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
+      where: { actorProfileId_targetProfileId: { actorProfileId: viewerProfileId, targetProfileId: req.params.id } },
       select: { action: true }
     })
     await prisma.profileAction.upsert({
-      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
+      where: { actorProfileId_targetProfileId: { actorProfileId: viewerProfileId, targetProfileId: req.params.id } },
       update: { action: 'BLOCK' },
-      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id, action: 'BLOCK' }
+      create: { actorProfileId: viewerProfileId, targetProfileId: req.params.id, action: 'BLOCK' }
     })
     if (priorAction?.action !== 'BLOCK') {
       const { recordSignal } = await import('../lib/recommendationSignalService')
-      recordSignal(viewer.profile.id, req.params.id, 'BLOCK').catch(() => {})
+      recordSignal(viewerProfileId, req.params.id, 'BLOCK').catch(() => {})
     }
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
@@ -205,10 +234,11 @@ router.post('/:id/report', requireAuth, async (req: AuthRequest, res: Response) 
     })
     notifyAdmins('new_report', '⚠️ Nova denúncia', `Denúncia: ${reason}`, { reportId: report.id, tab: 'reports' }).catch(()=>{})
 
-    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
-    if (viewer?.profile) {
+    // BETA.3 fix — same Active Profile Context bug class as above.
+    const viewerProfileId = await resolveMyProfileId(req.userId!)
+    if (viewerProfileId) {
       const { recordSignal } = await import('../lib/recommendationSignalService')
-      recordSignal(viewer.profile.id, req.params.id, 'REPORT').catch(() => {})
+      recordSignal(viewerProfileId, req.params.id, 'REPORT').catch(() => {})
     }
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }

@@ -87,48 +87,40 @@ app.use('/api/auth/register', strictLimiter)
 app.use('/api/auth/password', strictLimiter)
 
 app.get('/health', (_, res) => res.json({
-  status: 'ok', app: 'Between Us API', version: '2.5.1',
+  status: 'ok', app: 'Between Us API', version: '2.6.0',
   environment: process.env.NODE_ENV, timestamp: new Date().toISOString(),
   sentry: !!process.env.SENTRY_DSN, // 3.7 — cheap visibility into whether error monitoring is actually wired up
 }))
 
-// Email diagnostic endpoint — for debugging SMTP config
-app.get('/health/email', async (req, res) => {
-  const config = {
-    SMTP_HOST:  process.env.SMTP_HOST  || null,
-    SMTP_PORT:  process.env.SMTP_PORT  || '465',
-    SMTP_USER:  process.env.SMTP_USER  || 'resend',
-    SMTP_PASS:  process.env.SMTP_PASS  ? `set (${process.env.SMTP_PASS.slice(0,8)}…)` : null,
-    EMAIL_FROM: process.env.EMAIL_FROM || null,
-    CLIENT_URL: process.env.CLIENT_URL || null,
-  }
+// Email diagnostic endpoint.
+// BETA.3 fix — this used to check ONLY the Gmail-SMTP-fallback vars
+// (SMTP_HOST/SMTP_USER/SMTP_PASS), so it reported "misconfigured" even when
+// SendGrid (the actual primary provider — see lib/email.ts) was correctly
+// configured, and it leaked SMTP_HOST, SMTP_USER, EMAIL_FROM and the first
+// 8 characters of SMTP_PASS in a JSON response with no auth at all. Now:
+// checks whichever provider lib/email.ts actually uses, does not attempt a
+// live connection (that requires the real credentials and risks leaking
+// connection-error details), and returns presence booleans only — never a
+// config value, never any part of a secret.
+app.get('/health/email', (_req, res) => {
+  const hasSendgrid = !!process.env.SENDGRID_API_KEY
+  const hasSmtp = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS)
+  const provider: 'sendgrid' | 'smtp' | 'unknown' = hasSendgrid ? 'sendgrid' : hasSmtp ? 'smtp' : 'unknown'
 
-  const missing = Object.entries(config).filter(([,v]) => !v).map(([k]) => k)
+  const fromConfigured = !!process.env.EMAIL_FROM
+  const credentialsConfigured = hasSendgrid || hasSmtp
 
-  if (missing.length > 0) {
-    return res.json({
-      status: 'misconfigured',
-      missing,
-      config,
-      fix: 'Set missing variables in Railway → Service → Variables'
-    })
-  }
+  const status: 'configured' | 'missing' | 'error' =
+    provider === 'unknown' ? 'missing' : (credentialsConfigured && fromConfigured) ? 'configured' : 'error'
 
-  // Try to connect
-  try {
-    const nodemailer = require('nodemailer')
-    const t = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT || 465),
-      secure: Number(process.env.SMTP_PORT || 465) === 465,
-      auth: { user: process.env.SMTP_USER || 'resend', pass: process.env.SMTP_PASS },
-    })
-    await t.verify()
-    res.json({ status: 'ok', message: 'SMTP connection verified ✅', config })
-  } catch (err: any) {
-    res.json({ status: 'error', message: err.message, config,
-      hint: 'Check Resend dashboard → API Keys → SMTP credentials' })
-  }
+  res.json({
+    status,
+    provider,
+    checks: {
+      fromConfigured,
+      credentialsConfigured,
+    },
+  })
 })
 
 // 11.5.5 — Intelligent Recommendations diagnostic endpoint, same
