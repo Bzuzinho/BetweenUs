@@ -31,7 +31,21 @@ const getWebPush = async () => {
     return null
   }
   try {
-    webpush = await import('web-push')
+    // BETA.4 typecheck fix — was `await import('web-push')`. A dynamic
+    // ES import requires TypeScript to resolve the target module's own
+    // types at compile time, which depends on @types/web-push being
+    // installed (it's a devDependency here — see package.json). That's
+    // fragile across environments that install with devDependencies
+    // skipped (e.g. a production-mode `npm ci`), and broke `tsc --noEmit`
+    // in exactly that situation even though `webpush` itself is already
+    // typed `any` here — the failure happens resolving the import
+    // expression's type, before the `any` assignment ever comes into
+    // play. `require()` sidesteps this entirely: @types/node types Node's
+    // `require` as returning `any` unconditionally, so no declaration
+    // file for 'web-push' is needed at all. web-push is a plain CommonJS
+    // package (package.json has no "type": "module"), so this is not a
+    // runtime behavior change — still lazy-loaded on first call here.
+    webpush = require('web-push')
     webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE)
     console.log('[PUSH] web-push initialised, public key:', VAPID_PUBLIC.slice(0,20) + '...')
   } catch (err: any) {

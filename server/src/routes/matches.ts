@@ -252,9 +252,15 @@ router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res:
     const viewerProfile = await prisma.profile.findUnique({ where: { id: viewerProfileId } })
     if (!viewerProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
 
+    // BETA.4 typecheck fix — no longer includes `user` here: fromProfile.userId
+    // is null for a COUPLE/GROUP requester (see notify.ts's
+    // getNotificationUserIdsForProfile comment), so `fromProfile.user.id`
+    // wasn't usable directly anyway — this matters more now that a
+    // couple/group can itself be the one sending the connection request.
+    // The notification below now goes through notifyProfileMembers, which
+    // resolves the right recipient(s) itself.
     const fromProfile = await prisma.profile.findUnique({
-      where: { id: req.params.fromProfileId },
-      include: { user: { select: { id:true } } }
+      where: { id: req.params.fromProfileId }
     })
     if (!fromProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
 
@@ -303,9 +309,11 @@ router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res:
       create: { actorProfileId: viewerProfile.id, targetProfileId: fromProfile.id, action: 'LIKE' }
     })
 
-    // Notify the requester
-    const { notifyUser } = await import('../lib/notify')
-    notifyUser(fromProfile.user.id, 'match',
+    // Notify the requester — every member if fromProfile is a couple/group
+    // (BETA.4 fix; was `notifyUser(fromProfile.user.id, ...)`, which only
+    // ever worked for an INDIVIDUAL requester).
+    const { notifyProfileMembers } = await import('../lib/notify')
+    notifyProfileMembers(fromProfile.id, 'match',
       '💫 Ligação aceite!',
       `${viewerProfile.displayName || 'Alguém'} aceitou a tua ligação. Podem conversar agora.`,
       { matchId: match.id, tab: 'matches' }
