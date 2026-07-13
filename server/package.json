@@ -1,15 +1,18 @@
 {
   "name": "between-us-server",
-  "version": "2.3.0",
+  "version": "2.6.0",
   "private": true,
   "scripts": {
-    "start": "npx prisma db push --accept-data-loss && node -r ts-node/register/transpile-only src/index.ts",
+    "start": "node -r ts-node/register/transpile-only src/index.ts",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "test": "NODE_ENV=test dotenv -e .env.test -- jest --runInBand --forceExit",
     "test:coverage": "NODE_ENV=test dotenv -e .env.test -- jest --runInBand --forceExit --coverage",
     "test:watch": "NODE_ENV=test dotenv -e .env.test -- jest --watch --runInBand",
     "typecheck": "tsc --noEmit",
+    "postinstall": "prisma generate",
+    "db:deploy": "npx prisma migrate deploy",
     "db:migrate": "npx prisma migrate deploy",
+    "db:push:safe": "npx prisma db push",
     "db:seed": "ts-node prisma/seed.ts",
     "db:seed:beta": "ts-node --transpile-only prisma/betaSeed/index.ts",
     "db:seed:beta:validate": "ts-node --transpile-only prisma/betaSeed/validate.ts",
@@ -18,7 +21,9 @@
     "db:backfill-individual-profiles": "ts-node --transpile-only src/scripts/backfillIndividualProfiles.ts",
     "reset-password": "ts-node --transpile-only src/scripts/resetPassword.ts",
     "hard-delete": "ts-node --transpile-only src/scripts/hardDelete.ts",
-    "db:seed-performance": "ts-node --transpile-only src/scripts/seedPerformanceDataset.ts"
+    "db:seed-performance": "ts-node --transpile-only src/scripts/seedPerformanceDataset.ts",
+    "beta:gate": "ts-node --transpile-only src/scripts/betaGate.ts",
+    "migrate:baseline": "bash scripts/generate-baseline-migration.sh"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.540.0",

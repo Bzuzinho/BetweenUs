@@ -54,21 +54,18 @@ const registerSchema = z.object({
   termsAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar os Termos de Utilização'),
   betaCode: z.string().optional(),
   refCode: z.string().optional(),
-  // BETA.2 fix — these three are mandatory RGPD consents (age
-  // verification, privacy policy, sensitive-data processing). They were
-  // previously plain optional booleans, so sending `false` for any of
-  // them still returned 201 — registration never actually enforced them.
-  // Kept `.optional()` (field may be absent) but reject an explicit
-  // `false` — verified client/src/pages/RegisterPage.jsx's real submit
-  // payload never sends these fields at all (its step-2 "age+consent"
-  // screen only has a termsAccepted checkbox), so requiring the key to be
-  // present would 400 every real registration. That's a separate,
-  // pre-existing frontend gap (the UI doesn't actually collect these
-  // consents despite the step being labelled for it) — flagged here, not
-  // fixed, since it's outside the current backend test-suite scope.
-  ageConfirmed: z.boolean().optional().refine(v => v !== false, 'Tens de confirmar que tens pelo menos 18 anos'),
-  privacyAccepted: z.boolean().optional().refine(v => v !== false, 'Tens de aceitar a Política de Privacidade'),
-  sensitiveDataAccepted: z.boolean().optional().refine(v => v !== false, 'Tens de aceitar o processamento de dados sensíveis'),
+  // BETA.3 fix — these three are mandatory RGPD consents (age
+  // verification, privacy policy, sensitive-data processing). BETA.2 made
+  // them reject an explicit `false` but still allowed the key to be
+  // entirely absent, specifically because client/src/pages/RegisterPage.jsx
+  // never sent them at all (its step-2 screen only had a single
+  // termsAccepted checkbox) — requiring the key would have 400'd every
+  // real registration. RegisterPage.jsx now collects all three as their
+  // own unchecked-by-default checkboxes (BETA.3), so the soft-optional
+  // escape hatch is closed here too: the field must be present AND `true`.
+  ageConfirmed: z.boolean({ required_error: 'Tens de confirmar que tens pelo menos 18 anos' }).refine(v => v === true, 'Tens de confirmar que tens pelo menos 18 anos'),
+  privacyAccepted: z.boolean({ required_error: 'Tens de aceitar a Política de Privacidade' }).refine(v => v === true, 'Tens de aceitar a Política de Privacidade'),
+  sensitiveDataAccepted: z.boolean({ required_error: 'Tens de aceitar o processamento de dados sensíveis' }).refine(v => v === true, 'Tens de aceitar o processamento de dados sensíveis'),
   communityGuidelinesAccepted: z.boolean().optional(),
   locationConsent: z.boolean().optional().default(false),
   marketingConsent: z.boolean().optional().default(false),

@@ -8,8 +8,18 @@ const router = Router()
 // GET /api/privacy — get my privacy settings
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
+    // BETA.3 fix — was a direct Profile.userId lookup, which 404'd for a
+    // couple/group's non-creator member (no individually-owned Profile
+    // row) and, for anyone with both an Individual Profile and an active
+    // Shared Profile, always returned the Individual Profile's privacy
+    // settings regardless of which profile they're currently acting as.
+    // Same Active Profile Context bug class already fixed on this file's
+    // own POST /block/:profileId route below (7.11) — GET/PUT / were
+    // missed.
+    const profileId = await resolveMyProfileId(req.userId!)
+    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
     const profile = await prisma.profile.findUnique({
-      where: { userId: req.userId! },
+      where: { id: profileId },
       include: { privacySettings: true }
     })
     if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
@@ -22,8 +32,11 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 // PUT /api/privacy — update privacy settings
 router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
+    // BETA.3 fix — same Active Profile Context bug class as GET / above.
+    const profileId = await resolveMyProfileId(req.userId!)
+    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
     const profile = await prisma.profile.findUnique({
-      where: { userId: req.userId! }
+      where: { id: profileId }
     })
     if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
 

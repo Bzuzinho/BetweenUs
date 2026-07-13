@@ -12,6 +12,28 @@ const C = {
 
 const BETA_CLOSED = false // toggled by BETA_CLOSED env on backend
 
+// BETA.3 — one explicit, independently-toggleable, unchecked-by-default
+// checkbox per RGPD consent purpose (age/terms/privacy/sensitive-data).
+// Extracted so step 2 doesn't repeat the same markup four times.
+function ConsentCheckbox({ checked, onToggle, children, last }) {
+  return (
+    <div
+      onClick={onToggle}
+      style={{ display:'flex', gap:10, alignItems:'flex-start', marginBottom: last ? 20 : 12, cursor:'pointer' }}
+    >
+      <div style={{
+        width:18, height:18, borderRadius:5, flexShrink:0, marginTop:1,
+        background: checked ? C.primary : 'none',
+        border:`1.5px solid ${checked ? C.primary : C.border}`,
+        display:'flex', alignItems:'center', justifyContent:'center',
+      }}>
+        {checked && <span style={{ fontSize:11, color:'#0A141A', fontWeight:700 }}>✓</span>}
+      </div>
+      <span style={{ fontSize:13, color:C.text2, lineHeight:1.5 }}>{children}</span>
+    </div>
+  )
+}
+
 export default function RegisterPage() {
   const { register } = useAuth()
   const navigate = useNavigate()
@@ -19,7 +41,16 @@ export default function RegisterPage() {
   const [step, setStep] = useState(1) // 1=account, 2=age+consent
   const [form, setForm] = useState({
     email:'', password:'', dateOfBirth:'', betaCode:'', refCode:'',
+    // BETA.3 fix — these three used to not exist on the form at all, so
+    // the wizard's single "aceito tudo" checkbox only ever sent
+    // termsAccepted; the backend silently accepted the missing fields
+    // (see server/src/routes/auth.ts's registerSchema, BETA.2 comment).
+    // Now each RGPD consent is its own explicit, unchecked-by-default
+    // checkbox — see step 2 below.
     termsAccepted: false,
+    ageConfirmed: false,
+    privacyAccepted: false,
+    sensitiveDataAccepted: false,
   })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -40,7 +71,10 @@ export default function RegisterPage() {
 
   const handleSubmit = async () => {
     if (!form.dateOfBirth) return setError('Data de nascimento obrigatória.')
+    if (!form.ageConfirmed) return setError('Tens de confirmar que tens pelo menos 18 anos.')
     if (!form.termsAccepted) return setError('Tens de aceitar os Termos de Utilização.')
+    if (!form.privacyAccepted) return setError('Tens de aceitar a Política de Privacidade.')
+    if (!form.sensitiveDataAccepted) return setError('Tens de aceitar o tratamento de dados sensíveis.')
 
     setLoading(true); setError('')
     try {
@@ -49,6 +83,9 @@ export default function RegisterPage() {
         password: form.password,
         dateOfBirth: form.dateOfBirth,
         termsAccepted: true,
+        ageConfirmed: true,
+        privacyAccepted: true,
+        sensitiveDataAccepted: true,
         betaCode: form.betaCode || undefined,
         refCode: form.refCode || undefined,
       })
@@ -144,27 +181,43 @@ export default function RegisterPage() {
                 max={new Date(Date.now() - 18 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
               />
 
-              {/* Terms */}
-              <div
-                onClick={() => set('termsAccepted', !form.termsAccepted)}
-                style={{ display:'flex', gap:10, alignItems:'flex-start', marginBottom:20, cursor:'pointer' }}
+              {/* BETA.3 fix — was a single bundled checkbox (terms + age,
+                  privacy/sensitive-data consent never actually collected).
+                  RGPD requires separate, explicit, opt-in consent per
+                  purpose (see docs/legal/CONSENT_POLICY.md) — four
+                  independent checkboxes, none pre-selected. */}
+              <ConsentCheckbox
+                checked={form.ageConfirmed}
+                onToggle={() => set('ageConfirmed', !form.ageConfirmed)}
               >
-                <div style={{
-                  width:18, height:18, borderRadius:5, flexShrink:0, marginTop:1,
-                  background: form.termsAccepted ? C.primary : 'none',
-                  border:`1.5px solid ${form.termsAccepted ? C.primary : C.border}`,
-                  display:'flex', alignItems:'center', justifyContent:'center',
-                }}>
-                  {form.termsAccepted && <span style={{ fontSize:11, color:'#0A141A', fontWeight:700 }}>✓</span>}
-                </div>
-                <span style={{ fontSize:13, color:C.text2, lineHeight:1.5 }}>
-                  Aceito os{' '}
-                  <Link to="/legal/terms" target="_blank" style={{ color:C.primary }}>Termos de Utilização</Link>
-                  {' '}e a{' '}
-                  <Link to="/legal/privacy" target="_blank" style={{ color:C.primary }}>Política de Privacidade</Link>.
-                  Confirmo que tenho 18 anos ou mais.
-                </span>
-              </div>
+                Tenho 18 anos ou mais.
+              </ConsentCheckbox>
+
+              <ConsentCheckbox
+                checked={form.termsAccepted}
+                onToggle={() => set('termsAccepted', !form.termsAccepted)}
+              >
+                Aceito os{' '}
+                <Link to="/legal/terms" target="_blank" style={{ color:C.primary }}>Termos de Utilização</Link>.
+              </ConsentCheckbox>
+
+              <ConsentCheckbox
+                checked={form.privacyAccepted}
+                onToggle={() => set('privacyAccepted', !form.privacyAccepted)}
+              >
+                Aceito a{' '}
+                <Link to="/legal/privacy" target="_blank" style={{ color:C.primary }}>Política de Privacidade</Link>.
+              </ConsentCheckbox>
+
+              <ConsentCheckbox
+                checked={form.sensitiveDataAccepted}
+                onToggle={() => set('sensitiveDataAccepted', !form.sensitiveDataAccepted)}
+                last
+              >
+                Aceito o tratamento de dados sensíveis necessário ao serviço
+                (orientação, estado de relação, intenções) — ver{' '}
+                <Link to="/legal/privacy" target="_blank" style={{ color:C.primary }}>Política de Privacidade</Link>.
+              </ConsentCheckbox>
 
               <div style={{ display:'flex', gap:10 }}>
                 <button
