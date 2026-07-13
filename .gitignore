@@ -31,8 +31,14 @@ npm-debug.log*
 yarn-debug.log*
 *.log
 
-# Prisma
-server/prisma/migrations/
+# BETA.3 fix - migrations must be tracked for `prisma migrate deploy` to
+# work at all. This line used to ignore server/prisma/migrations/ entirely,
+# which silently discarded every migration folder (including the BETA.3
+# baseline migration and its migration_lock.toml) - git status showed
+# clean, nothing ever reached GitHub, and a stale local-only migration
+# (20260629000001_init, predating the GROUP profile type) sat invisible on
+# disk the whole time. Migrations now live in git like any other source
+# file - see docs/product/CLOSED_BETA_GATE.md section 3.
 
 # Uploads temporários
 uploads/
