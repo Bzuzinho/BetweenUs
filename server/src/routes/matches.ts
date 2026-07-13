@@ -84,6 +84,81 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 })
 
+// GET /api/matches/pending-requests — BETA.4: single-consent connection
+// requests directed AT me, not yet resolved either way. This is distinct
+// from GET /api/couples/matches/pending (N-party COUPLE/GROUP approval
+// queue, unrelated data shape) — this is the plain "someone liked you,
+// you haven't answered yet" list for the model confirmed with the product
+// owner: ligar → the other person is notified immediately and can
+// accept/reject, no double-blind swipe-match required. Must stay free and
+// fully visible for every plan — this list is the core flow, not a
+// premium feature (explicit product decision, BETA.4).
+router.get('/pending-requests', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const myProfileId = await getUserProfileId(req.userId!)
+    if (!myProfileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
+    const incomingLikes = await prisma.profileAction.findMany({
+      where: { targetProfileId: myProfileId, action: 'LIKE' },
+      select: { actorProfileId: true, createdAt: true }
+    })
+    if (incomingLikes.length === 0) return res.json({ pending: [] })
+
+    interface ActorRow { actorProfileId: string; createdAt: Date }
+    interface TargetRow { targetProfileId: string }
+    interface MatchPairRow { profileOneId: string; profileTwoId: string }
+
+    const actorIds = (incomingLikes as ActorRow[]).map((l: ActorRow) => l.actorProfileId)
+
+    // Already resolved one way or another: I recorded my own action
+    // against them (LIKE via accept, or PASS via reject) — either way
+    // this pair is no longer "pending my response".
+    const myResponses = await prisma.profileAction.findMany({
+      where: { actorProfileId: myProfileId, targetProfileId: { in: actorIds } },
+      select: { targetProfileId: true }
+    })
+    const respondedIds = new Set((myResponses as TargetRow[]).map((r: TargetRow) => r.targetProfileId))
+
+    // Defense-in-depth: a Match may already exist for this pair (e.g. the
+    // couple-approval path activates it via a different code path) even
+    // without my own ProfileAction row — exclude those too.
+    const existingMatches = await prisma.match.findMany({
+      where: { OR: [
+        { profileOneId: myProfileId, profileTwoId: { in: actorIds } },
+        { profileTwoId: myProfileId, profileOneId: { in: actorIds } },
+      ]},
+      select: { profileOneId: true, profileTwoId: true }
+    })
+    const matchedIds = new Set(
+      (existingMatches as MatchPairRow[])
+        .flatMap((m: MatchPairRow) => [m.profileOneId, m.profileTwoId])
+        .filter((id: string) => id !== myProfileId)
+    )
+
+    const stillPendingIds = actorIds.filter((id: string) => !respondedIds.has(id) && !matchedIds.has(id))
+    if (stillPendingIds.length === 0) return res.json({ pending: [] })
+
+    const profiles = await prisma.profile.findMany({
+      where: { id: { in: stillPendingIds } },
+      select: {
+        id: true, displayName: true, city: true, type: true,
+        photos: { where: { moderationStatus: 'APPROVED', isPrimary: true }, take: 1 }
+      }
+    })
+    const likedAtByProfile = new Map((incomingLikes as ActorRow[]).map((l: ActorRow) => [l.actorProfileId, l.createdAt]))
+
+    interface PendingProfileRow { id: string; displayName: string; city: string | null; type: string; photos: any[] }
+    const pending = (profiles as PendingProfileRow[])
+      .map((p: PendingProfileRow) => ({ profile: p, likedAt: likedAtByProfile.get(p.id) }))
+      .sort((a: { likedAt?: Date }, b: { likedAt?: Date }) => (b.likedAt?.getTime() || 0) - (a.likedAt?.getTime() || 0))
+
+    res.json({ pending })
+  } catch (err: any) {
+    console.error('[PENDING REQUESTS]', err.message)
+    res.status(500).json({ error: 'Erro interno.' })
+  }
+})
+
 // GET /api/matches/:id/messages — A.3: validate membership
 router.get('/:id/messages', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
@@ -197,6 +272,18 @@ router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res:
       ]}
     })
     if (existing) return res.json({ ok: true, matchId: existing.id, alreadyMatched: true })
+
+    // BETA.4 — this route creates its Match row directly (predates
+    // matchService.transition() being the documented single source of
+    // truth for Match.status writes — see matchService.ts's 5.9 comment),
+    // so the FREE-plan active-match cap isn't enforced automatically the
+    // way it is for the CREATE/ACTIVATE paths inside transition(). Same
+    // shared helper, checked explicitly here instead.
+    const { checkActiveMatchCapacity } = await import('../lib/matchService')
+    const capacity = await checkActiveMatchCapacity(fromProfile.id, viewerProfile.id)
+    if (!capacity.ok) {
+      return res.status(403).json({ error: 'Limite de conversas ativas atingido.', code: 'ACTIVE_MATCH_LIMIT' })
+    }
 
     // Create match + conversation
     const match = await prisma.match.create({

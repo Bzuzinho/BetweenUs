@@ -240,6 +240,7 @@ export default function ExploreScreen() {
   const [empty, setEmpty] = useState(false)
   const [error, setError] = useState('')
   const [selected, setSelected] = useState(null)
+  const [limitNotice, setLimitNotice] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true); setError(''); setEmpty(false)
@@ -259,9 +260,20 @@ export default function ExploreScreen() {
   useEffect(() => { load() }, [load])
 
   const handleLike = async (id) => {
-    const res = await api.post(`/discovery/${id}/like`)
-    setProfiles(prev => prev.filter(p => p.id !== id))
-    return res.data
+    try {
+      const res = await api.post(`/discovery/${id}/like`)
+      setProfiles(prev => prev.filter(p => p.id !== id))
+      return res.data
+    } catch (err) {
+      // BETA.4 — FREE-plan active-conversations cap (matchService.ts's
+      // checkActiveMatchCapacity). Surfaced as a dismissible notice
+      // instead of the generic load-error banner, since the grid itself
+      // is still fine — only this one action was blocked.
+      if (err?.response?.data?.code === 'ACTIVE_MATCH_LIMIT') {
+        setLimitNotice(err.response.data.error || 'Limite de conversas ativas atingido.')
+      }
+      throw err
+    }
   }
 
   const handlePass = async (id) => {
@@ -292,6 +304,18 @@ export default function ExploreScreen() {
           ↻
         </button>
       </div>
+
+      {limitNotice && (
+        <div style={{ background:C.primaryDim, border:`1px solid ${C.primary}`, borderRadius:12,
+          padding:'12px 14px', marginBottom:16, display:'flex', justifyContent:'space-between',
+          alignItems:'center', gap:10 }}>
+          <span style={{ fontSize:13, color:C.text, lineHeight:1.4 }}>
+            {limitNotice} Arquiva uma conversa em Matches ou faz upgrade para Premium para continuar.
+          </span>
+          <button onClick={() => setLimitNotice('')}
+            style={{ color:C.muted, fontSize:18, background:'none', border:'none', cursor:'pointer', flexShrink:0 }}>×</button>
+        </div>
+      )}
 
       {/* Filters */}
       <div style={{ display:'flex', gap:8, marginBottom:20 }}>

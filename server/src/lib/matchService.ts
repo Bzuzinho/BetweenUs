@@ -9,7 +9,62 @@ export type LikeResult =
   | { kind: 'PENDING_PARTNER_APPROVAL' }
   | { kind: 'MATCH_PENDING_COUPLE_APPROVAL'; matchId: string }
   | { kind: 'ALREADY_MATCHED'; matchId: string }
-  | { kind: 'ERROR'; message: string }
+  | { kind: 'ERROR'; message: string; code?: string }
+
+// BETA.4 — monetization package (product decision confirmed 2026-07-13):
+// FREE plan caps how many ACTIVE matches a profile can hold at once, to
+// encourage archiving/ending old conversations or upgrading — Premium
+// (any plan !== FREE) is unlimited. Deliberately NOT gating the pending
+// single-consent request list itself (GET /api/matches/pending-requests
+// stays free/unrestricted per that same product decision) — only the
+// point where a match actually BECOMES ACTIVE is gated, and only for
+// whichever side of the pair is actually at FREE-plan capacity.
+export const FREE_MAX_ACTIVE_MATCHES = Number(process.env.FREE_MAX_ACTIVE_MATCHES || 5)
+
+// A profile's "premium" status is resolved from its owning user(s):
+// Profile.userId directly for an Individual Profile, or every ACTIVE
+// ProfileMember's userId for a Shared Profile (COUPLE/GROUP) — same
+// owner-resolution pattern discoveryService.ts already uses for
+// eligibility (isSharedProfileEligible). Any one premium member is enough
+// to lift the cap for the whole shared profile (a positive perk, unlike
+// the ALL-must-be-eligible posture used for safety gates elsewhere).
+const isProfilePremium = async (profileId: string): Promise<boolean> => {
+  const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { userId: true } })
+  if (!profile) return false
+  let ownerUserIds: string[]
+  if (profile.userId) {
+    ownerUserIds = [profile.userId]
+  } else {
+    const { getActiveMembers } = await import('./profileMembershipService')
+    ownerUserIds = (await getActiveMembers(profileId)).map(m => m.userId)
+  }
+  if (ownerUserIds.length === 0) return false
+  const sub = await prisma.subscription.findFirst({
+    where: { userId: { in: ownerUserIds }, plan: { not: 'FREE' }, status: 'ACTIVE' },
+    select: { id: true }
+  })
+  return !!sub
+}
+
+const countActiveMatches = (profileId: string): Promise<number> =>
+  prisma.match.count({ where: { status: 'ACTIVE', OR: [{ profileOneId: profileId }, { profileTwoId: profileId }] } })
+
+export interface CapacityCheckResult { ok: boolean; blockedProfileId?: string }
+
+// Checked at every point a match transitions INTO ACTIVE — see
+// transition() below (covers CREATE→ACTIVE and ACTIVATE→ACTIVE, i.e. both
+// the direct individual↔individual path and the couple/group N-party
+// approval path) and matches.ts's POST /accept/:fromProfileId (the
+// single-consent accept path, which creates its Match row directly
+// instead of going through transition() — see that route's own comment).
+export const checkActiveMatchCapacity = async (profileOneId: string, profileTwoId: string): Promise<CapacityCheckResult> => {
+  for (const profileId of [profileOneId, profileTwoId]) {
+    if (await isProfilePremium(profileId)) continue
+    const count = await countActiveMatches(profileId)
+    if (count >= FREE_MAX_ACTIVE_MATCHES) return { ok: false, blockedProfileId: profileId }
+  }
+  return { ok: true }
+}
 
 /**
  * Point 9: single source of truth for like → match decisions.
@@ -121,7 +176,7 @@ export const createLikeOrMatch = async (
         conversationType: requiresDoubleConsent ? 'COUPLE_GROUP' : 'ONE_TO_ONE'
       }
     })
-    if (!result.ok || !result.match) return { kind: 'ERROR', message: result.error || 'Erro ao criar match.' }
+    if (!result.ok || !result.match) return { kind: 'ERROR', message: result.error || 'Erro ao criar match.', code: result.code }
 
     // 11.1 — MATCH is mutual by nature: one signal row per direction.
     // (Already naturally deduped — this code path only runs once, right
@@ -192,6 +247,7 @@ export interface TransitionResult {
   ok: boolean
   match?: any
   error?: string
+  code?: string
 }
 
 const EVENT_TO_DOMAIN_EVENT: Partial<Record<MatchEvent, DomainEventType>> = {
@@ -221,6 +277,11 @@ export const transition = async (
     const check = canTransition(null, 'CREATE', opts.toStateOverride)
     if (!check.allowed) return { ok: false, error: check.reason }
 
+    if (check.toState === 'ACTIVE') {
+      const capacity = await checkActiveMatchCapacity(opts.createData.profileOneId, opts.createData.profileTwoId)
+      if (!capacity.ok) return { ok: false, error: 'Limite de conversas ativas atingido.', code: 'ACTIVE_MATCH_LIMIT' }
+    }
+
     const match = await prisma.match.create({
       data: {
         profileOneId: opts.createData.profileOneId,
@@ -246,6 +307,11 @@ export const transition = async (
 
   const check = canTransition(existing.status as MatchState, event)
   if (!check.allowed) return { ok: false, error: check.reason }
+
+  if (check.toState === 'ACTIVE' && existing.status !== 'ACTIVE') {
+    const capacity = await checkActiveMatchCapacity(existing.profileOneId, existing.profileTwoId)
+    if (!capacity.ok) return { ok: false, error: 'Limite de conversas ativas atingido.', code: 'ACTIVE_MATCH_LIMIT' }
+  }
 
   const updated = await prisma.match.update({
     where: { id: matchId },
