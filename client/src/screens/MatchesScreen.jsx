@@ -424,9 +424,53 @@ function PendingMatchesSection({ pending, onApprove }) {
   )
 }
 
+// BETA.4 — "Pedidos de ligação" (single-consent model, confirmed with o
+// dono do produto): ligar → a outra pessoa é notificada de imediato e
+// pode aceitar/rejeitar, sem duplo-match cego estilo swipe. Antes desta
+// secção, este aviso só existia no sino de notificações — se fosse
+// dispensado ali, o pedido "desaparecia" sem deixar rasto em Matches.
+// Tem de ficar sempre visível e gratuita para todos os planos: é o fluxo
+// principal, não uma funcionalidade premium (decisão de produto BETA.4).
+function IncomingRequestsSection({ requests, onAccept, onReject, busyId }) {
+  if (!requests || requests.length === 0) return null
+  return (
+    <div style={{ marginBottom:24 }}>
+      <div style={{ fontSize:11, color:C.primary, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:8, fontWeight:600 }}>
+        Pedidos de ligação — {requests.length} à espera da tua resposta
+      </div>
+      {requests.map(r => (
+        <div key={r.profile.id} style={{ background:C.surface, border:`1px solid ${C.primary}`, borderRadius:14, padding:14, marginBottom:10, display:'flex', alignItems:'center', gap:12 }}>
+          <div style={{ width:44, height:44, borderRadius:14, flexShrink:0,
+            background:'linear-gradient(135deg,#3D2060,#1A0A2E)',
+            display:'flex', alignItems:'center', justifyContent:'center',
+            fontSize:18, border:`1.5px solid ${C.border}` }}>
+            {r.profile.type === 'COUPLE' ? '💑' : r.profile.type === 'GROUP' ? '👥' : '🧑'}
+          </div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:14, fontWeight:600, color:C.text, marginBottom:2 }}>{r.profile.displayName}</div>
+            <div style={{ fontSize:12, color:C.muted }}>Quer ligar-se a ti</div>
+          </div>
+          <div style={{ display:'flex', gap:6 }}>
+            <button disabled={busyId === r.profile.id} onClick={() => onReject(r.profile.id)}
+              style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:10,
+                padding:'8px 12px', color:C.muted, fontSize:12, cursor:'pointer',
+                opacity: busyId === r.profile.id ? 0.5 : 1 }}>Rejeitar</button>
+            <button disabled={busyId === r.profile.id} onClick={() => onAccept(r.profile.id)}
+              style={{ background:C.primary, border:'none', borderRadius:10,
+                padding:'8px 12px', color:'#0A141A', fontWeight:600, fontSize:12, cursor:'pointer',
+                opacity: busyId === r.profile.id ? 0.5 : 1 }}>Aceitar</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function MatchesScreen() {
   const [matches, setMatches] = useState([])
   const [pending, setPending] = useState([])
+  const [requests, setRequests] = useState([])
+  const [requestBusyId, setRequestBusyId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [active, setActive] = useState(null)
   const navigate = useNavigate()
@@ -435,16 +479,38 @@ export default function MatchesScreen() {
     api.get('/couples/matches/pending').then(res => setPending(res.data.pending || [])).catch(() => setPending([]))
   }
 
+  const loadRequests = () => {
+    api.get('/matches/pending-requests').then(res => setRequests(res.data.pending || [])).catch(() => setRequests([]))
+  }
+
   useEffect(() => {
     api.get('/matches')
       .then(res => setMatches(res.data.matches || []))
       .catch(console.error)
       .finally(() => setLoading(false))
     loadPending()
+    loadRequests()
   }, [])
 
   const handleApprove = async (matchId) => {
     try { await api.post(`/couples/matches/${matchId}/approve`); loadPending() } catch {}
+  }
+
+  const handleAcceptRequest = async (fromProfileId) => {
+    setRequestBusyId(fromProfileId)
+    try {
+      await api.post(`/matches/accept/${fromProfileId}`)
+      setRequests(prev => prev.filter(r => r.profile.id !== fromProfileId))
+      api.get('/matches').then(res => setMatches(res.data.matches || [])).catch(() => {})
+    } catch {} finally { setRequestBusyId(null) }
+  }
+
+  const handleRejectRequest = async (fromProfileId) => {
+    setRequestBusyId(fromProfileId)
+    try {
+      await api.post(`/matches/reject/${fromProfileId}`)
+      setRequests(prev => prev.filter(r => r.profile.id !== fromProfileId))
+    } catch {} finally { setRequestBusyId(null) }
   }
 
   // BETA.2 (FASE D) — match→room navigation. Every match reaching ACTIVE
@@ -474,6 +540,8 @@ export default function MatchesScreen() {
         Os teus Matches
       </div>
 
+      <IncomingRequestsSection requests={requests} onAccept={handleAcceptRequest} onReject={handleRejectRequest} busyId={requestBusyId} />
+
       <PendingMatchesSection pending={pending} onApprove={handleApprove} />
 
       {loading && (
@@ -482,7 +550,7 @@ export default function MatchesScreen() {
         </div>
       )}
 
-      {!loading && matches.length === 0 && pending.length === 0 && (
+      {!loading && matches.length === 0 && pending.length === 0 && requests.length === 0 && (
         <div style={{ textAlign:'center', padding:'60px 20px' }}>
           <div style={{ fontSize:60, marginBottom:16 }}>💫</div>
           <div style={{ fontFamily:"'Playfair Display',serif", fontSize:22,

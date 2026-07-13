@@ -252,20 +252,68 @@ const toStructuralProps = (profile: any): CandidateStructuralProps => ({
 // requested close together, the same caveat any ranked feed has. Composite
 // tuple with `id` as the final tiebreaker guarantees no duplicate/ambiguous
 // position even when two candidates land on the exact same score.
-interface Cursor { score: number; createdAt: string; id: string }
+interface Cursor { score: number; createdAt: string; id: string; premium?: boolean }
 
 const encodeCursor = (c: Cursor): string => Buffer.from(JSON.stringify(c)).toString('base64url')
 const decodeCursor = (raw: string): Cursor | null => {
   try { return JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) } catch { return null }
 }
 
-// Strict "is `a` ranked after `b`" for the (score desc, createdAt desc, id asc) order.
-const isAfterCursor = (item: { score: number; createdAt: Date; id: string }, cursor: Cursor): boolean => {
+// Strict "is `a` ranked after `b`" for the (premium desc, score desc,
+// createdAt desc, id asc) order. `premium` is deliberately checked FIRST
+// as a separate tie-break dimension, not folded into `score` — see the
+// Step 11.5 comment below for why Between Score itself must stay an
+// untouched, honest compatibility signal.
+const isAfterCursor = (item: { score: number; createdAt: Date; id: string; premium: boolean }, cursor: Cursor): boolean => {
+  const cursorPremium = !!cursor.premium
+  if (item.premium !== cursorPremium) return !item.premium
   if (item.score !== cursor.score) return item.score < cursor.score
   const itemTime = item.createdAt.getTime()
   const cursorTime = new Date(cursor.createdAt).getTime()
   if (itemTime !== cursorTime) return itemTime < cursorTime
   return item.id > cursor.id
+}
+
+// ── Step 11.5: Premium priority (monetization package, BETA.4) ───────────
+// Confirmed 2026-07-13 with the product owner: Between Score itself stays
+// an honest compatibility signal — never inflated for a paying profile,
+// since it's shown back to users with explicit reason codes (see
+// buildExplanation below) and the brand's whole pitch rests on
+// Compatibilidade meaning what it says. Premium instead gets a SEPARATE,
+// coarser sort dimension applied ahead of score: among the pool being
+// ranked, premium profiles are listed first, but a premium profile never
+// hides a genuinely better-matching free profile's score from view or
+// changes what that score says — it only changes ordering.
+//
+// Resolved once per request over the whole candidate pool (not per
+// candidate inside the scoring loop) to avoid N+1 queries: gathers every
+// pool profile's owning user id(s) — Profile.userId directly for
+// Individual, every ACTIVE ProfileMember's userId for a Shared Profile
+// (COUPLE/GROUP, same owner-resolution shape as isSharedProfileEligible
+// above) — then does exactly one Subscription lookup for the union.
+const resolvePremiumCandidates = async (pool: any[]): Promise<(candidate: any) => boolean> => {
+  const sharedMembersByProfile = new Map<string, string[]>()
+  await Promise.all(
+    pool.filter(c => !c.userId).map(async (c) => {
+      const members = await getActiveMembers(c.id)
+      sharedMembersByProfile.set(c.id, members.map((m: any) => m.userId))
+    })
+  )
+  const allOwnerIds = [...new Set([
+    ...pool.filter(c => c.userId).map(c => c.userId as string),
+    ...[...sharedMembersByProfile.values()].flat(),
+  ])]
+  const premiumUserIds = allOwnerIds.length
+    ? new Set((await prisma.subscription.findMany({
+        where: { userId: { in: allOwnerIds }, plan: { not: 'FREE' }, status: 'ACTIVE' },
+        select: { userId: true }
+      })).map((s: { userId: string }) => s.userId))
+    : new Set<string>()
+
+  return (candidate: any): boolean => {
+    const ownerIds: string[] = candidate.userId ? [candidate.userId] : (sharedMembersByProfile.get(candidate.id) || [])
+    return ownerIds.some(id => premiumUserIds.has(id))
+  }
 }
 
 export const getCandidates = async (
@@ -333,6 +381,9 @@ export const getCandidates = async (
   // Step 1
   const pool = await fetchCandidatePool(viewerProfile, filters, excludeIds)
 
+  // Step 11.5 setup — batched once for the whole pool, see comment above.
+  const isCandidatePremium = await resolvePremiumCandidates(pool)
+
   const viewerScoreInput = toScoreInput(viewerProfile)
   // Discovery validation follow-up — computed once per request, not per
   // candidate (the viewer doesn't change across the loop).
@@ -340,7 +391,7 @@ export const getCandidates = async (
   const viewerStructuralProps = toStructuralProps(viewerProfile)
   const likedIds = new Set((myActions as MyActionRow[]).filter((a: MyActionRow) => a.action === 'LIKE').map((a: MyActionRow) => a.targetProfileId))
 
-  const scored: Array<{ candidate: any; score: number; breakdown: any; reasonCodes: string[]; explanation: string[] }> = []
+  const scored: Array<{ candidate: any; score: number; breakdown: any; reasonCodes: string[]; explanation: string[]; isPremium: boolean }> = []
 
   for (const candidate of pool) {
     // Step 2 — BETA.2 (FASE C): Shared Profile candidates (userId null)
@@ -392,11 +443,14 @@ export const getCandidates = async (
 
     const explanation = await buildExplanation(result.reasonCodes as any, viewerProfileId, candidate.id)
 
-    scored.push({ candidate, score: result.score, breakdown: result.breakdown, reasonCodes: result.reasonCodes, explanation })
+    scored.push({ candidate, score: result.score, breakdown: result.breakdown, reasonCodes: result.reasonCodes, explanation, isPremium: isCandidatePremium(candidate) })
   }
 
-  // Step 12 — Ranking: stable full order (score desc, createdAt desc, id asc)
+  // Step 12 — Ranking: stable full order (premium desc, score desc,
+  // createdAt desc, id asc) — see Step 11.5 comment for why premium is a
+  // separate leading dimension rather than a score adjustment.
   scored.sort((a, b) => {
+    if (a.isPremium !== b.isPremium) return a.isPremium ? -1 : 1
     if (b.score !== a.score) return b.score - a.score
     const timeDiff = b.candidate.createdAt.getTime() - a.candidate.createdAt.getTime()
     if (timeDiff !== 0) return timeDiff
@@ -406,7 +460,7 @@ export const getCandidates = async (
   // Step 13 — Pagination
   const decodedCursor = cursor ? decodeCursor(cursor) : null
   const startIndex = decodedCursor
-    ? scored.findIndex(s => isAfterCursor({ score: s.score, createdAt: s.candidate.createdAt, id: s.candidate.id }, decodedCursor))
+    ? scored.findIndex(s => isAfterCursor({ score: s.score, createdAt: s.candidate.createdAt, id: s.candidate.id, premium: s.isPremium }, decodedCursor))
     : 0
   const safeStart = startIndex === -1 ? scored.length : startIndex
   const page = scored.slice(safeStart, safeStart + limit)
@@ -428,7 +482,7 @@ export const getCandidates = async (
 
   const last = page[page.length - 1]
   const nextCursor = hasMore && last
-    ? encodeCursor({ score: last.score, createdAt: last.candidate.createdAt.toISOString(), id: last.candidate.id })
+    ? encodeCursor({ score: last.score, createdAt: last.candidate.createdAt.toISOString(), id: last.candidate.id, premium: last.isPremium })
     : null
 
   return { items, nextCursor }

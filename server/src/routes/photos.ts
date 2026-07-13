@@ -14,6 +14,19 @@ import { isPhaseCurrentlyRevoked } from '../lib/consentCheckService'
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
 
+// BETA.4 — monetization package: FREE plan caps how many DISTINCT private
+// photos a user can ever request access to; Premium (any plan !== FREE)
+// is unlimited. Deliberately a lifetime count, not a rolling window — the
+// simplest honest version of this lever, matching the account-level
+// isPremium pattern already used in privacy.ts's invisibleMode gate
+// (PhotoAccessRequest.requesterId is already a User id, not a Profile id,
+// so no profile-owner resolution needed here the way matchService.ts's
+// active-match cap needs for Shared Profiles). A follow-up could convert
+// this to a rolling/monthly window if a lifetime cap proves too harsh in
+// practice — flagged here rather than built now, out of proportion to
+// this package's scope.
+const FREE_MAX_PHOTO_ACCESS_REQUESTS = Number(process.env.FREE_MAX_PHOTO_ACCESS_REQUESTS || 10)
+
 // T7: rate limit photo uploads — max 10 uploads per 15 minutes per user
 const uploadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -227,6 +240,27 @@ router.post('/:id/request-access', requireAuth, async (req: AuthRequest, res: Re
       }
     })
     if (!activeMatch) return res.status(403).json({ error: 'É necessário ter um match ativo com esta pessoa.' })
+
+    // BETA.4 — FREE-plan cap, only enforced for a genuinely NEW unlock (a
+    // renewal/re-request of a photo already requested before doesn't cost
+    // another slot — see FREE_MAX_PHOTO_ACCESS_REQUESTS comment above).
+    const alreadyRequested = await prisma.photoAccessRequest.findUnique({
+      where: { photoId_requesterId: { photoId: photo.id, requesterId: req.userId! } },
+      select: { id: true }
+    })
+    if (!alreadyRequested) {
+      const sub = await prisma.subscription.findUnique({ where: { userId: req.userId! } })
+      const isPremium = sub && sub.plan !== 'FREE' && sub.status === 'ACTIVE'
+      if (!isPremium) {
+        const requestCount = await prisma.photoAccessRequest.count({ where: { requesterId: req.userId! } })
+        if (requestCount >= FREE_MAX_PHOTO_ACCESS_REQUESTS) {
+          return res.status(403).json({
+            error: 'Limite de pedidos de acesso a fotos privadas atingido.',
+            code: 'PHOTO_ACCESS_LIMIT'
+          })
+        }
+      }
+    }
 
     // 8.5 — a revoked FACE_REVEAL consent check blocks future media
     // access requests on this match, per the spec's explicit example.

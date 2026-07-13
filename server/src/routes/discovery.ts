@@ -131,7 +131,8 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
 
     switch (result.kind) {
       case 'ERROR':
-        return res.status(400).json({ error: result.message })
+        return res.status(result.code === 'ACTIVE_MATCH_LIMIT' ? 403 : 400)
+          .json({ error: result.message, code: result.code })
 
       case 'LIKE_RECORDED':
         // Send connection request notification to target — matches the
