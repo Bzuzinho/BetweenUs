@@ -59,6 +59,42 @@ export const notifyAdmins = async (
   }
 }
 
+// ─── Notify every member of a profile ──────────────────────────────────────────
+// BETA.4 typecheck fix — Profile.userId is nullable (a COUPLE/GROUP profile
+// has no single owner; ownership lives in ProfileMember instead — see
+// schema.prisma's Profile.userId comment). Code that notified via
+// `profile.user.id` directly (discovery.ts's LIKE_RECORDED case,
+// matches.ts's accept-request notification) both failed to typecheck
+// under strict null checks AND, at the product level, silently never
+// notified a couple/group's non-creator members at all — the same bug
+// class BETA.3 fixed for the action routes themselves (discovery.ts's
+// like/pass/block, matches.ts's accept/reject), just never caught here on
+// the notification side since it doesn't 404 or error, it just quietly
+// notifies nobody extra.
+//
+// Resolves via ProfileMembershipService.getActiveMembers, which already
+// covers every case this needs: INDIVIDUAL → the owner, COUPLE/GROUP →
+// every ACCEPTED ProfileMember, and a not-yet-backfilled couple → its
+// CoupleProfile partner pair. No separate "does this profile even have a
+// userId" branch needed here — getActiveMembers already resolves that.
+export const getNotificationUserIdsForProfile = async (profileId: string): Promise<string[]> => {
+  const { getActiveMembers } = await import('./profileMembershipService')
+  const members = await getActiveMembers(profileId)
+  return [...new Set(members.map(m => m.userId))]
+}
+
+export const notifyProfileMembers = async (
+  profileId: string, type: string, title: string, body: string, data?: Record<string,any>
+) => {
+  const userIds = await getNotificationUserIdsForProfile(profileId)
+  // Never blocks the caller's own flow (a like, an accept, etc.) on a
+  // notification failure — same posture notifyUser already has for a
+  // single user, just applied across the whole fan-out here.
+  await Promise.all(userIds.map(userId =>
+    notifyUser(userId, type, title, body, data).catch(() => {})
+  ))
+}
+
 // ─── Notify a specific user ────────────────────────────────────────────────────
 export const notifyUser = async (
   userId: string, type: string, title: string, body: string, data?: Record<string,any>

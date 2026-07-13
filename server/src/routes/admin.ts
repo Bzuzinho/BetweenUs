@@ -441,7 +441,17 @@ router.put('/profiles/:id', requireAdmin('profiles'), async (req: AuthRequest, r
       data: updateData
     })
 
-    if (updateData.status === 'APPROVED') {
+    // BETA.4 typecheck fix — updated.userId is string | null (a
+    // COUPLE/GROUP profile has no single owner; see schema.prisma's
+    // Profile.userId comment). Guarded explicitly rather than cast: for a
+    // shared profile there is no single account to reactivate here at
+    // all — its members' own accounts go through their own individual
+    // approval/activation, independent of the shared profile's own
+    // status. Not silently dropped: flagged here in case a future
+    // "reactivate every member on shared-profile approval" requirement
+    // shows up, which would need its own explicit product decision, not
+    // an inferred one.
+    if (updateData.status === 'APPROVED' && updated.userId) {
       await prisma.user.updateMany({
         where: { id: updated.userId, status: 'PENDING_VERIFICATION' },
         data: { status: 'ACTIVE' }
@@ -449,7 +459,10 @@ router.put('/profiles/:id', requireAdmin('profiles'), async (req: AuthRequest, r
     }
 
     await logAdminAction(req.userId!, 'EDIT_PROFILE', 'profile', req.params.id, {
-      targetUserId: updated.userId,
+      // AdminAction.targetUserId is String? (nullable) in schema — undefined
+      // is the correct "no single target user" value for a shared profile,
+      // not a cast/assertion papering over the null.
+      targetUserId: updated.userId ?? undefined,
       reason,
       internalNote,
       previousData: prev,

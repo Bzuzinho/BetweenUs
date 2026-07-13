@@ -1,7 +1,7 @@
 import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
-import { notifyUser, notifyAdmins } from '../lib/notify'
+import { notifyUser, notifyAdmins, notifyProfileMembers } from '../lib/notify'
 import { signMediaUrl } from '../lib/mediaAccessService'
 import { getVerificationBadges } from '../lib/verificationBadges'
 import { resolveMyProfileId } from '../lib/profileMembershipService'
@@ -120,9 +120,14 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
     const viewerProfile = await prisma.profile.findUnique({ where: { id: viewerProfileId } })
     if (!viewerProfile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
 
+    // BETA.4 typecheck fix — no longer includes `user` here: target.userId
+    // is null for a COUPLE/GROUP profile (see notify.ts's
+    // getNotificationUserIdsForProfile comment), so `target.user.id`
+    // wasn't usable directly anyway. LIKE_RECORDED below now notifies via
+    // notifyProfileMembers(target.id, ...), which resolves the right
+    // recipient(s) itself.
     const target = await prisma.profile.findUnique({
-      where: { id: req.params.id },
-      include: { user: { select: { id: true } } }
+      where: { id: req.params.id }
     })
     if (!target) return res.status(404).json({ error: 'Perfil não encontrado.' })
 
@@ -135,10 +140,12 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
           .json({ error: result.message, code: result.code })
 
       case 'LIKE_RECORDED':
-        // Send connection request notification to target — matches the
-        // pre-fix behavior for the one-sided case, just no longer bundled
-        // with match-creation logic.
-        notifyUser(target.user.id, 'connection_request',
+        // Send connection request notification to every member of the
+        // target profile — INDIVIDUAL → the owner, COUPLE/GROUP → every
+        // accepted member (BETA.4 fix; was `notifyUser(target.user.id,
+        // ...)`, which only ever worked for INDIVIDUAL and silently
+        // notified nobody for a couple/group target).
+        notifyProfileMembers(target.id, 'connection_request',
           '🔔 Pedido de ligação',
           `${viewerProfile.displayName || 'Alguém'} quer ligar-se contigo. Vê o perfil e decide.`,
           { fromProfileId: viewerProfile.id, tab: 'matches' }
