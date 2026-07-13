@@ -178,13 +178,20 @@ export const sendSafetyAlertEmail = async (
   `), 'safety-alert')
 }
 
+// BETA.3 fix (live-testing finding) — this used to return SMTP_HOST,
+// SMTP_USER, EMAIL_FROM in full plus partial SMTP_PASS/SENDGRID_API_KEY
+// slices. It's admin-gated (unlike the public /health/email this mirrors),
+// but requireAdmin() with no permission argument accepts ANY admin role —
+// MODERATOR/SUPPORT/FINANCE/CONTENT_REVIEWER, not just SUPER_ADMIN/ADMIN —
+// so partial credentials were reachable by roles that have no operational
+// reason to see them. Same fix shape as /health/email: presence booleans
+// only, never a config value or secret fragment. EMAIL_FROM is kept as-is
+// (it's a sender address meant to be visible to recipients, not a secret).
 export const getEmailConfig = () => ({
   provider: SENDGRID_API_KEY ? 'sendgrid' : (SMTP_HOST ? 'smtp' : null),
-  host: SMTP_HOST || null,
-  port: SMTP_PORT,
-  user: SMTP_USER || null,
-  pass: SMTP_PASS ? `set (${SMTP_PASS.slice(0,4)}…)` : null,
-  sendgridKey: SENDGRID_API_KEY ? `set (${SENDGRID_API_KEY.slice(0,6)}…)` : null,
   from: EMAIL_FROM,
+  hostConfigured: !!SMTP_HOST,
+  userConfigured: !!SMTP_USER,
+  credentialsConfigured: !!SENDGRID_API_KEY || !!(SMTP_HOST && SMTP_USER && SMTP_PASS),
   configured: !!SENDGRID_API_KEY || !!(SMTP_HOST && SMTP_USER && SMTP_PASS),
 })

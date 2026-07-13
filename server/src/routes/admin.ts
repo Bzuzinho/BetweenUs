@@ -1170,12 +1170,16 @@ router.post('/test-email', requireAdmin(), async (req: AuthRequest, res: Respons
 
 
 // ─── GET /api/admin/email-config — SMTP diagnostic ────────────────────────────
+// BETA.3 fix — getEmailConfig() no longer returns raw host/user/secret
+// values (see lib/email.ts). `missing` below is computed from the new
+// boolean-only shape instead of the old string-or-null fields.
 router.get('/email-config', requireAdmin(), async (req: AuthRequest, res: Response) => {
   const { getEmailConfig } = await import('../lib/email')
   const config = getEmailConfig()
-  const missing = Object.entries(config)
-    .filter(([k, v]) => !v && !['port', 'configured', 'sendgridKey'].includes(k))
-    .map(([k]) => k)
+  const missing: string[] = []
+  if (!config.provider) missing.push('provider')
+  if (!config.from) missing.push('from')
+  if (!config.credentialsConfigured) missing.push('credentials')
 
   if (!config.configured) {
     return res.json({

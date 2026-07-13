@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
+import { setPendingInviteRedirect } from '../lib/pendingInviteRedirect'
 
 const C = {
   bg:'#0A141A', bgCard:'#102129', bgInput:'#0F1E26',
@@ -18,7 +19,12 @@ export function GroupInvitePage() {
   const [msg, setMsg] = useState('')
 
   useEffect(() => {
-    if (!user) { navigate('/login'); return }
+    if (!user) {
+      // BETA.3 fix — same as CoupleInvitePage, see lib/pendingInviteRedirect.js.
+      setPendingInviteRedirect(`/group-invite/${token}`)
+      navigate('/login')
+      return
+    }
     api.post(`/groups/join/${token}`)
       .then(res => { setStatus('success'); setMsg(res.data.message) })
       .catch(err => { setStatus('error'); setMsg(err.response?.data?.error || 'Erro ao aceitar convite.') })

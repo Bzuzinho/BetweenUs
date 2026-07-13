@@ -508,18 +508,27 @@ function ReasonModal({ title, onConfirm, onCancel, hasNote=false }) {
 // present in `visibleSections`, so e.g. MODERATOR never sees a revenue
 // card, and a role with NO visible sections still gets a real (if sparse)
 // dashboard instead of a permanent spinner or a wall of undefined values.
+// BETA.3 fix (live testing finding, F2) — GET /admin/dashboard already
+// supported ?includeTestData=true (SUPER_ADMIN only) to show real counts
+// including @betweenus.test seed accounts, but nothing in this component
+// ever set that query param — the capability existed backend-side but was
+// completely unreachable from the UI. In a beta environment where almost
+// every account IS a seed account, the default (test data excluded)
+// dashboard looks close to empty ("só mostra um utilizador" — the one
+// real, non-seed account) with no visible way to see the fuller picture.
 function DashboardTab({ changeTab }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [includeTestData, setIncludeTestData] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true); setError('')
-    api.get('/admin/dashboard')
+    api.get('/admin/dashboard', { params: includeTestData ? { includeTestData: 'true' } : {} })
       .then(r => setData(r.data))
       .catch(e => setError(e.response?.data?.error || 'Não foi possível carregar o dashboard.'))
       .finally(() => setLoading(false))
-  }, [])
+  }, [includeTestData])
   useEffect(() => { load() }, [load])
 
   if (loading) return <div style={{ color:C.muted, padding:20 }}>A carregar...</div>
@@ -536,6 +545,12 @@ function DashboardTab({ changeTab }) {
 
   return (
     <div>
+      {data?.testAccountCount > 0 && (
+        <label style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12, fontSize:12, color:C.muted, cursor:'pointer' }}>
+          <input type="checkbox" checked={includeTestData} onChange={e => setIncludeTestData(e.target.checked)} />
+          Incluir {data.testAccountCount} conta(s) de teste (@betweenus.test) nas contagens
+        </label>
+      )}
       {(visible.has('users') || visible.has('profiles') || visible.has('reports')) && (
         <div style={{ display:'flex', gap:8, marginBottom:10, flexWrap:'wrap' }}>
           {visible.has('users') && <StatCard label="Utilizadores" value={data.users?.total} onClick={() => changeTab('users')}/>}

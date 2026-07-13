@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 import UserNotificationBell from '../components/UserNotificationBell'
+import { setPendingInviteRedirect } from '../lib/pendingInviteRedirect'
 
 const C = {
   bg:'#0A141A', surface:'#102129', elevated:'#172C36',
@@ -38,7 +39,13 @@ export function CoupleInvitePage() {
   const [msg, setMsg] = useState('')
 
   useEffect(() => {
-    if (!user) { navigate('/login'); return }
+    if (!user) {
+      // BETA.3 fix — used to discard the token here and just dump the
+      // visitor at /login with no way back. See lib/pendingInviteRedirect.js.
+      setPendingInviteRedirect(`/couple-invite/${token}`)
+      navigate('/login')
+      return
+    }
     api.post(`/couples/join/${token}`)
       .then(res => { setStatus('success'); setMsg(res.data.message) })
       .catch(err => {

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
+import { consumePendingInviteRedirect } from '../lib/pendingInviteRedirect'
 
 const C = {
   bg:'#0A141A', card:'#102129', input:'#0F1E26', border:'#1E3340',
@@ -89,7 +90,14 @@ export default function RegisterPage() {
         betaCode: form.betaCode || undefined,
         refCode: form.refCode || undefined,
       })
-      navigate('/create-profile', { replace: true })
+      // BETA.3 fix — a pending couple/group invite (see
+      // lib/pendingInviteRedirect.js) takes priority: a brand-new person
+      // registering because they clicked an invite link should land back
+      // on the invite (POST /couples|groups/join/:token only requires an
+      // authenticated User, not an existing profile — see couples.ts) —
+      // not get funneled into /create-profile with no way back to it.
+      const pendingInvite = consumePendingInviteRedirect()
+      navigate(pendingInvite || '/create-profile', { replace: true })
     } catch (err) {
       const code = err.response?.data?.code
       if (code === 'BETA_REQUIRED') return setError('O Between Us está em beta fechado. Precisas de um código de convite.')

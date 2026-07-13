@@ -54,8 +54,15 @@ api.interceptors.response.use(
     // Don't retry refresh calls or non-401s
     if (status !== 401 || original._retry) return Promise.reject(err)
 
-    // If already on a public page, just clear and reject silently
-    const onPublicPage = ['/login', '/register', '/join', '/reset-password', '/forgot-password', '/verify-email']
+    // If already on a public page, just clear and reject silently.
+    // BETA.3 fix — /couple-invite and /group-invite were missing here.
+    // CoupleInvitePage/GroupInvitePage call api.post() while the visitor's
+    // token may be stale (e.g. they had an old session on this browser);
+    // a failed refresh used to hard-redirect via window.location.href
+    // (a full page nav, not a client-side route change) with no chance
+    // for the invite token to be preserved first — same data-loss shape
+    // as the !user case already fixed in those two pages.
+    const onPublicPage = ['/login', '/register', '/join', '/reset-password', '/forgot-password', '/verify-email', '/couple-invite', '/group-invite']
       .some(p => window.location.pathname.startsWith(p))
 
     if (isRefreshing) {

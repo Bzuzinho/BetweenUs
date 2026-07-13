@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { resolvePostLoginRoute } from '../lib/postLoginRoute'
+import { consumePendingInviteRedirect } from '../lib/pendingInviteRedirect'
 
 const C = {
   bg:'#0A141A', surface:'#102129', border:'#1E3340', input:'#0F1E26',
@@ -28,6 +29,15 @@ export default function LoginPage() {
     setLoading(true); setError('')
     try {
       const me = await login(form.email, form.password)
+      // BETA.3 fix — a pending couple/group invite (see
+      // lib/pendingInviteRedirect.js) takes priority over the normal
+      // post-login destination, so a login triggered by clicking an
+      // invite link actually lands back on the invite instead of /explore.
+      const pendingInvite = consumePendingInviteRedirect()
+      if (pendingInvite) {
+        navigate(pendingInvite, { replace: true })
+        return
+      }
       // BETA.2.5 — was its own third copy of the admin/profile/explore
       // if-else chain (App.jsx's RootRedirect and PublicRoute each had
       // their own too, with subtly different behavior). Single source of
