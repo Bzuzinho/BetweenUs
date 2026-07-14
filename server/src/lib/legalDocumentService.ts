@@ -76,3 +76,26 @@ export const recordReacceptance = async (
     }
   })
 }
+
+// Optional consents a user can withdraw at any time. TERMS/PRIVACY_POLICY/
+// SENSITIVE_DATA are deliberately excluded — they gate account use, so
+// "revoking" them isn't a self-service action (it's effectively account
+// suspension/deletion, handled elsewhere).
+export const REVOCABLE_CONSENT_TYPES = ['MARKETING', 'LOCATION', 'CONTACT_HASHING']
+
+// Withdraws a currently-active optional consent. Sets revokedAt rather than
+// deleting the row — RGPD Art. 7(3) requires being able to show consent was
+// given AND later withdrawn, not just that it's now absent. Non-blocking QA
+// finding: UserConsent.revokedAt existed in the schema but nothing ever
+// wrote to it — only /consents/reaccept existed, which creates new
+// acceptance rows, never revokes.
+export const revokeConsent = async (userId: string, consentType: string) => {
+  if (!REVOCABLE_CONSENT_TYPES.includes(consentType)) {
+    throw new Error('Este tipo de consentimento é obrigatório e não pode ser revogado por aqui.')
+  }
+  const result = await prisma.userConsent.updateMany({
+    where: { userId, consentType: consentType as any, revokedAt: null },
+    data: { revokedAt: new Date() }
+  })
+  return { revokedCount: result.count }
+}
