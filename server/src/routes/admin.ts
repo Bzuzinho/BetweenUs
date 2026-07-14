@@ -13,7 +13,7 @@ import { signMediaUrl as signAvatarUrl } from '../lib/mediaAccessService'
 import { getReportEvidenceForModerator } from '../lib/reportEvidenceService'
 import { getLatestAssessment, computeAgreementStats, runModerationAssessment } from '../lib/moderationAssessmentService'
 
-const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
+const CLIENT_URL = (process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app').replace(/\/+$/, '')
 
 const router = Router()
 router.use(requireAuth)

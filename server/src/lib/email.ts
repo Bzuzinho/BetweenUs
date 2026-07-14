@@ -15,7 +15,7 @@ const SMTP_PASS = process.env.SMTP_PASS   // Gmail App Password (16 chars)
 const EMAIL_FROM = process.env.EMAIL_FROM || 'Between Us <emailtemp02@gmail.com>'
 const EMAIL_FROM_ADDRESS = (EMAIL_FROM.match(/<(.+)>/)?.[1]) || EMAIL_FROM
 const EMAIL_FROM_NAME = EMAIL_FROM.replace(/\s*<.+>\s*/, '').trim() || 'Between Us'
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000'
+const CLIENT_URL = (process.env.CLIENT_URL || 'http://localhost:3000').replace(/\/+$/, '')
 
 console.log('[EMAIL] ── CONFIG ─────────────────────────')
 console.log('[EMAIL] PROVIDER :', SENDGRID_API_KEY ? 'sendgrid (HTTP API)' : (SMTP_HOST ? 'smtp' : '❌ NONE CONFIGURED'))

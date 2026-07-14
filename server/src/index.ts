@@ -22,7 +22,7 @@ const httpServer = createServer(app)
 initSentry(app)
 app.use(Sentry.Handlers.requestHandler())
 
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000'
+const CLIENT_URL = (process.env.CLIENT_URL || 'http://localhost:3000').replace(/\/+$/, '')
 const isProd = process.env.NODE_ENV === 'production'
 
 const ALLOWED_ORIGINS = isProd

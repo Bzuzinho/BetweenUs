@@ -11,7 +11,7 @@ import { getPendingReacceptance, recordReacceptance } from '../lib/legalDocument
 import { signMediaUrl } from '../lib/mediaAccessService'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
-const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
+const CLIENT_URL = (process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app').replace(/\/+$/, '')
 
 const router = Router()
 // BETA.2 fix — both were module-level constants, captured ONCE when this

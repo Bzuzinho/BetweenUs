@@ -3,7 +3,7 @@ import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { getOrCreateReferralCode } from '../lib/referralService'
 
-const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
+const CLIENT_URL = (process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app').replace(/\/+$/, '')
 
 const router = Router()
 
