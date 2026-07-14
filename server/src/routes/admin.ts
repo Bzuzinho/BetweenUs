@@ -567,7 +567,11 @@ router.put('/users/:id/status', requireAdmin('users'), async (req: AuthRequest, 
     return res.status(400).json({ error: `Transição ${prev.status} → ${status} não permitida.${hint}` })
   }
 
-  const user = await prisma.user.update({ where: { id: req.params.id }, data: { status } })
+  const user = await prisma.user.update({
+    where: { id: req.params.id },
+    data: { status },
+    select: { id: true, email: true, status: true, adminRole: true, accountName: true }
+  })
 
   await logAdminAction(req.userId!, `${status}_USER`, 'user', req.params.id, {
     targetUserId: req.params.id, reason,
@@ -1183,7 +1187,7 @@ router.post('/test-email', requireAdmin(), async (req: AuthRequest, res: Respons
 
 
 // ─── GET /api/admin/email-config — SMTP diagnostic ────────────────────────────
-router.get('/email-config', requireAdmin(), async (req: AuthRequest, res: Response) => {
+router.get('/email-config', requireAdmin('configuracoes'), async (req: AuthRequest, res: Response) => {
   const { getEmailConfig } = await import('../lib/email')
   const config = getEmailConfig()
   const missing = Object.entries(config)
