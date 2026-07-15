@@ -507,14 +507,51 @@ const main = async () => {
     const c = await (prisma as any).safetyCheckin.findFirst({ where: { profileId: p.id }, orderBy: { createdAt: 'desc' } })
     return c
   }
+  // BETA.1.34 (hardened) — this used to assert exact CURRENT status for
+  // all 6 profiles. That's correct only in the instant right after
+  // db:seed:beta finishes: marta/joana/catarina are seeded in
+  // NON-terminal states (SCHEDULED/WAITING_CONFIRMATION/OVERDUE) that the
+  // REAL background cron (safetyCheckinJobs.ts, runs every ~10min in
+  // every environment, including against these seed rows — it has no
+  // isTestAccount filter, by design, since that's the whole point of
+  // proving the pipeline works end-to-end) keeps advancing forward the
+  // moment their scheduledAt/grace windows elapse. Any gap between
+  // db:seed:beta and db:seed:beta:validate — or a manual QA click on
+  // "estou bem" in the running app — legitimately moves these 3 rows
+  // further along, which used to be reported as a failure even though
+  // nothing was wrong. rui/alex/sofia are seeded already in a TERMINAL
+  // state (SAFE_CONFIRMED/CANCELLED/ESCALATED) that no job or seed code
+  // ever moves away from, so those 3 are still checked for an exact,
+  // pinned status. For the other 3, we instead check the permanent
+  // transition-marker timestamp each one's designed checkpoint sets
+  // (requestSentAt/overdueAt) — written once by the real service during
+  // seeding and never cleared by later transitions — proving the seed
+  // itself actually exercised that transition, and that status has only
+  // moved somewhere still reachable from it (never backslid to SCHEDULED
+  // or an impossible state).
   await check('safety', 'SafetyCheckin cobre SCHEDULED/WAITING_CONFIRMATION/SAFE_CONFIRMED/CANCELLED/OVERDUE/ESCALATED', async () => {
     const [marta, joana, rui, alex, catarina, sofia] = await Promise.all([
       safetyStatusFor('individual_marta'), safetyStatusFor('individual_joana'), safetyStatusFor('individual_rui'),
       safetyStatusFor('individual_alex'), safetyStatusFor('individual_catarina'), safetyStatusFor('individual_sofia'),
     ])
     const got = { marta: marta?.status, joana: joana?.status, rui: rui?.status, alex: alex?.status, catarina: catarina?.status, sofia: sofia?.status }
-    const pass = marta?.status === 'SCHEDULED' && joana?.status === 'WAITING_CONFIRMATION' && rui?.status === 'SAFE_CONFIRMED'
-      && alex?.status === 'CANCELLED' && catarina?.status === 'OVERDUE' && sofia?.status === 'ESCALATED'
+
+    // Reachable-forward sets per profile — anything a live cron (or a
+    // manual "estou bem" / cancel in the running app) could legitimately
+    // reach starting from each profile's seeded checkpoint, per
+    // safetyCheckinStateMachine.ts's TRANSITIONS table.
+    const FORWARD_FROM_SCHEDULED = new Set(['SCHEDULED', 'WAITING_CONFIRMATION', 'OVERDUE', 'ESCALATED', 'SAFE_CONFIRMED', 'CANCELLED'])
+    const FORWARD_FROM_WAITING = new Set(['WAITING_CONFIRMATION', 'OVERDUE', 'ESCALATED', 'SAFE_CONFIRMED', 'CANCELLED'])
+    const FORWARD_FROM_OVERDUE = new Set(['OVERDUE', 'ESCALATED', 'SAFE_CONFIRMED', 'CANCELLED'])
+
+    const martaOk = !!marta && FORWARD_FROM_SCHEDULED.has(marta.status)
+    const joanaOk = !!joana && !!joana.requestSentAt && FORWARD_FROM_WAITING.has(joana.status)
+    const catarinaOk = !!catarina && !!catarina.overdueAt && FORWARD_FROM_OVERDUE.has(catarina.status)
+    const ruiOk = rui?.status === 'SAFE_CONFIRMED' && !!rui.confirmedAt
+    const alexOk = alex?.status === 'CANCELLED' && !!alex.cancelledAt
+    const sofiaOk = sofia?.status === 'ESCALATED' && !!sofia.escalatedAt && !sofia.safetyEmail
+
+    const pass = martaOk && joanaOk && ruiOk && alexOk && catarinaOk && sofiaOk
     return { pass, detail: JSON.stringify(got) }
   })
   await check('safety', 'SafetyCheckin ESCALATED (Sofia) tem safetyEmail=null (nunca enviar email real)', async () => {
