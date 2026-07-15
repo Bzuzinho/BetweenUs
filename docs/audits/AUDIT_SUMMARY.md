@@ -1,6 +1,14 @@
 # Resumo da Auditoria — Between Us
 > Data: Julho 2026 | 15 tarefas executadas
 
+> ⚠️ **Ver também:** [`CLOSED_BETA_SECURITY_AUDIT_2026-07-14.md`](./CLOSED_BETA_SECURITY_AUDIT_2026-07-14.md)
+> — auditoria mais recente (14 jul 2026), focada em preparação para Closed Beta.
+> Corrige RP-1 (isolamento de conversas Socket.IO — não coberto por nenhuma auditoria
+> anterior), RP-3/RM-01 (fotos privadas — mecanismo principal já estava correto, gap real
+> era fotos legadas + bypass numa Private Room), RP-4/RM-04 (rate limiting), RP-5/RM-04
+> (ts-node → build compilado). Ver esse documento para o estado atual — vários riscos
+> listados abaixo como "pendente" já foram corrigidos.
+
 ---
 
 ## Ficheiros analisados

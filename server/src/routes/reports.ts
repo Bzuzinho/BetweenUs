@@ -1,5 +1,6 @@
 import { Router, Response } from 'express'
 import { z } from 'zod'
+import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { computeReportPriority, ReportReasonValue } from '../lib/reportPriorityService'
@@ -8,6 +9,20 @@ import { runModerationAssessment } from '../lib/moderationAssessmentService'
 import { resolveMyProfileId } from '../lib/profileMembershipService'
 
 const router = Router()
+
+// Closed Beta audit (FASE 2.5) — this endpoint had NO rate limiting at
+// all (didn't even import express-rate-limit), unlike every other
+// user-abuse-prone endpoint (login, register, uploads). A dating app's
+// report queue is a direct moderation-priority signal — unthrottled mass
+// reporting can force real users into auto-suspension/review and flood
+// the moderator queue documented in docs/product/MODERATION_WORKFLOW.md.
+// 20/15min per user is generous for genuine use (a real person reports a
+// handful of profiles/messages at most) while blocking automated abuse.
+const reportLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: process.env.NODE_ENV === 'test' ? 100000 : 20,
+  keyGenerator: (req: any) => req.userId || req.ip,
+  message: { error: 'Demasiadas denúncias. Tenta novamente em 15 minutos.' }
+})
 
 // T7: full report reason enum including previously missing critical categories
 const reportSchema = z.object({
@@ -41,7 +56,7 @@ const reportSchema = z.object({
   details: z.string().max(500).optional()
 })
 
-router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
+router.post('/', requireAuth, reportLimiter, async (req: AuthRequest, res: Response) => {
   try {
     const data = reportSchema.parse(req.body)
 

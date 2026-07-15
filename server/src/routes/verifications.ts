@@ -5,6 +5,7 @@ import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
 import { uploadPrivateFile, deleteFile } from '../lib/storage'
 import { resolveVerificationSelfieUrl, isStorageKey } from '../lib/mediaAccessService'
+import { processImage, detectRealImageType } from '../lib/imageProcessing'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { requireAdmin, logAdminAction } from '../middleware/admin'
 import { evaluateAndActivateUser } from '../lib/userActivationService'
@@ -28,6 +29,17 @@ const verifyEmailLimiter = rateLimit({
   message: { error: 'Demasiados pedidos. Aguarda 15 minutos.' }
 })
 
+// Closed Beta audit (FASE 2.5) — POST /submit had no rate limiter at all,
+// unlike photos.ts's uploadLimiter for the general photo-upload endpoint.
+// Same 5/15min-per-user shape as verifyEmailLimiter above (a real user
+// submits identity verification rarely; this only throttles abuse —
+// storage/moderation-queue flooding via repeated selfie uploads).
+const submitVerificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: process.env.NODE_ENV === 'test' ? 100000 : 5,
+  keyGenerator: (req: any) => req.userId || req.ip,
+  message: { error: 'Demasiados envios. Aguarda 15 minutos.' }
+})
+
 // GET /api/verifications/me
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const v = await prisma.verification.findUnique({
@@ -42,9 +54,28 @@ const VERIFICATION_TYPES = ['SELFIE', 'ID_DOCUMENT', 'VIDEO'] as const
 // POST /api/verifications/submit — selfie (or, going forward, other
 // verification-type) upload. 3.4: type is now a validated enum instead of
 // always being the hardcoded string "selfie".
-router.post('/submit', requireAuth, upload.single('selfie'), async (req: AuthRequest, res: Response) => {
+router.post('/submit', requireAuth, submitVerificationLimiter, upload.single('selfie'), async (req: AuthRequest, res: Response) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Selfie obrigatória.' })
+
+    // Closed Beta audit (FASE 2.6) — this endpoint used to trust multer's
+    // fileFilter (mimetype only, client-supplied) and upload req.file.buffer
+    // as-is: no magic-byte check, no EXIF strip, unlike photos.ts's upload
+    // pipeline. A verification selfie is the single most sensitive asset in
+    // the app (identity photo, reviewed by admins) — it now goes through
+    // the exact same detectRealImageType + processImage pipeline photos.ts
+    // already uses, reusing that service rather than duplicating it.
+    const realType = await detectRealImageType(req.file.buffer)
+    if (!realType) return res.status(400).json({ error: 'O ficheiro enviado não é uma imagem válida.' })
+
+    let selfieBuffer = req.file.buffer
+    try {
+      const processed = await processImage(req.file.buffer)
+      selfieBuffer = processed.clean
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message || 'Não foi possível processar a imagem.' })
+    }
+
     const requestedType = VERIFICATION_TYPES.includes(req.body.type) ? req.body.type : 'SELFIE'
     const existing = await prisma.verification.findUnique({ where: { userId: req.userId! } })
     if (existing?.status === 'APPROVED') return res.status(409).json({ error: 'Perfil já verificado.' })
@@ -55,7 +86,7 @@ router.post('/submit', requireAuth, upload.single('selfie'), async (req: AuthReq
     let selfieKey: string | undefined
     if (isProd && process.env.STORAGE_ENDPOINT) {
       const filename = `verify-${req.userId}-${Date.now()}.jpg`
-      const result = await uploadPrivateFile(req.file.buffer, `verifications/${filename}`, req.file.mimetype)
+      const result = await uploadPrivateFile(selfieBuffer, `verifications/${filename}`, 'image/jpeg')
       selfieKey = result.key
     }
     await prisma.verification.upsert({

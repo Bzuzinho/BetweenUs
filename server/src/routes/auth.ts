@@ -342,7 +342,11 @@ router.post('/consents/reaccept', requireAuth, async (req: AuthRequest, res: Res
     })
     res.json({ ok: true, consent })
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Erro ao registar aceitação.' })
+    // Closed Beta audit (FASE 2.4) — recordReacceptance's own validation
+    // errors are safe, hand-written messages, but a Prisma constraint
+    // error would otherwise also reach here unfiltered in production.
+    console.error('[CONSENT REACCEPT]', err.message)
+    res.status(400).json({ error: process.env.NODE_ENV === 'production' ? 'Erro ao registar aceitação.' : (err.message || 'Erro ao registar aceitação.') })
   }
 })
 
@@ -358,7 +362,9 @@ router.post('/consents/revoke', requireAuth, async (req: AuthRequest, res: Respo
     const result = await revokeConsent(req.userId!, consentType)
     res.json({ ok: true, ...result })
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Erro ao revogar consentimento.' })
+    // Closed Beta audit (FASE 2.4) — same reasoning as /consents/reaccept above.
+    console.error('[CONSENT REVOKE]', err.message)
+    res.status(400).json({ error: process.env.NODE_ENV === 'production' ? 'Erro ao revogar consentimento.' : (err.message || 'Erro ao revogar consentimento.') })
   }
 })
 

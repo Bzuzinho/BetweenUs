@@ -1,5 +1,12 @@
 [phases.install]
 cmds = ["npm install"]
 
+# Closed Beta audit (FASE 3.8) — production used to run through
+# `ts-node --transpile-only` (no type-checking, larger runtime attack/
+# error surface than a compiled build). `npm run build` (tsc) now runs
+# once at build time; start.sh runs the compiled `dist/index.js`.
+[phases.build]
+cmds = ["npm run build"]
+
 [start]
 cmd = "bash start.sh"

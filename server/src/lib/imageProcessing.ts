@@ -14,12 +14,31 @@ export interface ProcessedImage {
 const MAX_DIMENSION = 1600
 const JPEG_QUALITY = 85
 const BLUR_SIGMA = 25
+// Closed Beta audit (FASE 2.6) — explicit ceiling instead of relying on
+// sharp/libvips' own implicit default (~268MP). Matches the manual
+// >10000x10000 rejection below (100MP) so the limit is enforced in two
+// independent places: the cheap header-only metadata() read (before any
+// pixel data is touched) AND sharp's own decoder (defense in depth, in
+// case a crafted file's declared metadata doesn't match its real payload).
+const MAX_INPUT_PIXELS = 100_000_000
+// Closed Beta audit (FASE 2.6) — a pathological-but-within-bounds image
+// (e.g. adversarial pixel patterns that are slow for libvips to encode)
+// had no processing time cap; a stuck sharp call could tie up a worker
+// indefinitely. 15s is generous for anything the 100MP/10000px bounds
+// above should ever let through in normal use.
+const PROCESSING_TIMEOUT_MS = 15_000
+
+const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
+  Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Tempo excedido a processar imagem (${label}).`)), ms))
+  ])
 
 export const processImage = async (buffer: Buffer): Promise<ProcessedImage> => {
   // Lazy import — keeps server bootable even if sharp isn't installed yet
   const sharp = (await import('sharp')).default
 
-  const image = sharp(buffer, { failOn: 'none' })
+  const image = sharp(buffer, { failOn: 'none', limitInputPixels: MAX_INPUT_PIXELS })
   const metadata = await image.metadata()
 
   if (!metadata.width || !metadata.height) {
@@ -41,14 +60,17 @@ export const processImage = async (buffer: Buffer): Promise<ProcessedImage> => {
     })
     .jpeg({ quality: JPEG_QUALITY, mozjpeg: true })
 
-  const clean = await cleanPipeline.toBuffer()
+  const clean = await withTimeout(cleanPipeline.toBuffer(), PROCESSING_TIMEOUT_MS, 'clean')
 
-  const blurred = await sharp(buffer, { failOn: 'none' })
-    .rotate()
-    .resize({ width: MAX_DIMENSION, height: MAX_DIMENSION, fit: 'inside', withoutEnlargement: true })
-    .blur(BLUR_SIGMA)
-    .jpeg({ quality: 70, mozjpeg: true })
-    .toBuffer()
+  const blurred = await withTimeout(
+    sharp(buffer, { failOn: 'none', limitInputPixels: MAX_INPUT_PIXELS })
+      .rotate()
+      .resize({ width: MAX_DIMENSION, height: MAX_DIMENSION, fit: 'inside', withoutEnlargement: true })
+      .blur(BLUR_SIGMA)
+      .jpeg({ quality: 70, mozjpeg: true })
+      .toBuffer(),
+    PROCESSING_TIMEOUT_MS, 'blurred'
+  )
 
   const finalMeta = await sharp(clean).metadata()
 
