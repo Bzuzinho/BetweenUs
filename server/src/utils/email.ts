@@ -16,7 +16,7 @@ const getTransporter = () => {
 }
 
 const FROM = process.env.EMAIL_FROM || 'Between Us <noreply@betweenus.app>'
-const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
+const CLIENT_URL = (process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app').replace(/\/+$/, '')
 
 const baseTemplate = (content: string) => `
 <!DOCTYPE html>

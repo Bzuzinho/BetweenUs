@@ -14,13 +14,19 @@
  * an external cron too.
  */
 import { captureError } from '../lib/sentry'
+import { withDistributedLock } from '../lib/distributedLock'
 import {
   runSafetyCheckinRequestJob, runSafetyCheckinOverdueJob, runSafetyCheckinEscalationJob
 } from '../lib/safetyCheckinService'
 
 const INTERVAL_MS = 10 * 60 * 1000 // 10 minutes — matches the old safetyAlertCron.ts cadence
+// Closed Beta audit (FASE 2.7) — shorter than INTERVAL_MS (so a stuck run
+// never permanently wedges the lock past the next legitimate tick) but
+// comfortably longer than a normal run (three small findMany/updateMany
+// sweeps).
+const LOCK_TTL_SECONDS = 5 * 60
 
-const runAll = async () => {
+const runAllUnlocked = async () => {
   try {
     const requested = await runSafetyCheckinRequestJob()
     if (requested > 0) console.log(`[SAFETY-CHECKIN-REQUEST] ${requested} check-in(s) moved to WAITING_CONFIRMATION`)
@@ -35,6 +41,15 @@ const runAll = async () => {
     const escalated = await runSafetyCheckinEscalationJob()
     if (escalated > 0) console.log(`[SAFETY-CHECKIN-ESCALATION] ${escalated} check-in(s) ESCALATED`)
   } catch (err: any) { captureError(err, { job: 'safety-checkin-escalation' }) }
+}
+
+// Closed Beta audit (FASE 2.7) — the escalation step sends a real email to
+// a user's trust contact; two instances both winning the same findMany
+// sweep would double-send it. Wrapped in a distributed lock so at most one
+// instance runs this per tick — see distributedLock.ts for why this fails
+// OPEN rather than silently skipping a safety-critical job if Redis blips.
+const runAll = async () => {
+  await withDistributedLock('safety-checkin-jobs', LOCK_TTL_SECONDS, runAllUnlocked)
 }
 
 export const startSafetyCheckinJobs = (): void => {

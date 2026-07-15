@@ -4,7 +4,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
-const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
+const CLIENT_URL = (process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app').replace(/\/+$/, '')
 
 // T11: validate Stripe config at startup
 const getStripe = () => {

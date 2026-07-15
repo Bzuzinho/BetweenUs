@@ -6,7 +6,7 @@ import { inviteMember } from '../lib/profileMembershipService'
 import { assertGroupProfilesEnabled } from '../lib/profileTypePolicy'
 import { getAvailableContexts } from '../lib/activeProfileContextService'
 
-const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
+const CLIENT_URL = (process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app').replace(/\/+$/, '')
 
 const router = Router()
 

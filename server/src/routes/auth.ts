@@ -7,11 +7,11 @@ import prisma from '../lib/prisma'
 import { generateTokens, verifyRefreshToken, verifyAccessToken } from '../utils/jwt'
 import { notifyAdmins } from '../lib/notify'
 import { evaluateAndActivateUser } from '../lib/userActivationService'
-import { getPendingReacceptance, recordReacceptance } from '../lib/legalDocumentService'
+import { getPendingReacceptance, recordReacceptance, revokeConsent } from '../lib/legalDocumentService'
 import { signMediaUrl } from '../lib/mediaAccessService'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 
-const CLIENT_URL = process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app'
+const CLIENT_URL = (process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app').replace(/\/+$/, '')
 
 const router = Router()
 // BETA.2 fix — both were module-level constants, captured ONCE when this
@@ -179,7 +179,7 @@ router.post('/login', authLimiter, async (req: Request, res: Response) => {
     const { email, password } = z.object({ email:z.string().email(), password:z.string().min(1) }).parse(req.body)
     const user = await prisma.user.findUnique({ where: { email } })
     if (!user) return res.status(401).json({ error: 'Email ou password incorretos.' })
-    if (user.status==='BANNED')    return res.status(403).json({ error:'Esta conta foi suspensa.',         code:'ACCOUNT_BANNED' })
+    if (user.status==='BANNED')    return res.status(403).json({ error:'Esta conta foi banida.',           code:'ACCOUNT_BANNED' })
     if (user.status==='SUSPENDED') return res.status(403).json({ error:'Conta temporariamente suspensa.', code:'ACCOUNT_SUSPENDED' })
     if (user.status==='DELETED')   return res.status(403).json({ error:'Esta conta foi eliminada.',       code:'ACCOUNT_DELETED' })
     const valid = await bcrypt.compare(password, user.passwordHash)
@@ -342,7 +342,29 @@ router.post('/consents/reaccept', requireAuth, async (req: AuthRequest, res: Res
     })
     res.json({ ok: true, consent })
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Erro ao registar aceitação.' })
+    // Closed Beta audit (FASE 2.4) — recordReacceptance's own validation
+    // errors are safe, hand-written messages, but a Prisma constraint
+    // error would otherwise also reach here unfiltered in production.
+    console.error('[CONSENT REACCEPT]', err.message)
+    res.status(400).json({ error: process.env.NODE_ENV === 'production' ? 'Erro ao registar aceitação.' : (err.message || 'Erro ao registar aceitação.') })
+  }
+})
+
+// POST /api/auth/consents/revoke — withdraws an OPTIONAL consent
+// (MARKETING/LOCATION/CONTACT_HASHING). TERMS/PRIVACY_POLICY/SENSITIVE_DATA
+// are mandatory to use the app and are not revocable here — see
+// REVOCABLE_CONSENT_TYPES in legalDocumentService.ts. Closes a non-blocking
+// RGPD QA finding: revoking was previously impossible via the API.
+router.post('/consents/revoke', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { consentType } = req.body
+    if (!consentType) return res.status(400).json({ error: 'consentType obrigatório.' })
+    const result = await revokeConsent(req.userId!, consentType)
+    res.json({ ok: true, ...result })
+  } catch (err: any) {
+    // Closed Beta audit (FASE 2.4) — same reasoning as /consents/reaccept above.
+    console.error('[CONSENT REVOKE]', err.message)
+    res.status(400).json({ error: process.env.NODE_ENV === 'production' ? 'Erro ao revogar consentimento.' : (err.message || 'Erro ao revogar consentimento.') })
   }
 })
 

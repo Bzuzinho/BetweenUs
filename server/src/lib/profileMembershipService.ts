@@ -59,6 +59,37 @@ export const isActiveMember = async (profileId: string, userId: string): Promise
   return members.some(m => m.userId === userId)
 }
 
+// Reverse of getActiveMembers: given a set of userIds, returns every
+// profileId any of them currently belongs to (Individual, Couple or
+// Group) — not just the one they happen to be browsing as. Discovery uses
+// this to exclude a person's OWN other profiles from their own feed;
+// before this existed, excludeIds only had the single active profileId,
+// so e.g. someone browsing as their Couple would see their own
+// Individual profile show up as a candidate (and could like/block it).
+// Same ProfileMember-first, CoupleProfile-fallback pattern as
+// getActiveMembers, so a not-yet-backfilled couple is still covered.
+export const getProfileIdsForUsers = async (userIds: string[]): Promise<string[]> => {
+  if (userIds.length === 0) return []
+
+  const [ownedProfiles, memberships, fallbackCouples] = await Promise.all([
+    prisma.profile.findMany({ where: { userId: { in: userIds } }, select: { id: true } }),
+    (prisma as any).profileMember.findMany({
+      where: { userId: { in: userIds }, status: 'ACCEPTED' },
+      select: { profileId: true }
+    }),
+    prisma.coupleProfile.findMany({
+      where: { OR: [{ partnerOneUserId: { in: userIds } }, { partnerTwoUserId: { in: userIds } }] },
+      select: { profileId: true }
+    }),
+  ])
+
+  return [...new Set<string>([
+    ...ownedProfiles.map(p => p.id),
+    ...memberships.map((m: { profileId: string }) => m.profileId),
+    ...fallbackCouples.map(c => c.profileId),
+  ])]
+}
+
 // Same list getRequiredApproverUserIds (matchService.ts) needs — kept as a
 // separate name because "who can edit this profile" and "who must approve
 // a match" happen to be the same set today (every active member), but

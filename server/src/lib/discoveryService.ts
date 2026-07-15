@@ -10,7 +10,7 @@
 // artificiais" per the spec.
 import prisma from './prisma'
 import * as eligibilityService from './eligibilityService'
-import { getActiveMembers } from './profileMembershipService'
+import { getActiveMembers, getProfileIdsForUsers } from './profileMembershipService'
 import { evaluateIntentionCompatibility, type ProfileIntentionInput } from './intentionCompatibilityService'
 import { evaluateBoundaryCompatibility } from './boundaryCompatibilityService'
 import { evaluateCandidateConstraints, type ConstraintBoundaryInput, type CandidateStructuralProps } from './candidateConstraintService'
@@ -356,10 +356,15 @@ export const getCandidates = async (
   const viewerEligibilities = await Promise.all(viewerMembers.map(uid => eligibilityService.forUser(uid)))
   if (viewerMembers.length === 0 || viewerEligibilities.some(e => !e.canUseApp)) return { items: [], nextCursor: null }
 
-  const [myActions, blockedByProfileIds, contactBlockCheckers] = await Promise.all([
+  const [myActions, blockedByProfileIds, contactBlockCheckers, myProfileIds] = await Promise.all([
     prisma.profileAction.findMany({ where: { actorProfileId: viewerProfileId }, select: { targetProfileId: true, action: true } }),
     fetchProfilesThatBlockedViewer(viewerProfileId),
     Promise.all(viewerMembers.map(uid => buildContactBlockChecker(uid))),
+    // Non-blocking fix: excludeIds used to only ever contain the single
+    // ACTIVE profileId, so switching to e.g. your Couple profile let your
+    // own Individual profile (and any other profile you belong to) show up
+    // as a candidate in your own Discovery feed.
+    getProfileIdsForUsers(viewerMembers),
   ])
   const contactIsBlocked = (email: string): boolean => contactBlockCheckers.some(check => check(email))
 
@@ -373,6 +378,7 @@ export const getCandidates = async (
 
   const excludeIds = new Set<string>([
     viewerProfileId,
+    ...myProfileIds,
     ...(myActions as MyActionRow[]).filter((a: MyActionRow) => ['BLOCK', 'PASS'].includes(a.action)).map((a: MyActionRow) => a.targetProfileId),
     ...blockedByProfileIds,
   ])

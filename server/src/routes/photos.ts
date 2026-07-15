@@ -118,7 +118,9 @@ router.post('/', requireAuth, uploadLimiter, upload.single('photo'), async (req:
     })
   } catch (err: any) {
     console.error('[PHOTO UPLOAD]', err.message)
-    res.status(500).json({ error: err.message || 'Erro ao fazer upload.' })
+    // Closed Beta audit (FASE 2.4) — was err.message unconditionally, which
+    // could surface raw Prisma/R2 error text on an authenticated route.
+    res.status(500).json({ error: isProd ? 'Erro ao fazer upload.' : (err.message || 'Erro ao fazer upload.') })
   }
 })
 

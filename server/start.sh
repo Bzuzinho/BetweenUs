@@ -29,7 +29,15 @@
 # The one-off Intentions re-seed that used to live here is redundant with
 # `npm run db:seed` (prisma/seed.ts already seeds Intentions idempotently
 # via upsert) and ran on every single boot for no reason — removed.
+#
+# Closed Beta audit (FASE 3.8) — production ran through
+# `ts-node --transpile-only`, which skips type-checking at build time and
+# transpiles on every boot. `npm run build` (tsc, nixpacks.toml's
+# [phases.build]) now compiles once at build time; this just runs the
+# compiled output. ts-node itself is unchanged for the operator-invoked
+# scripts (db:seed*, reset-password, hard-delete, beta:gate, backfills) —
+# none of those are in the request-serving path this script starts.
 set -e
 echo "=== Between Us API v2.6.0 ==="
 echo "--- Starting server ---"
-exec node -r ts-node/register/transpile-only src/index.ts
+exec node dist/index.js

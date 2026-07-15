@@ -18,11 +18,23 @@ dotenv.config()
 const app = express()
 const httpServer = createServer(app)
 
+// Closed Beta audit (FASE 2.5) — Railway sits in front of the app as a
+// reverse proxy. Without `trust proxy`, Express's req.ip resolves to
+// Railway's internal hop (not the real client), which every IP-keyed
+// rate limiter below (globalLimiter, strictLimiter, and any route-local
+// limiter falling back to req.ip) silently relies on — meaning every
+// real client behind that proxy was sharing one bucket, making login/
+// register/password-reset throttling far weaker than the configured
+// numbers suggest. `1` trusts exactly one hop (Railway's own edge),
+// matching Railway's documented single-proxy architecture — not `true`,
+// which would trust an arbitrary X-Forwarded-For chain from the client.
+app.set('trust proxy', 1)
+
 // 3.7 — init before any other middleware so it can capture as much as possible
 initSentry(app)
 app.use(Sentry.Handlers.requestHandler())
 
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000'
+const CLIENT_URL = (process.env.CLIENT_URL || 'http://localhost:3000').replace(/\/+$/, '')
 const isProd = process.env.NODE_ENV === 'production'
 
 const ALLOWED_ORIGINS = isProd
@@ -149,7 +161,15 @@ app.get('/health/recommendations', async (_req, res) => {
       productionRecommendedConfig: { shadowModeEnabled: true, intelligentRecommendationsEnabled: false },
     })
   } catch (err: any) {
-    res.json({ status: 'error', message: err.message, shadowModeEnabled, intelligentRecommendationsEnabled })
+    // Closed Beta audit (FASE 2.4) — unauthenticated endpoint; this used to
+    // return err.message unconditionally. The only awaited call above
+    // already self-swallows its own errors (.catch(() => false)), so this
+    // catch currently only fires on an unexpected synchronous error, but
+    // gate it the same way the global error handler (bottom of this file)
+    // already gates everything else, so a future change here can't
+    // reintroduce a raw Prisma/DB error message on a public route.
+    console.error('[HEALTH/RECOMMENDATIONS]', err.message)
+    res.json({ status: 'error', message: isProd ? 'Erro interno.' : err.message, shadowModeEnabled, intelligentRecommendationsEnabled })
   }
 })
 
@@ -234,12 +254,25 @@ io.use((socket, next) => {
 io.on('connection', socket => {
   const userId = (socket.data as any).userId as string
 
-  // ── Conversation (unchanged scope this sprint — Sprint 7 is about
-  // Private Room; Conversation keeps its existing simple behavior, now at
-  // least benefiting from the connection-level auth above) ──
-  socket.on('join_conversation',  (id: string) => socket.join('conversation:' + id))
+  // ── Conversation — Closed Beta audit (FASE 1.1) found these two handlers
+  // joined/broadcast to 'conversation:<id>' using an id fully controlled by
+  // the client with NO membership check, unlike Private Room's room:join /
+  // typing:start below. Now both re-validate membership on every call via
+  // conversationAuthorizationService, the Socket.IO-side equivalent of
+  // matches.ts's verifyMatchMembership (used by the REST message endpoints).
+  socket.on('join_conversation', async (id: string) => {
+    const { resolveConversationMembership } = await import('./lib/conversationAuthorizationService')
+    const auth = await resolveConversationMembership(id, userId)
+    if (!auth.ok) return socket.emit('room:error', { conversationId: id, error: auth.reason })
+    socket.join('conversation:' + id)
+  })
   socket.on('leave_conversation', (id: string) => socket.leave('conversation:' + id))
-  socket.on('typing', (data: any) => socket.to('conversation:' + data.conversationId).emit('typing', data))
+  socket.on('typing', async (data: any) => {
+    const { resolveConversationMembership } = await import('./lib/conversationAuthorizationService')
+    const auth = await resolveConversationMembership(data?.conversationId, userId)
+    if (!auth.ok) return
+    socket.to('conversation:' + data.conversationId).emit('typing', data)
+  })
 
   // ── Private Room (7.8) — every handler re-validates membership through
   // RoomAuthorizationService on every call, not just at join time (a

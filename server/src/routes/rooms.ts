@@ -8,7 +8,7 @@ import { z } from 'zod'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { notifyAdmins, notifyUser } from '../lib/notify'
-import { signMediaUrl } from '../lib/mediaAccessService'
+import { signMediaUrl, resolvePhotoForViewer } from '../lib/mediaAccessService'
 import { canTransitionRoom } from '../lib/privateRoomStateMachine'
 import {
   resolveRoomMembership, canSendMessage, canManageRoom, canModerateContent,
@@ -52,15 +52,49 @@ const roomSelect = {
 
 // 3.1: member thumbnails now store an R2 key (private uploads) rather than a
 // public URL. Room members are an existing trust boundary (you're already in
-// a private room together), so this signs whatever primary photo is present
-// rather than re-deriving match/approval state per member.
-const signRoomPhotos = async (room: any) => {
+// a private room together), so for STANDALONE rooms (no matchId) this keeps
+// signing whatever primary photo is present, unchanged.
+//
+// Security fix (Closed Beta audit, FASE 1.2) — for MATCH-DERIVED rooms this
+// used to do the exact same unconditional signing, which skipped
+// mediaAccessPolicy entirely: once a match is blocked, blockService.ts only
+// removes the blocking actor from rooms with 3+ members (rooms with <=2
+// members are SAFETY_LOCKed instead, keeping both parties as `members` with
+// leftAt: null, deliberately, to preserve evidence for reporting) and
+// MATCH_BLOCKED revokes any PhotoAccessRequest — but this function never
+// re-checked either signal, so a blocked/revoked party kept seeing the
+// clean primary photo via the room member list. Now match-derived rooms go
+// through resolvePhotoForViewer, the same access-policy gate every other
+// surface (discovery, profile, photos routes) already uses — hasActiveMatch
+// naturally becomes false once the match is BLOCKED, and a revoked
+// PhotoAccessRequest naturally stops counting as approved. Standalone
+// rooms (matchId null) have no Match to gate on and keep their original,
+// unchanged trust-boundary behavior — this is not a business rule change,
+// only closes the match-derived gap the audit found.
+const signRoomPhotos = async (room: any, viewer: { viewerUserId: string; viewerProfileId: string | null }) => {
   if (!room?.members) return room
   const members = await Promise.all(room.members.map(async (m: any) => {
     const photo = m.user?.profile?.photos?.[0]
     if (!photo) return m
-    const signed = await signMediaUrl(photo.storagePath)
-    return { ...m, user: { ...m.user, profile: { ...m.user.profile, photos: [{ ...photo, storagePath: signed }] } } }
+
+    if (!room.matchId) {
+      // Standalone room — original trust-boundary behavior, unchanged.
+      const signed = await signMediaUrl(photo.storagePath)
+      return { ...m, user: { ...m.user, profile: { ...m.user.profile, photos: [{ ...photo, storagePath: signed }] } } }
+    }
+
+    const resolved = await resolvePhotoForViewer(photo, {
+      ownerUserId: m.user.id,
+      viewerUserId: viewer.viewerUserId,
+      viewerProfileId: viewer.viewerProfileId,
+    })
+    if (!resolved) {
+      // Viewer currently has no access to this member's photo at all
+      // (e.g. match blocked, access request revoked) — omit it rather
+      // than leak the clean or even the blurred variant.
+      return { ...m, user: { ...m.user, profile: { ...m.user.profile, photos: [] } } }
+    }
+    return { ...m, user: { ...m.user, profile: { ...m.user.profile, photos: [{ ...photo, storagePath: resolved.url }] } } }
   }))
   return { ...room, members }
 }
@@ -86,7 +120,8 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       include: { privateRoom: { select: roomSelect } },
       orderBy: { joinedAt: 'desc' }
     })
-    res.json({ rooms: await Promise.all(memberships.map((m: any) => signRoomPhotos(m.privateRoom))) })
+    const viewer = { viewerUserId: req.userId!, viewerProfileId: await resolveMyProfileId(req.userId!) }
+    res.json({ rooms: await Promise.all(memberships.map((m: any) => signRoomPhotos(m.privateRoom, viewer))) })
   } catch (err: any) {
     console.error('[ROOMS GET]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
@@ -137,11 +172,13 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     await acceptRuleSet(room.id, req.userId!)
 
     const finalRoom = await (prisma as any).privateRoom.findUnique({ where: { id: room.id }, select: roomSelect })
-    res.status(201).json(await signRoomPhotos(finalRoom))
+    res.status(201).json(await signRoomPhotos(finalRoom, { viewerUserId: req.userId!, viewerProfileId: await resolveMyProfileId(req.userId!) }))
   } catch (err: any) {
     console.error('[ROOMS CREATE]', err.message)
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
-    res.status(500).json({ error: 'Erro ao criar sala: ' + err.message })
+    // Closed Beta audit (FASE 2.4) — was 'Erro ao criar sala: ' + err.message
+    // unconditionally, which could surface raw Prisma constraint/column text.
+    res.status(500).json({ error: process.env.NODE_ENV === 'production' ? 'Erro ao criar sala.' : 'Erro ao criar sala: ' + err.message })
   }
 })
 
@@ -163,7 +200,8 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
       pending: await getPendingAlignment(req.params.id)
     }
     const consentChecks = room.matchId ? await listConsentChecksForMatch(room.matchId) : []
-    res.json({ ...(await signRoomPhotos(room)), consent, sharedIntentions, consentChecks })
+    const viewer = { viewerUserId: req.userId!, viewerProfileId: await resolveMyProfileId(req.userId!) }
+    res.json({ ...(await signRoomPhotos(room, viewer)), consent, sharedIntentions, consentChecks })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
   }
