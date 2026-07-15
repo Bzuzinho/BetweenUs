@@ -48,9 +48,39 @@ const REPORT_SPECS: ReportSpec[] = [
   { reporterKey: 'individual_marta', reportedKey: 'individual_noa', reason: 'COERCION', status: 'PENDING', details: 'Pressão insistente para avançar apesar de recusa explícita (cenário de teste).' },
 ]
 
+// BETA.1.23 (hardened) — REPORT_SPECS has been reassigned to different
+// reporter/reported pairs across iterations of this seed script while it
+// was being developed. Report has no natural upsert key spanning versions
+// (only the CURRENT (reporterUserId, reportedUserId, reason) triple below
+// is deduped), so a re-run after a spec change creates the new row but
+// never removes the old one — it silently becomes an orphaned extra
+// Report with no ReportEvidence (predating the captureXXX calls that were
+// added for its reason), which is exactly what made
+// db:seed:beta:validate's "reports=5 sem_evidencia=1" check fail once
+// REPORT_SPECS moved on without it. Deleting every isTestAccount Report
+// that doesn't match a CURRENT spec keeps re-runs idempotent instead of
+// additive; ReportEvidence cascades on Report delete (schema.prisma).
+const pruneStaleTestReports = async (individuals: ProfileMap): Promise<void> => {
+  const testUserIds = Object.values(individuals).map(p => p.userId).filter((id): id is string => !!id)
+  if (testUserIds.length === 0) return
+  const currentTriples = new Set(REPORT_SPECS.map(s => `${individuals[s.reporterKey]?.userId}:${individuals[s.reportedKey]?.userId}:${s.reason}`))
+  const existingReports = await prisma.report.findMany({
+    where: { reporterUserId: { in: testUserIds } },
+    select: { id: true, reporterUserId: true, reportedUserId: true, reason: true },
+  })
+  const staleIds = existingReports
+    .filter(r => !currentTriples.has(`${r.reporterUserId}:${r.reportedUserId}:${r.reason}`))
+    .map(r => r.id)
+  if (staleIds.length > 0) {
+    await prisma.report.deleteMany({ where: { id: { in: staleIds } } })
+    console.log(`  Reports antigos removidos (spec desactualizada): ${staleIds.length}`)
+  }
+}
+
 export const seedReports = async (
   individuals: ProfileMap, roomIds: Record<string, string>
 ): Promise<void> => {
+  await pruneStaleTestReports(individuals)
   let count = 0
   for (const spec of REPORT_SPECS) {
     const reporter = individuals[spec.reporterKey]

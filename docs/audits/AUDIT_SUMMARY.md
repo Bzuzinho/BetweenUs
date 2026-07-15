@@ -8,6 +8,13 @@
 > era fotos legadas + bypass numa Private Room), RP-4/RM-04 (rate limiting), RP-5/RM-04
 > (ts-node → build compilado). Ver esse documento para o estado atual — vários riscos
 > listados abaixo como "pendente" já foram corrigidos.
+>
+> ⚠️ **Ver também:** [`BETA_SEED_VALIDATE_FAILURES_2026-07-15.md`](./BETA_SEED_VALIDATE_FAILURES_2026-07-15.md)
+> — análise das 22 falhas de `npm run db:seed:beta:validate` (15 jul 2026). Zero bugs de
+> produção; causa raiz é catálogo estrutural desatualizado no ambiente alvo (`npm run
+> db:seed` precisa de re-correr) + duas correções no próprio seed/validador de teste
+> (Report órfão em `phases/safety.ts`, check de SafetyCheckin sensível a tempo em
+> `validate.ts`).
 
 ---
 
