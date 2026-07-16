@@ -8,6 +8,7 @@
 import { evaluateIntentionCompatibility, type ProfileIntentionInput } from './intentionCompatibilityService'
 import { evaluateBoundaryCompatibility, type ProfileBoundaryInput } from './boundaryCompatibilityService'
 import { haversineKm } from '../utils/location'
+import { calculateDistanceKm, type DistanceLocationInput } from './distanceService'
 import { getActiveWeights, ALGORITHM_VERSION, type BetweenScoreWeights } from './betweenScoreConfigService'
 
 // Same shape as ProfileBoundaryInput, plus `category` — needed here (and
@@ -21,9 +22,26 @@ export interface BetweenScoreProfileInput {
   id: string
   relationshipStatus?: string | null
   discretionLevel?: string | null
+  // Fase 3D — `city`/`country` aqui já são a LOCALIZAÇÃO EFECTIVA do
+  // perfil (a localização habitual, ou o destino de um Travel Mode
+  // agendado/activo — nunca um estado intermédio) — ver
+  // discoveryService.ts's toScoreInput/effectiveLocationService. Nunca
+  // latitude/longitude de destino: essa parte continua a ser só sobre a
+  // localização habitual coarse (`locationLat`/`locationLng`), propositada-
+  // mente por fora de qualquer lógica de viagem.
   city?: string | null
+  country?: string | null // código ISO normalizado (maiúsculas) — ver effectiveLocationService.normalizeCountry
   locationLat?: number | null
   locationLng?: number | null
+  // Sistema de localidades — id + coordenadas da GeoLocation da
+  // localização EFECTIVA (habitual, ou destino de Travel Mode — mesma
+  // fonte que `city`/`country` acima, nunca um par independente). Quando
+  // ambos os lados têm isto preenchido, baseLocationScore usa-o em vez de
+  // comparação de string/coordenadas coarse — nunca coordenadas reais do
+  // utilizador, sempre o centro aproximado de uma localidade catalogada
+  // (ver effectiveLocationService.ts/distanceService.ts).
+  locationId?: string | null
+  coordinates?: DistanceLocationInput | null
   intentions: ProfileIntentionInput[]
   boundaries: BetweenScoreBoundaryInput[]
   activeTravelCities?: string[] // cities from this profile's currently-active TravelMode rows
@@ -91,11 +109,35 @@ const discretionScore = (a?: string | null, b?: string | null): number => {
   return distance === 0 ? 100 : distance === 1 ? 60 : 20
 }
 
-// Base distance score, before any travel-mode override. No location data on
-// either side is treated as neutral (50) — absence of data isn't a
-// rejection signal.
+// Base distance score. `city`/`country` já chegam aqui como localização
+// EFECTIVA (habitual, ou destino de Travel Mode — Fase 3D), nunca
+// coordenadas de viagem: mesma localidade catalogada (por id) > distância
+// real entre localidades catalogadas > mesma cidade efectiva (comparação
+// de texto, perfis legacy) > mesmo país efectivo > proximidade aproximada
+// por coordenadas coarse da localização habitual (pré-existente, nada a
+// ver com Travel Mode) > neutro se não há dados de nenhum dos dois lados.
 const baseLocationScore = (source: BetweenScoreProfileInput, target: BetweenScoreProfileInput): number => {
+  // Sistema de localidades — quando ambos os lados resolvem para uma
+  // localidade do catálogo (locationId — ver effectiveLocationService.ts),
+  // a comparação é por id, nunca por nome: duas localidades chamadas
+  // "São Pedro" em distritos diferentes têm ids diferentes e não são o
+  // mesmo sítio, mesmo coincidindo o texto — a comparação de string abaixo
+  // (mantida para perfis ainda sem catálogo) teria dado 100 indevidamente
+  // nesse caso. Com coordenadas de ambos os lados, usa distância real em
+  // vez de string de país.
+  if (source.locationId && target.locationId) {
+    if (source.locationId === target.locationId) return 100
+    if (source.coordinates && target.coordinates) {
+      const km = calculateDistanceKm(source.coordinates, target.coordinates)
+      if (km < 10) return 95
+      if (km < 25) return 80
+      if (km < 50) return 60
+      if (km < 100) return 40
+      return 20
+    }
+  }
   if (source.city && target.city && source.city.toLowerCase() === target.city.toLowerCase()) return 100
+  if (source.country && target.country && source.country.toUpperCase() === target.country.toUpperCase()) return 70
   if (source.locationLat != null && source.locationLng != null && target.locationLat != null && target.locationLng != null) {
     const km = haversineKm(source.locationLat, source.locationLng, target.locationLat, target.locationLng)
     if (km < 10) return 95

@@ -25,7 +25,11 @@
     "hard-delete": "ts-node --transpile-only src/scripts/hardDelete.ts",
     "db:seed-performance": "ts-node --transpile-only src/scripts/seedPerformanceDataset.ts",
     "beta:gate": "ts-node --transpile-only src/scripts/betaGate.ts",
-    "migrate:baseline": "bash scripts/generate-baseline-migration.sh"
+    "migrate:baseline": "bash scripts/generate-baseline-migration.sh",
+    "geo:import": "ts-node --transpile-only src/scripts/importGeoNames.ts",
+    "geo:stats": "ts-node --transpile-only src/scripts/geoStats.ts",
+    "geo:audit-profiles": "ts-node --transpile-only src/scripts/geoAuditProfiles.ts",
+    "geo:map-profiles": "ts-node --transpile-only src/scripts/geoMapProfiles.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.540.0",

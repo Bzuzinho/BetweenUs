@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import LocationAutocomplete from '../components/LocationAutocomplete'
 
 const C = {
   bg:'#0A141A', surface:'#102129', elevated:'#172C36',
@@ -75,9 +76,21 @@ export default function EditProfilePage() {
         gender:             p.gender || '',
         orientation:        p.orientation || '',
         relationshipStatus: p.relationshipStatus || 'SINGLE',
-        city:               p.city || '',
-        country:            p.country || 'Portugal',
         discretionLevel:    p.discretionLevel || 'SELECTIVE',
+        // Sistema de localidades — homeLocationId/customLocality/
+        // locationVisibility são o fluxo novo (catálogo GeoNames);
+        // city/country ficam guardados só para o caso raro de um perfil
+        // ainda os ter e nunca ter aberto esta página desde então (nunca
+        // reenviados por esta página se o utilizador não voltar a mexer
+        // na localização). homeLocationCountryCode pré-selecciona o país
+        // do catálogo quando o perfil já tem uma localidade de referência;
+        // sem isso, assume-se PT (único país importado até agora — ver
+        // docs/product/GEONAMES_IMPORT.md) como ponto de partida razoável.
+        countryCode:        p.homeLocationCountryCode || 'PT',
+        homeLocationId:     p.homeLocationId || null,
+        homeLocationLabel:  p.homeLocationLabel || null,
+        customLocality:     p.customLocality || '',
+        locationVisibility: p.locationVisibility || 'REFERENCE_LOCALITY',
       })
       setIntentionSlugs((p.intentions || []).map(pi => pi.intention?.slug || pi.slug).filter(Boolean))
       const b = {}
@@ -101,8 +114,9 @@ export default function EditProfilePage() {
     if (!form.displayName.trim()) return setError('Nome visível obrigatório.')
     setSaving(true); setMsg(''); setError('')
     try {
+      const { countryCode, ...rest } = form // countryCode é só estado local do LocationAutocomplete, nunca enviado
       await api.put(`/profiles/me`, {
-        ...form,
+        ...rest,
         intentions: intentionSlugs.map(slug => ({ slug, preference: 'YES' })),
       })
       const boundaryEntries = Object.entries(boundaryPrefs)
@@ -114,6 +128,10 @@ export default function EditProfilePage() {
       setMsg('Perfil actualizado!')
       setTimeout(() => navigate('/profile'), 1200)
     } catch (err) {
+      // Sistema de localidades — se o backend recusar por cooldown
+      // (403 LOCATION_CHANGE_COOLDOWN), a mensagem já vem com a data exacta
+      // a partir de quando pode voltar a mudar — nunca inventamos essa
+      // data aqui, só mostramos o texto que veio do backend.
       setError(err.response?.data?.error || 'Erro ao guardar.')
     } finally {
       setSaving(false)
@@ -159,8 +177,39 @@ export default function EditProfilePage() {
           <input style={INP} placeholder="Nome ou pseudónimo" value={form.displayName} onChange={e => set('displayName', e.target.value)} />
           <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Bio</label>
           <textarea style={{ ...INP, minHeight:80, resize:'none' }} placeholder="Breve descrição (opcional)" value={form.bio} onChange={e => set('bio', e.target.value)} />
-          <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Cidade</label>
-          <input style={INP} placeholder="Ex: Lisboa" value={form.city} onChange={e => set('city', e.target.value)} />
+          {/* Sistema de localidades — a localização HABITUAL é sempre
+              escolhida do catálogo GeoNames (nunca texto livre sozinho —
+              ver LocationAutocomplete.jsx), nunca uma viagem (isso é o
+              Travel Mode, na página de Casal). Alterações estão sujeitas a
+              um cooldown fora do onboarding para impedir simular viagens;
+              se o backend recusar (403 LOCATION_CHANGE_COOLDOWN), a
+              mensagem com a data exacta a partir de quando pode voltar a
+              mudar aparece no banner de erro acima — nunca inventamos essa
+              data aqui. */}
+          <LocationAutocomplete
+            countryCode={form.countryCode}
+            onCountryChange={code => set('countryCode', code)}
+            locationId={form.homeLocationId}
+            locationLabel={form.homeLocationLabel}
+            onSelectLocation={loc => setForm(p => ({
+              ...p,
+              homeLocationId: loc?.id || null,
+              homeLocationLabel: loc?.label || null,
+              countryCode: loc?.countryCode || p.countryCode,
+            }))}
+            customLocality={form.customLocality}
+            onCustomLocalityChange={v => set('customLocality', v)}
+            label="Localização habitual"
+          />
+          <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Mostrar no perfil como</label>
+          <select style={{ ...INP, cursor:'pointer' }} value={form.locationVisibility} onChange={e => set('locationVisibility', e.target.value)}>
+            <option value="REFERENCE_LOCALITY" style={{ background:C.surface }}>Nome da localidade (ex: Benedita)</option>
+            <option value="CUSTOM_LOCALITY" style={{ background:C.surface }}>Localidade específica, se preenchida (ex: bairro)</option>
+            <option value="REGION_ONLY" style={{ background:C.surface }}>Só distrito/região (ex: Distrito de Leiria)</option>
+          </select>
+          <div style={{ fontSize:11, color:C.muted, marginTop:-6, marginBottom:12 }}>
+            Depois de confirmada, só podes voltar a mudar a localização habitual passado algum tempo — para viajar temporariamente, usa o Travel Mode na página de Casal.
+          </div>
           <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>Género</label>
           <select style={{ ...INP, cursor:'pointer' }} value={form.gender} onChange={e => set('gender', e.target.value)}>
             <option value="" style={{ background:C.surface }}>Preferir não dizer / não definido</option>

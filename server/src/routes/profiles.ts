@@ -7,6 +7,7 @@ import { mergePhotosForViewer } from '../lib/mediaAccessService'
 import { getVerificationBadges } from '../lib/verificationBadges'
 import { isActiveMember, getActiveMembers, resolveMyProfileId, getRequiredApprovers } from '../lib/profileMembershipService'
 import { evaluateCompleteness } from '../lib/profileCompletenessService'
+import { canChangeHomeLocation, getHomeLocation } from '../lib/effectiveLocationService'
 
 const router = Router()
 
@@ -25,7 +26,18 @@ const profileSchema = z.object({
     z.object({ slug: z.string(), preference: z.enum(['YES','MAYBE','NO']).optional() }),
     z.string()
   ])).optional(),
-  onboardingStep: z.number().min(1).max(10).optional()
+  onboardingStep: z.number().min(1).max(10).optional(),
+  // Sistema de localidades (GeoNames) — secção 12 do pedido. homeLocationId
+  // aponta para o catálogo GeoLocation (nunca texto livre); customLocality
+  // é só apresentação (nunca usado para distância — ver distanceService.ts);
+  // locationVisibility controla o que resolveDisplayLabel mostra no perfil
+  // (CUSTOM_LOCALITY/REFERENCE_LOCALITY/REGION_ONLY). city/country
+  // permanecem no schema para compatibilidade legacy (ver
+  // effectiveLocationService.ts) e continuam aceites — um perfil pode
+  // adoptar o catálogo aos poucos sem perder o que já tinha.
+  homeLocationId:     z.string().nullable().optional(),
+  customLocality:     z.string().max(120).nullable().optional(),
+  locationVisibility: z.enum(['CUSTOM_LOCALITY', 'REFERENCE_LOCALITY', 'REGION_ONLY']).optional(),
 })
 
 const normaliseIntentions = (raw: any[]): { slug: string; preference: 'YES'|'MAYBE'|'NO' }[] =>
@@ -44,6 +56,18 @@ async function canManageProfile(profileId: string, userId: string): Promise<bool
 // 6.1 — resolveMyProfileId moved to profileMembershipService.ts (imported
 // at top of file) so every Sprint 6 router can share the exact same
 // resolution logic instead of re-deriving it.
+
+// Sistema de localidades — nunca aceitar um homeLocationId às cegas: tem de
+// existir no catálogo e estar activo (uma localidade desactivada por um
+// admin, ver routes/locations.ts PUT /admin/:id/deactivate, deixa de poder
+// ser escolhida por perfis novos, mas os perfis que já a tinham mantêm a
+// referência — só a pesquisa/selecção nova é bloqueada aqui).
+async function validateHomeLocationId(homeLocationId: string | null | undefined): Promise<string | null> {
+  if (!homeLocationId) return null // null/undefined — nada para validar
+  const location = await (prisma as any).geoLocation.findUnique({ where: { id: homeLocationId }, select: { id: true, active: true } })
+  if (!location || !location.active) return 'Localidade de referência inválida.'
+  return null
+}
 
 
 async function upsertIntentions(profileId: string, intentions: { slug: string; preference: 'YES'|'MAYBE'|'NO' }[]) {
@@ -126,7 +150,20 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   // 4.9: completeness is computed server-side so the frontend never hardcodes
   // a percentage — { score, complete, missing: [...] }
   const completeness = await evaluateCompleteness(profile as any)
-  res.json({ ...safeProfile, photos: resolvedPhotos, verificationBadges: getVerificationBadges(user?.verification), completeness })
+  // Sistema de localidades — só o rótulo pronto a mostrar (nunca
+  // latitude/longitude, mesmo aqui em /me: secção 9 do pedido é explícita
+  // que as coordenadas ficam sempre no backend, mesmo para o dono do perfil).
+  const homeLocation = await getHomeLocation(profile.id)
+  // homeLocationCountryCode — o código ISO2 da GeoLocation ligada (quando
+  // existe), para o LocationAutocomplete do EditProfilePage conseguir
+  // pré-seleccionar o país certo ao editar um perfil que já adoptou o
+  // catálogo, sem ter de adivinhar a partir do texto livre legacy
+  // `country` (que pode ser "Portugal", "PT", "portugal ", etc.).
+  res.json({
+    ...safeProfile, photos: resolvedPhotos, verificationBadges: getVerificationBadges(user?.verification), completeness,
+    homeLocationLabel: homeLocation.displayLabel,
+    homeLocationCountryCode: homeLocation.locationId ? homeLocation.country : null,
+  })
 })
 
 // PUT /api/profiles/me  ← new: edit own profile
@@ -135,7 +172,44 @@ router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     const profileId = await resolveMyProfileId(req.userId!)
     if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
     const data = profileSchema.partial().parse(req.body)
-    const updated = await prisma.profile.update({
+
+    // Fase 3D — a localização habitual (city/country) tem uma política de
+    // alteração própria (cooldown de 90 dias fora do onboarding), separada
+    // de qualquer plano/entitlement: nunca uma gate paga, só integridade de
+    // dados (ver effectiveLocationService.canChangeHomeLocation). Só se
+    // aplica quando city/country estão de facto a mudar.
+    let homeLocationStamp: Date | undefined
+    if (data.city !== undefined || data.country !== undefined || data.homeLocationId !== undefined) {
+      // `(prisma as any)` aqui — mesmo padrão já usado nesta base de código
+      // para campos/modelos mais recentes que o Prisma Client gerado ainda
+      // não conhece num ambiente sem `prisma generate` corrido de fresco
+      // (ver o comentário de keyVersion em discoveryService.ts/
+      // contactHashService.ts). `homeLocationUpdatedAt`/`homeLocationId`
+      // existem mesmo no schema.prisma (Fase 3D / sistema de localidades)
+      // — isto é só uma defesa de tipos, nunca um campo inventado.
+      const current = await (prisma as any).profile.findUnique({
+        where: { id: profileId },
+        select: { status: true, homeLocationUpdatedAt: true, city: true, country: true, homeLocationId: true }
+      })
+      if (!current) return res.status(404).json({ error: 'Perfil não encontrado.' })
+      if (data.homeLocationId !== undefined) {
+        const validationError = await validateHomeLocationId(data.homeLocationId)
+        if (validationError) return res.status(400).json({ error: validationError })
+      }
+      const check = canChangeHomeLocation(current as any, { city: data.city, country: data.country, homeLocationId: data.homeLocationId })
+      if (!check.allowed) {
+        return res.status(403).json({
+          error: `A localização habitual só pode ser alterada novamente a partir de ${check.nextAllowedAt?.toLocaleDateString('pt')}.`,
+          code: 'LOCATION_CHANGE_COOLDOWN',
+          nextAllowedAt: check.nextAllowedAt,
+        })
+      }
+      if (check.reason === 'FIRST_CONFIRMATION' || check.reason === 'COOLDOWN_ELAPSED') {
+        homeLocationStamp = new Date()
+      }
+    }
+
+    const updated = await (prisma as any).profile.update({
       where: { id: profileId },
       data: {
         ...(data.displayName      !== undefined && { displayName: data.displayName }),
@@ -148,6 +222,10 @@ router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
         ...(data.locationLat      !== undefined && { locationLat: coarsenCoordinate(data.locationLat) }),
         ...(data.locationLng      !== undefined && { locationLng: coarsenCoordinate(data.locationLng) }),
         ...(data.discretionLevel  !== undefined && { discretionLevel: data.discretionLevel }),
+        ...(data.homeLocationId     !== undefined && { homeLocationId: data.homeLocationId }),
+        ...(data.customLocality     !== undefined && { customLocality: data.customLocality }),
+        ...(data.locationVisibility !== undefined && { locationVisibility: data.locationVisibility }),
+        ...(homeLocationStamp     !== undefined && { homeLocationUpdatedAt: homeLocationStamp }),
       }
     })
     // 5.8 — relationshipStatus/discretionLevel/city/location all feed
@@ -172,7 +250,30 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     const isProd = process.env.NODE_ENV === 'production'
 
     if (existing) {
-      const updated = await prisma.profile.update({
+      // Fase 3D — defesa extra: este ramo normalmente só é chamado durante
+      // o onboarding (status DRAFT, onde a correcção é sempre livre), mas
+      // se alguma vez for chamado sobre um perfil já confirmado, aplica-se
+      // a mesma política de cooldown de PUT /me.
+      let homeLocationStamp: Date | undefined
+      if (data.city !== undefined || data.country !== undefined || data.homeLocationId !== undefined) {
+        if (data.homeLocationId !== undefined) {
+          const validationError = await validateHomeLocationId(data.homeLocationId)
+          if (validationError) return res.status(400).json({ error: validationError })
+        }
+        const check = canChangeHomeLocation(existing as any, { city: data.city, country: data.country, homeLocationId: data.homeLocationId })
+        if (!check.allowed) {
+          return res.status(403).json({
+            error: `A localização habitual só pode ser alterada novamente a partir de ${check.nextAllowedAt?.toLocaleDateString('pt')}.`,
+            code: 'LOCATION_CHANGE_COOLDOWN',
+            nextAllowedAt: check.nextAllowedAt,
+          })
+        }
+        if (check.reason === 'FIRST_CONFIRMATION' || check.reason === 'COOLDOWN_ELAPSED') {
+          homeLocationStamp = new Date()
+        }
+      }
+
+      const updated = await (prisma as any).profile.update({
         where: { userId: req.userId! },
         data: {
           ...(data.displayName      !== undefined && { displayName: data.displayName }),
@@ -185,6 +286,10 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
           ...(data.locationLat      !== undefined && { locationLat: coarsenCoordinate(data.locationLat) }),
           ...(data.locationLng      !== undefined && { locationLng: coarsenCoordinate(data.locationLng) }),
           ...(data.discretionLevel  !== undefined && { discretionLevel: data.discretionLevel }),
+          ...(data.homeLocationId     !== undefined && { homeLocationId: data.homeLocationId }),
+          ...(data.customLocality     !== undefined && { customLocality: data.customLocality }),
+          ...(data.locationVisibility !== undefined && { locationVisibility: data.locationVisibility }),
+          ...(homeLocationStamp     !== undefined && { homeLocationUpdatedAt: homeLocationStamp }),
         }
       })
       const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
@@ -195,7 +300,12 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
     if (!data.displayName) return res.status(400).json({ error: 'Nome visível obrigatório.' })
 
-    const profile = await prisma.profile.create({
+    if (data.homeLocationId !== undefined) {
+      const validationError = await validateHomeLocationId(data.homeLocationId)
+      if (validationError) return res.status(400).json({ error: validationError })
+    }
+
+    const profile = await (prisma as any).profile.create({
       data: {
         userId:             req.userId!,
         displayName:        data.displayName,
@@ -208,6 +318,9 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
         locationLat:        data.locationLat !== undefined ? coarsenCoordinate(data.locationLat) : undefined,
         locationLng:        data.locationLng !== undefined ? coarsenCoordinate(data.locationLng) : undefined,
         discretionLevel:    data.discretionLevel || 'SELECTIVE',
+        homeLocationId:     data.homeLocationId ?? undefined,
+        customLocality:     data.customLocality ?? undefined,
+        locationVisibility: data.locationVisibility || 'REFERENCE_LOCALITY',
         status:             isProd ? 'PENDING_REVIEW' : 'APPROVED',
         privacySettings: { create: {
           visibleInDiscovery: false, showDistance: true,
@@ -233,13 +346,25 @@ router.put('/onboarding/step', requireAuth, async (req: AuthRequest, res: Respon
   try {
     const { step } = req.body
     if (!step || step < 1 || step > 10) return res.status(400).json({ error: 'Passo inválido.' })
-    const profile = await prisma.profile.findUnique({ where: { userId: req.userId! } })
+    // `(prisma as any)` — precisa de homeLocationId, campo do sistema de
+    // localidades ainda não conhecido pelo Prisma Client gerado (mesmo
+    // padrão do resto do ficheiro).
+    const profile = await (prisma as any).profile.findUnique({ where: { userId: req.userId! } })
     if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
     const isProd = process.env.NODE_ENV === 'production'
     const completing = step >= 10
-    const updated = await prisma.profile.update({
+    // Fase 3D — o momento em que o onboarding termina é a "confirmação" da
+    // localização habitual referida na secção 4 do pedido: a partir daqui
+    // o cooldown de alteração começa a contar (só se já houver
+    // city/country ou homeLocationId preenchidos — um perfil sem
+    // localização nenhuma não tem nada para arrancar o relógio).
+    const startsHomeLocationCooldown = completing && profile.status === 'DRAFT' && !!(profile.city || profile.country || profile.homeLocationId)
+    const updated = await (prisma as any).profile.update({
       where: { userId: req.userId! },
-      data: { ...(completing && profile.status === 'DRAFT' && { status: isProd ? 'PENDING_REVIEW' : 'APPROVED' }) }
+      data: {
+        ...(completing && profile.status === 'DRAFT' && { status: isProd ? 'PENDING_REVIEW' : 'APPROVED' }),
+        ...(startsHomeLocationCooldown && { homeLocationUpdatedAt: new Date() }),
+      }
     })
     if (completing) {
       await prisma.privacySettings.update({ where: { profileId: profile.id }, data: { visibleInDiscovery: true } })
@@ -256,7 +381,29 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
     if (!(await canManageProfile(profile.id, req.userId!))) return res.status(403).json({ error: 'Sem permissão.' })
     const data = profileSchema.partial().parse(req.body)
-    const updated = await prisma.profile.update({
+
+    // Fase 3D — mesma política de cooldown de PUT /me, aplicada aqui ao
+    // perfil partilhado (casal/grupo).
+    let homeLocationStamp: Date | undefined
+    if (data.city !== undefined || data.country !== undefined || data.homeLocationId !== undefined) {
+      if (data.homeLocationId !== undefined) {
+        const validationError = await validateHomeLocationId(data.homeLocationId)
+        if (validationError) return res.status(400).json({ error: validationError })
+      }
+      const check = canChangeHomeLocation(profile as any, { city: data.city, country: data.country, homeLocationId: data.homeLocationId })
+      if (!check.allowed) {
+        return res.status(403).json({
+          error: `A localização habitual só pode ser alterada novamente a partir de ${check.nextAllowedAt?.toLocaleDateString('pt')}.`,
+          code: 'LOCATION_CHANGE_COOLDOWN',
+          nextAllowedAt: check.nextAllowedAt,
+        })
+      }
+      if (check.reason === 'FIRST_CONFIRMATION' || check.reason === 'COOLDOWN_ELAPSED') {
+        homeLocationStamp = new Date()
+      }
+    }
+
+    const updated = await (prisma as any).profile.update({
       where: { id: req.params.id },
       data: {
         ...(data.displayName      !== undefined && { displayName: data.displayName }),
@@ -269,6 +416,10 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
         ...(data.locationLat      !== undefined && { locationLat: coarsenCoordinate(data.locationLat) }),
         ...(data.locationLng      !== undefined && { locationLng: coarsenCoordinate(data.locationLng) }),
         ...(data.discretionLevel  !== undefined && { discretionLevel: data.discretionLevel }),
+        ...(data.homeLocationId     !== undefined && { homeLocationId: data.homeLocationId }),
+        ...(data.customLocality     !== undefined && { customLocality: data.customLocality }),
+        ...(data.locationVisibility !== undefined && { locationVisibility: data.locationVisibility }),
+        ...(homeLocationStamp     !== undefined && { homeLocationUpdatedAt: homeLocationStamp }),
       }
     })
     const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
@@ -296,7 +447,13 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     }
   })
   if (!profile || profile.status !== 'APPROVED') return res.status(404).json({ error: 'Perfil não encontrado.' })
-  const { userId, locationLat, locationLng, photos, user, ...pub } = profile as any
+  // Sistema de localidades — nunca expor o homeLocationId em bruto (id
+  // interno do catálogo) nem customLocality directamente a outro perfil:
+  // o que se mostra é sempre homeLocationLabel, já filtrado por
+  // locationVisibility (resolveDisplayLabel, chamado dentro de
+  // getHomeLocation). locationVisibility em si não é sensível, mas também
+  // não serve para nada no lado do viewer — sai também.
+  const { userId, locationLat, locationLng, homeLocationId, customLocality, locationVisibility, photos, user, ...pub } = profile as any
 
   const viewerProfileId = await resolveMyProfileId(req.userId!)
   const resolvedPhotos = await mergePhotosForViewer(photos, {
@@ -316,7 +473,8 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     }).catch(() => {})
   }
 
-  res.json({ ...pub, photos: resolvedPhotos, verificationBadges: getVerificationBadges(user?.verification) })
+  const homeLocation = await getHomeLocation(profile.id)
+  res.json({ ...pub, photos: resolvedPhotos, verificationBadges: getVerificationBadges(user?.verification), homeLocationLabel: homeLocation.displayLabel })
 })
 
 router.put('/me/boundaries', requireAuth, async (req: AuthRequest, res: Response) => {

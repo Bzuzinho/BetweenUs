@@ -76,4 +76,44 @@ describe('calculateBetweenScore', () => {
     expect(result.breakdown.location.score).toBe(100)
     expect(result.reasonCodes).toContain('TRAVEL_OVERLAP')
   })
+
+  // Sistema de localidades — locationId (catálogo GeoNames) tem prioridade
+  // sobre a comparação de string legacy. Estes casos cobrem exactamente o
+  // bug de homonímia que a comparação por id existe para resolver: duas
+  // localidades chamadas "São Pedro" em distritos diferentes.
+  describe('sistema de localidades — locationId/coordinates', () => {
+    it('same locationId scores location as 100, even when the legacy city text disagrees', async () => {
+      const a = baseProfile({ id: 'a', city: 'benedita', locationId: 'geo-1', coordinates: { latitude: 39.4, longitude: -8.98 } })
+      const b = baseProfile({ id: 'b', city: 'benedita', locationId: 'geo-1', coordinates: { latitude: 39.4, longitude: -8.98 } })
+      const result = await calculateBetweenScore(a, b, weights)
+      expect(result.breakdown.location.score).toBe(100)
+    })
+
+    it('different locationId with the SAME normalized city text does NOT score as same-city — fixes the homonym bug', async () => {
+      // "São Pedro" in two different districts: same normalized city
+      // string, different real place. The legacy string-only path would
+      // have scored this 100 (false positive); with locationId present on
+      // both sides, distance is used instead.
+      const a = baseProfile({ id: 'a', city: 'sao pedro', locationId: 'geo-north', coordinates: { latitude: 41.5, longitude: -8.4 } })
+      const b = baseProfile({ id: 'b', city: 'sao pedro', locationId: 'geo-south', coordinates: { latitude: 37.0, longitude: -7.9 } }) // ~500km away
+      const result = await calculateBetweenScore(a, b, weights)
+      expect(result.breakdown.location.score).toBeLessThan(100)
+      expect(result.breakdown.location.score).toBeLessThanOrEqual(20) // far apart -> lowest real-distance tier
+    })
+
+    it('different locationId, close coordinates (<10km) scores in the top real-distance tier', async () => {
+      const a = baseProfile({ id: 'a', city: 'a', locationId: 'geo-a', coordinates: { latitude: 38.7223, longitude: -9.1393 } }) // Lisboa
+      const b = baseProfile({ id: 'b', city: 'b', locationId: 'geo-b', coordinates: { latitude: 38.7600, longitude: -9.1600 } }) // ~5km away
+      const result = await calculateBetweenScore(a, b, weights)
+      expect(result.breakdown.location.score).toBe(95)
+    })
+
+    it('a profile without locationId (legacy) never crashes or is penalized against a catalog-based profile — falls back to string/coarse comparison', async () => {
+      const a = baseProfile({ id: 'a', city: 'lisboa' }) // legacy, no locationId
+      const b = baseProfile({ id: 'b', city: 'lisboa', locationId: 'geo-b', coordinates: { latitude: 38.7223, longitude: -9.1393 } })
+      const result = await calculateBetweenScore(a, b, weights)
+      // Falls through to the legacy city-string branch (both normalized to "lisboa")
+      expect(result.breakdown.location.score).toBe(100)
+    })
+  })
 })
