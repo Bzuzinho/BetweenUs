@@ -2,17 +2,31 @@
 -- concelho/localidade com coordenadas aproximadas, sem GPS do utilizador,
 -- sem geocoding em runtime — ver docs/product/LOCATION_SYSTEM.md).
 --
--- Aditiva por inteiro: uma tabela nova (geo_locations, vazia até o script
--- de importação correr), duas colunas nullable em "profiles", duas
--- colunas nullable em "travel_modes", e uma coluna com DEFAULT em
--- "profiles". Nada é apagado, nada é renomeado, "city"/"country" em ambas
--- as tabelas ficam exactamente como estavam.
+-- Esta migration é deliberadamente idempotente porque a produção já recebeu
+-- parte deste schema por sincronizações anteriores. Pode ser repetida sem
+-- falhar quando tipos, tabelas, colunas, índices ou constraints já existem.
 
--- CreateEnum
-CREATE TYPE "ProfileLocationVisibility" AS ENUM ('CUSTOM_LOCALITY', 'REFERENCE_LOCALITY', 'REGION_ONLY');
+-- CreateEnum, apenas quando ainda não existe
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_type t
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+        WHERE t.typname = 'ProfileLocationVisibility'
+          AND n.nspname = current_schema()
+    ) THEN
+        CREATE TYPE "ProfileLocationVisibility" AS ENUM (
+            'CUSTOM_LOCALITY',
+            'REFERENCE_LOCALITY',
+            'REGION_ONLY'
+        );
+    END IF;
+END
+$$;
 
 -- CreateTable
-CREATE TABLE "geo_locations" (
+CREATE TABLE IF NOT EXISTS "geo_locations" (
     "id" TEXT NOT NULL,
     "geonamesId" INTEGER NOT NULL,
     "countryCode" TEXT NOT NULL,
@@ -33,41 +47,84 @@ CREATE TABLE "geo_locations" (
     "active" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
-
     CONSTRAINT "geo_locations_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex
-CREATE UNIQUE INDEX "geo_locations_geonamesId_key" ON "geo_locations"("geonamesId");
+-- Garante colunas em instalações onde a tabela possa ter sido criada parcialmente
+ALTER TABLE "geo_locations"
+    ADD COLUMN IF NOT EXISTS "geonamesId" INTEGER,
+    ADD COLUMN IF NOT EXISTS "countryCode" TEXT,
+    ADD COLUMN IF NOT EXISTS "name" TEXT,
+    ADD COLUMN IF NOT EXISTS "normalizedName" TEXT,
+    ADD COLUMN IF NOT EXISTS "asciiName" TEXT,
+    ADD COLUMN IF NOT EXISTS "alternateNames" TEXT,
+    ADD COLUMN IF NOT EXISTS "latitude" DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS "longitude" DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS "featureClass" TEXT,
+    ADD COLUMN IF NOT EXISTS "featureCode" TEXT,
+    ADD COLUMN IF NOT EXISTS "population" BIGINT,
+    ADD COLUMN IF NOT EXISTS "admin1Code" TEXT,
+    ADD COLUMN IF NOT EXISTS "admin2Code" TEXT,
+    ADD COLUMN IF NOT EXISTS "admin1Name" TEXT,
+    ADD COLUMN IF NOT EXISTS "admin2Name" TEXT,
+    ADD COLUMN IF NOT EXISTS "timezone" TEXT,
+    ADD COLUMN IF NOT EXISTS "active" BOOLEAN DEFAULT true,
+    ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS "updatedAt" TIMESTAMP(3);
 
--- CreateIndex
-CREATE INDEX "geo_locations_countryCode_normalizedName_idx" ON "geo_locations"("countryCode", "normalizedName");
+-- Indexes
+CREATE UNIQUE INDEX IF NOT EXISTS "geo_locations_geonamesId_key"
+    ON "geo_locations"("geonamesId");
+CREATE INDEX IF NOT EXISTS "geo_locations_countryCode_normalizedName_idx"
+    ON "geo_locations"("countryCode", "normalizedName");
+CREATE INDEX IF NOT EXISTS "geo_locations_countryCode_population_idx"
+    ON "geo_locations"("countryCode", "population");
+CREATE INDEX IF NOT EXISTS "geo_locations_featureClass_featureCode_idx"
+    ON "geo_locations"("featureClass", "featureCode");
 
--- CreateIndex
-CREATE INDEX "geo_locations_countryCode_population_idx" ON "geo_locations"("countryCode", "population");
-
--- CreateIndex
-CREATE INDEX "geo_locations_featureClass_featureCode_idx" ON "geo_locations"("featureClass", "featureCode");
-
--- AlterTable: profiles — localidade de referência + apresentação
+-- profiles — localidade de referência + apresentação
 ALTER TABLE "profiles"
-    ADD COLUMN "homeLocationId" TEXT,
-    ADD COLUMN "customLocality" TEXT,
-    ADD COLUMN "locationVisibility" "ProfileLocationVisibility" NOT NULL DEFAULT 'REFERENCE_LOCALITY';
+    ADD COLUMN IF NOT EXISTS "homeLocationId" TEXT,
+    ADD COLUMN IF NOT EXISTS "customLocality" TEXT,
+    ADD COLUMN IF NOT EXISTS "locationVisibility" "ProfileLocationVisibility" NOT NULL DEFAULT 'REFERENCE_LOCALITY';
 
--- CreateIndex
-CREATE INDEX "profiles_homeLocationId_idx" ON "profiles"("homeLocationId");
+CREATE INDEX IF NOT EXISTS "profiles_homeLocationId_idx"
+    ON "profiles"("homeLocationId");
 
--- AddForeignKey
-ALTER TABLE "profiles" ADD CONSTRAINT "profiles_homeLocationId_fkey" FOREIGN KEY ("homeLocationId") REFERENCES "geo_locations"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'profiles_homeLocationId_fkey'
+    ) THEN
+        ALTER TABLE "profiles"
+            ADD CONSTRAINT "profiles_homeLocationId_fkey"
+            FOREIGN KEY ("homeLocationId")
+            REFERENCES "geo_locations"("id")
+            ON DELETE SET NULL ON UPDATE CASCADE;
+    END IF;
+END
+$$;
 
--- AlterTable: travel_modes — localidade de destino + apresentação
+-- travel_modes — localidade de destino + apresentação
 ALTER TABLE "travel_modes"
-    ADD COLUMN "destinationLocationId" TEXT,
-    ADD COLUMN "customDestinationLocality" TEXT;
+    ADD COLUMN IF NOT EXISTS "destinationLocationId" TEXT,
+    ADD COLUMN IF NOT EXISTS "customDestinationLocality" TEXT;
 
--- CreateIndex
-CREATE INDEX "travel_modes_destinationLocationId_idx" ON "travel_modes"("destinationLocationId");
+CREATE INDEX IF NOT EXISTS "travel_modes_destinationLocationId_idx"
+    ON "travel_modes"("destinationLocationId");
 
--- AddForeignKey
-ALTER TABLE "travel_modes" ADD CONSTRAINT "travel_modes_destinationLocationId_fkey" FOREIGN KEY ("destinationLocationId") REFERENCES "geo_locations"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'travel_modes_destinationLocationId_fkey'
+    ) THEN
+        ALTER TABLE "travel_modes"
+            ADD CONSTRAINT "travel_modes_destinationLocationId_fkey"
+            FOREIGN KEY ("destinationLocationId")
+            REFERENCES "geo_locations"("id")
+            ON DELETE SET NULL ON UPDATE CASCADE;
+    END IF;
+END
+$$;
