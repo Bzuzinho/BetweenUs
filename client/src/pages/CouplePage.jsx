@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 import UserNotificationBell from '../components/UserNotificationBell'
+import TravelModeSection from '../components/TravelModeSection'
 
 const C = {
   bg:'#0A141A', surface:'#102129', elevated:'#172C36',
@@ -334,115 +335,10 @@ function PendingMatchesSection() {
   )
 }
 
-// 6.7 — Travel Mode do casal: propor requer aprovação de todos os membros
-// ativos antes de ficar SCHEDULED/ativo.
-function TravelSection() {
-  const [travels, setTravels] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ city:'', country:'', startDate:'', endDate:'' })
-  const [busy, setBusy] = useState(false)
-
-  const load = useCallback(() => {
-    api.get('/travel/me').then(r => setTravels(r.data.travelModes || [])).catch(() => {}).finally(() => setLoading(false))
-  }, [])
-  useEffect(() => { load() }, [load])
-
-  const current = travels.find(t => t.status === 'WAITING_MEMBER_APPROVAL' || t.status === 'SCHEDULED')
-
-  const propose = async () => {
-    if (!form.city || !form.startDate || !form.endDate) return
-    setBusy(true)
-    try {
-      await api.post('/travel', form)
-      setForm({ city:'', country:'', startDate:'', endDate:'' })
-      setShowForm(false)
-      load()
-    } catch (err) { alert(err.response?.data?.error || 'Erro.') }
-    finally { setBusy(false) }
-  }
-  const approve = async (id) => {
-    setBusy(true)
-    try { await api.post(`/travel/${id}/approve`); load() }
-    catch (err) { alert(err.response?.data?.error || 'Erro.') }
-    finally { setBusy(false) }
-  }
-  const cancel = async (id) => {
-    setBusy(true)
-    try { await api.delete(`/travel/${id}`); load() }
-    finally { setBusy(false) }
-  }
-
-  if (loading) return null
-
-  return (
-    <div style={sectionStyle}>
-      <div style={sectionTitle}>✈️ Travel Mode</div>
-      <p style={{ color:C.muted, fontSize:12, lineHeight:1.5, marginBottom:14 }}>
-        Ativar viagem em casal requer aprovação de todos os membros.
-      </p>
-
-      {current && (
-        <div style={{ background:C.input, border:`1px solid ${C.border}`,
-          borderRadius:14, padding:14, marginBottom:14 }}>
-          <div style={{ fontSize:13, color:C.text, fontWeight:600, marginBottom:4 }}>
-            {current.city}{current.country ? `, ${current.country}` : ''}
-          </div>
-          <div style={{ fontSize:11, color:C.muted, marginBottom:10 }}>
-            {new Date(current.startDate).toLocaleDateString('pt-PT')} — {new Date(current.endDate).toLocaleDateString('pt-PT')}
-            {' · '}
-            {current.status === 'SCHEDULED' ? '✅ Ativo' : '⏳ A aguardar aprovação'}
-          </div>
-          <div style={{ display:'flex', gap:8 }}>
-            {current.status === 'WAITING_MEMBER_APPROVAL' && (
-              <button onClick={() => approve(current.id)} disabled={busy}
-                style={{ flex:1, background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
-                  border:'none', borderRadius:50, padding:10, fontSize:12,
-                  fontWeight:600, color:'#1A0A2E', cursor:'pointer' }}>
-                Aprovar
-              </button>
-            )}
-            <button onClick={() => cancel(current.id)} disabled={busy}
-              style={{ flex:1, background:'transparent', border:`1px solid ${C.border}`,
-                borderRadius:50, padding:10, fontSize:12, color:C.muted, cursor:'pointer' }}>
-              Cancelar
-            </button>
-          </div>
-        </div>
-      )}
-
-      {!current && !showForm && (
-        <button onClick={() => setShowForm(true)} style={{ width:'100%', background:C.input,
-          border:`1px solid ${C.border}`, borderRadius:50, padding:12, fontSize:13,
-          color:C.text2, cursor:'pointer' }}>
-          + Propor viagem
-        </button>
-      )}
-
-      {showForm && (
-        <div>
-          <input style={inputStyle} placeholder="Cidade" value={form.city}
-            onChange={e => setForm(p => ({ ...p, city: e.target.value }))} />
-          <input style={inputStyle} placeholder="País (opcional)" value={form.country}
-            onChange={e => setForm(p => ({ ...p, country: e.target.value }))} />
-          <input style={inputStyle} type="date" value={form.startDate}
-            onChange={e => setForm(p => ({ ...p, startDate: e.target.value }))} />
-          <input style={inputStyle} type="date" value={form.endDate}
-            onChange={e => setForm(p => ({ ...p, endDate: e.target.value }))} />
-          <div style={{ display:'flex', gap:10 }}>
-            <button onClick={() => setShowForm(false)} style={{ flex:1, background:'transparent',
-              border:`1px solid ${C.border}`, borderRadius:50, padding:12, fontSize:13,
-              color:C.muted, cursor:'pointer' }}>Cancelar</button>
-            <button onClick={propose} disabled={busy} style={{ flex:2,
-              background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
-              border:'none', borderRadius:50, padding:12, fontSize:13,
-              fontWeight:600, color:'#1A0A2E', cursor:'pointer' }}>Propor</button>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
+// Fase 3D — Travel Mode extraído para client/src/components/TravelModeSection.jsx
+// (reutilizável também por um perfil INDIVIDUAL PREMIUM em
+// PrivacySettingsPage.jsx — a API por trás já resolve sempre para o perfil
+// activo do utilizador, seja casal ou individual).
 
 // Página principal de gestão do perfil de casal
 export default function CouplePage() {
@@ -675,7 +571,9 @@ export default function CouplePage() {
             {couple?.coupleStatus === 'ACTIVE' && <AgreementSection />}
 
             {/* Secção: Travel Mode (6.7) */}
-            {couple?.coupleStatus === 'ACTIVE' && <TravelSection />}
+            {couple?.coupleStatus === 'ACTIVE' && (
+              <TravelModeSection helperText="Ativar viagem em casal requer aprovação de todos os membros." />
+            )}
 
             <button onClick={() => navigate('/explore')}
               style={{ width:'100%',

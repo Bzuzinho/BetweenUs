@@ -2,6 +2,7 @@ import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { hashContact } from '../lib/contactHashService'
+import { hasEntitlement } from '../lib/subscriptionEntitlementService'
 
 const router = Router()
 
@@ -14,8 +15,24 @@ const hasContactHashingConsent = async (userId: string): Promise<boolean> => {
 }
 
 // POST /api/contacts/block
+//
+// Secção 7 do pedido de monetização — bloqueio de contactos da agenda
+// (importar e bloquear em massa) é PREMIUM/COUPLE_PREMIUM apenas. Isto NÃO
+// é o mesmo que bloquear um perfil manualmente (POST /api/privacy/block/:id
+// em privacy.ts, que continua sempre grátis — é a funcionalidade de
+// segurança/consentimento). Este gate corre depois do consentimento
+// RGPD explícito (T10), nunca antes — nunca se pede consentimento a quem
+// nem sequer tem acesso à funcionalidade.
 router.post('/block', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
+    const canBlockContacts = await hasEntitlement(req.userId!, 'CONTACT_BLOCKING')
+    if (!canBlockContacts) {
+      return res.status(403).json({
+        error: 'O bloqueio de contactos da agenda requer Premium.',
+        code: 'PREMIUM_REQUIRED'
+      })
+    }
+
     // T10: require explicit CONTACT_HASHING consent
     const hasConsent = await hasContactHashingConsent(req.userId!)
     if (!hasConsent) {

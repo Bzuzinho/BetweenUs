@@ -431,7 +431,60 @@ function PendingMatchesSection({ pending, onApprove }) {
 // dispensado ali, o pedido "desaparecia" sem deixar rasto em Matches.
 // Tem de ficar sempre visível e gratuita para todos os planos: é o fluxo
 // principal, não uma funcionalidade premium (decisão de produto BETA.4).
-function IncomingRequestsSection({ requests, onAccept, onReject, busyId }) {
+// BETA.4 + secção 4/5 da revisão de monetização — a lista mantém-se sempre
+// grátis, mas o DETALHE mostrado depende do plano de quem está a ver:
+// `full` só vem preenchido pelo backend (GET /matches/pending-requests)
+// quando o utilizador tem a entitlement VIEW_FULL_INCOMING_CONNECTION_PROFILE
+// (Premium/Couple Premium). Sem isso, `preview` é a única coisa disponível
+// — nunca inventar aqui um nome ou foto que o backend não mandou.
+function IncomingRequestCard({ r, onAccept, onReject, busyId, onUpsell }) {
+  const id = r.profile.id
+  const name = r.full?.displayName
+  const p = r.preview || {}
+  const typeIcon = p.type === 'COUPLE' ? '💑' : p.type === 'GROUP' ? '👥' : '🧑'
+  const photoUrl = p.photo?.url || r.full?.photos?.find(ph => ph.isPrimary)?.storagePath
+
+  return (
+    <div style={{ background:C.surface, border:`1px solid ${C.primary}`, borderRadius:14, padding:14, marginBottom:10 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+        <div style={{ width:44, height:44, borderRadius:14, flexShrink:0, overflow:'hidden',
+          background:'linear-gradient(135deg,#3D2060,#1A0A2E)',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          fontSize:18, border:`1.5px solid ${C.border}` }}>
+          {photoUrl ? <img src={photoUrl} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} /> : typeIcon}
+        </div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:14, fontWeight:600, color:C.text, marginBottom:2 }}>
+            {name || (p.ageRange ? `${p.ageRange} anos` : 'Alguém compatível')}{p.city ? ` · ${p.city}` : ''}
+          </div>
+          <div style={{ fontSize:12, color:C.muted }}>
+            Quer ligar-se a ti{typeof p.score === 'number' ? ` · ${p.score}% compatível` : ''}
+            {p.verified ? ' · ✓ verificado' : ''}
+          </div>
+        </div>
+        <div style={{ display:'flex', gap:6 }}>
+          <button disabled={busyId === id} onClick={() => onReject(id)}
+            style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:10,
+              padding:'8px 12px', color:C.muted, fontSize:12, cursor:'pointer',
+              opacity: busyId === id ? 0.5 : 1 }}>Rejeitar</button>
+          <button disabled={busyId === id} onClick={() => onAccept(id)}
+            style={{ background:C.primary, border:'none', borderRadius:10,
+              padding:'8px 12px', color:'#0A141A', fontWeight:600, fontSize:12, cursor:'pointer',
+              opacity: busyId === id ? 0.5 : 1 }}>Aceitar</button>
+        </div>
+      </div>
+      {!r.canViewFullProfile && (
+        <button onClick={onUpsell} style={{ marginTop:10, width:'100%', background:'none',
+          border:`1px dashed ${C.border}`, borderRadius:10, padding:'6px 10px',
+          color:C.primary, fontSize:11, cursor:'pointer' }}>
+          ✦ Ver perfil completo com Between Premium
+        </button>
+      )}
+    </div>
+  )
+}
+
+function IncomingRequestsSection({ requests, onAccept, onReject, busyId, onUpsell }) {
   if (!requests || requests.length === 0) return null
   return (
     <div style={{ marginBottom:24 }}>
@@ -439,28 +492,7 @@ function IncomingRequestsSection({ requests, onAccept, onReject, busyId }) {
         Pedidos de ligação — {requests.length} à espera da tua resposta
       </div>
       {requests.map(r => (
-        <div key={r.profile.id} style={{ background:C.surface, border:`1px solid ${C.primary}`, borderRadius:14, padding:14, marginBottom:10, display:'flex', alignItems:'center', gap:12 }}>
-          <div style={{ width:44, height:44, borderRadius:14, flexShrink:0,
-            background:'linear-gradient(135deg,#3D2060,#1A0A2E)',
-            display:'flex', alignItems:'center', justifyContent:'center',
-            fontSize:18, border:`1.5px solid ${C.border}` }}>
-            {r.profile.type === 'COUPLE' ? '💑' : r.profile.type === 'GROUP' ? '👥' : '🧑'}
-          </div>
-          <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontSize:14, fontWeight:600, color:C.text, marginBottom:2 }}>{r.profile.displayName}</div>
-            <div style={{ fontSize:12, color:C.muted }}>Quer ligar-se a ti</div>
-          </div>
-          <div style={{ display:'flex', gap:6 }}>
-            <button disabled={busyId === r.profile.id} onClick={() => onReject(r.profile.id)}
-              style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:10,
-                padding:'8px 12px', color:C.muted, fontSize:12, cursor:'pointer',
-                opacity: busyId === r.profile.id ? 0.5 : 1 }}>Rejeitar</button>
-            <button disabled={busyId === r.profile.id} onClick={() => onAccept(r.profile.id)}
-              style={{ background:C.primary, border:'none', borderRadius:10,
-                padding:'8px 12px', color:'#0A141A', fontWeight:600, fontSize:12, cursor:'pointer',
-                opacity: busyId === r.profile.id ? 0.5 : 1 }}>Aceitar</button>
-          </div>
-        </div>
+        <IncomingRequestCard key={r.profile.id} r={r} onAccept={onAccept} onReject={onReject} busyId={busyId} onUpsell={onUpsell} />
       ))}
     </div>
   )
@@ -540,7 +572,7 @@ export default function MatchesScreen() {
         Os teus Matches
       </div>
 
-      <IncomingRequestsSection requests={requests} onAccept={handleAcceptRequest} onReject={handleRejectRequest} busyId={requestBusyId} />
+      <IncomingRequestsSection requests={requests} onAccept={handleAcceptRequest} onReject={handleRejectRequest} busyId={requestBusyId} onUpsell={() => navigate('/premium')} />
 
       <PendingMatchesSection pending={pending} onApprove={handleApprove} />
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import TravelModeSection from '../components/TravelModeSection'
 
 const C = {
   bg:'#0A141A', surface:'#102129', elevated:'#172C36',
@@ -142,6 +143,13 @@ export default function PrivacySettingsPage() {
             value={settings.notificationMode === 'DISCREET'}
             onChange={v => save({ notificationMode: v ? 'DISCREET' : 'NORMAL' })} />
         </div>
+
+        {/* Fase 3D — Travel Mode individual (Premium). O componente já lida
+            sozinho com o caso FREE (mostra "Travel Mode requer Between
+            Plus." se a API recusar com PREMIUM_REQUIRED) — mesmo padrão de
+            "mostrar sempre, recusar no clique" já usado acima no Modo
+            Invisível, em vez de esconder a secção inteira. */}
+        <TravelModeSection helperText="Ativa temporariamente a tua localização de destino para aparecer no discovery desse local, sem alterar a tua localização habitual." />
 
         {/* Contacts */}
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: '4px 16px', marginBottom: 14 }}>

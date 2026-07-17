@@ -10,6 +10,7 @@ import { notifyAdmins } from '../lib/notify'
 import { resolveMyProfileId, getActiveMembers } from '../lib/profileMembershipService'
 import * as sharedMediaConsentService from '../lib/sharedMediaConsentService'
 import { isPhaseCurrentlyRevoked } from '../lib/consentCheckService'
+import { resolveEffectivePlan } from '../lib/subscriptionEntitlementService'
 
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
@@ -251,8 +252,13 @@ router.post('/:id/request-access', requireAuth, async (req: AuthRequest, res: Re
       select: { id: true }
     })
     if (!alreadyRequested) {
-      const sub = await prisma.subscription.findUnique({ where: { userId: req.userId! } })
-      const isPremium = sub && sub.plan !== 'FREE' && sub.status === 'ACTIVE'
+      // Correcção — era `sub.plan !== 'FREE' && sub.status === 'ACTIVE'`
+      // directamente, o mesmo anti-padrão que a secção 11 do pedido de
+      // monetização pede para nunca usar (não considerava
+      // currentPeriodEnd nem a tolerância de PAST_DUE). resolveEffectivePlan
+      // é a única função que decide isto em todo o projecto.
+      const effectivePlan = await resolveEffectivePlan(req.userId!)
+      const isPremium = effectivePlan !== 'FREE'
       if (!isPremium) {
         const requestCount = await prisma.photoAccessRequest.count({ where: { requesterId: req.userId! } })
         if (requestCount >= FREE_MAX_PHOTO_ACCESS_REQUESTS) {

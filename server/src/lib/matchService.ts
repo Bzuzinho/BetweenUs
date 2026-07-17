@@ -9,7 +9,7 @@ export type LikeResult =
   | { kind: 'PENDING_PARTNER_APPROVAL' }
   | { kind: 'MATCH_PENDING_COUPLE_APPROVAL'; matchId: string }
   | { kind: 'ALREADY_MATCHED'; matchId: string }
-  | { kind: 'ERROR'; message: string; code?: string }
+  | { kind: 'ERROR'; message: string; code?: string; requiredScore?: number; actualScore?: number }
 
 // BETA.4 — monetization package (product decision confirmed 2026-07-13):
 // FREE plan caps how many ACTIVE matches a profile can hold at once, to
@@ -100,6 +100,25 @@ export const createLikeOrMatch = async (
     const { isBlockedEitherWay } = await import('./blockService')
     if (await isBlockedEitherWay(actorProfileId, targetProfileId)) {
       return { kind: 'ERROR', message: 'Ação não disponível.' }
+    }
+
+    // Pedidos de ligação — limiar de compatibilidade mínima FREE (secção 3
+    // do pedido de monetização): Premium/Couple Premium ignoram o limiar,
+    // mas isto corre DEPOIS do bloqueio acima e não substitui nenhuma
+    // verificação de segurança — apenas decide se um perfil FREE pode
+    // ENVIAR este pedido específico. Score sempre calculado no backend
+    // (subscriptionEntitlementService.canSendConnectionRequest), nunca
+    // aceite do cliente.
+    const { canSendConnectionRequest } = await import('./subscriptionEntitlementService')
+    const connectionDecision = await canSendConnectionRequest(actorProfileId, targetProfileId)
+    if (!connectionDecision.allowed) {
+      return {
+        kind: 'ERROR',
+        message: connectionDecision.message || 'Não podes enviar este pedido de ligação.',
+        code: connectionDecision.code,
+        requiredScore: connectionDecision.requiredScore,
+        actualScore: connectionDecision.actualScore,
+      }
     }
 
     // Register the like (idempotent) — capture the PRIOR action first so

@@ -143,8 +143,12 @@ router.post('/like/:targetProfileId', requireAuth, async (req: AuthRequest, res:
 
     switch (result.kind) {
       case 'ERROR':
-        return res.status(result.code === 'ACTIVE_MATCH_LIMIT' ? 403 : 400)
-          .json({ error: result.message, code: result.code })
+        return res.status(result.code === 'ACTIVE_MATCH_LIMIT' || result.code === 'MIN_COMPATIBILITY_REQUIRED' ? 403 : 400)
+          .json({
+            error: result.message, code: result.code,
+            ...(result.requiredScore !== undefined ? { requiredScore: result.requiredScore } : {}),
+            ...(result.actualScore !== undefined ? { actualScore: result.actualScore } : {}),
+          })
       case 'LIKE_RECORDED':
         return res.json({ ok: true, status: 'PENDING_PARTNER', message: 'Like registado. A aguardar interesse mútuo.' })
       case 'MATCH_PENDING_COUPLE_APPROVAL':

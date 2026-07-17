@@ -52,26 +52,40 @@ router.post('/stripe', async (req: Request, res: Response) => {
 
       case 'checkout.session.completed': {
         const session = event.data.object
-        const { userId, plan } = session.metadata || {}
+        const { userId, plan, activeProfileType } = session.metadata || {}
         if (!userId || !plan) { console.warn('[WEBHOOK] Missing metadata'); break }
 
-        const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        // Nunca inventar 30 dias (secção 20) — currentPeriodEnd vem sempre
+        // da própria Stripe. checkout.session.completed não traz o período
+        // directamente (varia com a API version/expand), por isso a
+        // subscrição é lida de volta explicitamente aqui.
+        let periodStart = new Date()
+        let periodEnd: Date | null = null
+        if (session.subscription) {
+          try {
+            const stripeSub = await stripe.subscriptions.retrieve(session.subscription)
+            periodStart = new Date(stripeSub.current_period_start * 1000)
+            periodEnd = new Date(stripeSub.current_period_end * 1000)
+          } catch (e: any) {
+            console.error('[WEBHOOK] Falha ao ler subscription da Stripe para período:', e.message)
+          }
+        }
 
         // T3: use providerCustomerId/providerSubscriptionId — consistent with schema
         await prisma.subscription.upsert({
           where: { userId },
           update: {
-            plan, status: 'ACTIVE',
+            plan, status: 'ACTIVE', cancelAtPeriodEnd: false, cancelledAt: null,
             providerCustomerId: session.customer,
             providerSubscriptionId: session.subscription,
-            currentPeriodStart: new Date(),
+            currentPeriodStart: periodStart,
             currentPeriodEnd: periodEnd
           },
           create: {
             userId, plan, status: 'ACTIVE',
             providerCustomerId: session.customer,
             providerSubscriptionId: session.subscription,
-            currentPeriodStart: new Date(),
+            currentPeriodStart: periodStart,
             currentPeriodEnd: periodEnd
           }
         })
@@ -86,7 +100,18 @@ router.post('/stripe', async (req: Request, res: Response) => {
         // directly — also means this now correctly covers a couple whose
         // membership only exists in ProfileMember (no legacy CoupleProfile
         // row at all, e.g. created after the backfill).
+        //
+        // Secção 20/14 — validado de novo aqui (não só no checkout): nunca
+        // GROUP, e o casal tem de ter EXACTAMENTE dois membros activos.
+        // canPurchasePlan já bloqueou isto no checkout, mas o webhook é a
+        // fonte de verdade que activa dinheiro real — nunca confia
+        // cegamente no que a rota de checkout validou minutos antes (o
+        // casal pode ter mudado de estado entretanto).
         if (plan === 'COUPLE_PREMIUM') {
+          if (activeProfileType && activeProfileType !== 'COUPLE') {
+            console.error('[WEBHOOK] COUPLE_PREMIUM comprado fora de contexto COUPLE — não activa parceiro(s).', userId, activeProfileType)
+            break
+          }
           // BETA.2 (FASE C) — must resolve to the buyer's Shared Profile
           // (not their Individual Profile, which Profile.userId now always
           // points to — see activeProfileContextService.ts) or the whole
@@ -94,14 +119,20 @@ router.post('/stripe', async (req: Request, res: Response) => {
           const { resolveMyProfileId, getActiveMembers } = await import('../lib/profileMembershipService')
           const myProfileId = await resolveMyProfileId(userId)
           if (myProfileId) {
+            const profileRow = await prisma.profile.findUnique({ where: { id: myProfileId }, select: { type: true } })
             const members = await getActiveMembers(myProfileId)
-            const otherMemberIds = members.map(m => m.userId).filter(id => id !== userId)
 
+            if (profileRow?.type !== 'COUPLE' || members.length !== 2) {
+              console.error('[WEBHOOK] COUPLE_PREMIUM exige perfil COUPLE com exactamente 2 membros — encontrado', profileRow?.type, members.length, '. Nenhum parceiro activado.')
+              break
+            }
+
+            const otherMemberIds = members.map(m => m.userId).filter(id => id !== userId)
             for (const partnerUserId of otherMemberIds) {
               await prisma.subscription.upsert({
                 where: { userId: partnerUserId },
-                update: { plan: 'COUPLE_PREMIUM', status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd },
-                create: { userId: partnerUserId, plan: 'COUPLE_PREMIUM', status: 'ACTIVE', currentPeriodStart: new Date(), currentPeriodEnd: periodEnd }
+                update: { plan: 'COUPLE_PREMIUM', status: 'ACTIVE', cancelAtPeriodEnd: false, cancelledAt: null, currentPeriodStart: periodStart, currentPeriodEnd: periodEnd },
+                create: { userId: partnerUserId, plan: 'COUPLE_PREMIUM', status: 'ACTIVE', currentPeriodStart: periodStart, currentPeriodEnd: periodEnd }
               })
               console.log('[WEBHOOK] Partner subscription activated:', partnerUserId)
             }

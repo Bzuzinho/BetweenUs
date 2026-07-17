@@ -3305,6 +3305,180 @@ function ProfileTypeConfigManager() {
   )
 }
 
+// Sistema de localidades (GeoNames) — ferramentas mínimas de admin (secção
+// 20 do pedido), não uma plataforma GIS completa: pesquisar/desativar
+// localidades do catálogo, e corrigir manualmente a localidade de
+// referência de um perfil quando a migração automática (geo:map-profiles)
+// não pôde resolver sozinha por ambiguidade (ex.: duas localidades
+// chamadas "São Pedro" em distritos diferentes — nunca escolhida a
+// adivinhar, sempre uma pessoa a decidir aqui). Usa as rotas
+// admin já existentes em routes/locations.ts — nunca latitude/longitude
+// aqui também, o `label` já vem composto do backend.
+function LocationsManager() {
+  const [query, setQuery] = useState('')
+  const [country, setCountry] = useState('PT')
+  const [results, setResults] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [unresolved, setUnresolved] = useState([])
+  const [loadingUnresolved, setLoadingUnresolved] = useState(true)
+  const [msg, setMsg] = useState('')
+  const [error, setError] = useState('')
+  const [fixingProfileId, setFixingProfileId] = useState(null)
+  const [fixQuery, setFixQuery] = useState('')
+  const [fixResults, setFixResults] = useState([])
+
+  const search = () => {
+    setLoading(true); setError('')
+    api.get('/locations/admin/search', { params: { country, q: query } })
+      .then(r => setResults(r.data.locations || []))
+      .catch(() => setError('Erro ao pesquisar.'))
+      .finally(() => setLoading(false))
+  }
+
+  const loadUnresolved = useCallback(() => {
+    setLoadingUnresolved(true)
+    api.get('/locations/admin/profiles-without-reference', { params: { limit: 50 } })
+      .then(r => setUnresolved(r.data.profiles || []))
+      .catch(() => {})
+      .finally(() => setLoadingUnresolved(false))
+  }, [])
+  useEffect(() => { loadUnresolved() }, [loadUnresolved])
+
+  const deactivate = async (id) => {
+    if (!window.confirm('Desativar esta localidade? Deixa de aparecer em pesquisas novas — perfis que já a usam mantêm a referência.')) return
+    setError(''); setMsg('')
+    try {
+      await api.put(`/locations/admin/${id}/deactivate`)
+      setResults(prev => prev.map(l => l.id === id ? { ...l, active: false } : l))
+      setMsg('Localidade desativada.')
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao desativar.')
+    }
+  }
+
+  const startFix = (profileId) => {
+    setFixingProfileId(profileId)
+    setFixQuery('')
+    setFixResults([])
+  }
+
+  const fixSearch = (q) => {
+    setFixQuery(q)
+    if (q.trim().length < 2) { setFixResults([]); return }
+    api.get('/locations/admin/search', { params: { country, q } })
+      .then(r => setFixResults(r.data.locations || []))
+      .catch(() => {})
+  }
+
+  const applyFix = async (profileId, locationId) => {
+    setError(''); setMsg('')
+    try {
+      await api.put(`/locations/admin/profiles/${profileId}/location`, { homeLocationId: locationId })
+      setMsg('Localização do perfil corrigida.')
+      setFixingProfileId(null)
+      loadUnresolved()
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao corrigir.')
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.2)`, borderRadius:12, padding:'12px 16px', marginBottom:20, fontSize:13, color:C.primary, lineHeight:1.5 }}>
+        Catálogo interno de localidades (GeoNames) — nunca GPS, nunca geocoding em runtime. Pesquisa/desativa localidades e corrige manualmente a localidade de referência de um perfil quando a migração automática não conseguiu resolver ambiguidade sozinha.
+      </div>
+
+      {msg && <div style={{ background:C.successDim, border:'1px solid rgba(74,222,128,0.3)', borderRadius:10, padding:'10px 14px', marginBottom:14, color:C.success, fontSize:13 }}>{msg}</div>}
+      {error && <div style={{ background:C.dangerDim, border:`1px solid ${C.danger}`, borderRadius:10, padding:'10px 14px', marginBottom:14, color:C.danger, fontSize:13 }}>{error}</div>}
+
+      {/* Pesquisa do catálogo */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18, marginBottom:20 }}>
+        <div style={{ fontSize:14, fontWeight:600, color:C.text, marginBottom:12 }}>Pesquisar catálogo</div>
+        <div style={{ display:'flex', gap:10, flexWrap:'wrap', marginBottom:12 }}>
+          <input style={{ ...INP, width:90, marginBottom:0 }} placeholder="País" value={country}
+            onChange={e => setCountry(e.target.value.toUpperCase())} />
+          <input style={{ ...INP, flex:1, minWidth:200, marginBottom:0 }} placeholder="Nome da localidade"
+            value={query} onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && search()} />
+          <button onClick={search} disabled={loading} style={{
+            background:C.primary, border:'none', borderRadius:10, padding:'0 20px',
+            fontSize:14, fontWeight:500, color:'#0A141A', cursor:'pointer',
+          }}>
+            {loading ? 'A procurar…' : 'Pesquisar'}
+          </button>
+        </div>
+        {results.length > 0 && (
+          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+            {results.map(loc => (
+              <div key={loc.id} style={{
+                display:'flex', justifyContent:'space-between', alignItems:'center',
+                background:C.elevated, border:`1px solid ${C.border}`, borderRadius:10, padding:'10px 14px',
+              }}>
+                <div>
+                  <div style={{ fontSize:13, color:C.text }}>{loc.label}</div>
+                  <div style={{ fontSize:11, color:C.muted }}>{loc.active ? 'ativa' : 'desativada'}</div>
+                </div>
+                {loc.active && (
+                  <button onClick={() => deactivate(loc.id)} style={{
+                    background:'none', border:`1px solid ${C.danger}`, borderRadius:8, padding:'6px 12px',
+                    fontSize:12, color:C.danger, cursor:'pointer',
+                  }}>Desativar</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Perfis sem localidade de referência (secção 20 do pedido) */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18 }}>
+        <div style={{ fontSize:14, fontWeight:600, color:C.text, marginBottom:4 }}>Perfis sem localidade de referência</div>
+        <div style={{ fontSize:12, color:C.muted, marginBottom:12 }}>
+          Ainda só têm cidade/país em texto livre (legacy) ou nada — nunca resolvidos automaticamente quando há ambiguidade (ver <code>npm run geo:map-profiles</code>).
+        </div>
+        {loadingUnresolved ? (
+          <div style={{ color:C.muted, fontSize:13 }}>A carregar…</div>
+        ) : unresolved.length === 0 ? (
+          <div style={{ color:C.muted, fontSize:13 }}>Nenhum perfil pendente.</div>
+        ) : (
+          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+            {unresolved.map(p => (
+              <div key={p.id} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:10, padding:'10px 14px' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:10 }}>
+                  <div>
+                    <div style={{ fontSize:13, color:C.text }}>{p.displayName || '(sem nome)'} <span style={{ color:C.muted }}>· {p.type}</span></div>
+                    <div style={{ fontSize:11, color:C.muted }}>{[p.city, p.country].filter(Boolean).join(', ') || 'sem localização legacy'}</div>
+                  </div>
+                  <button onClick={() => startFix(p.id)} style={{
+                    background:'none', border:`1px solid ${C.primary}`, borderRadius:8, padding:'6px 12px',
+                    fontSize:12, color:C.primary, cursor:'pointer', flexShrink:0,
+                  }}>Corrigir</button>
+                </div>
+                {fixingProfileId === p.id && (
+                  <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border}` }}>
+                    <input style={{ ...INP, marginBottom:8 }} placeholder={`Pesquisar localidade em ${country}…`}
+                      value={fixQuery} onChange={e => fixSearch(e.target.value)} />
+                    {fixResults.map(r => (
+                      <div key={r.id} onClick={() => applyFix(p.id, r.id)} style={{
+                        padding:'8px 10px', fontSize:13, color:C.text, cursor:'pointer', borderRadius:8,
+                      }}>
+                        {r.label}
+                      </div>
+                    ))}
+                    <button onClick={() => setFixingProfileId(null)} style={{
+                      marginTop:6, background:'none', border:'none', color:C.muted, fontSize:12, cursor:'pointer',
+                    }}>Cancelar</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ConfiguracoesTab() {
   const [subTab, setSubTab] = useState('perfis')
   const [plans, setPlans] = useState([])
@@ -3320,7 +3494,7 @@ function ConfiguracoesTab() {
     <div>
       {/* Subtab bar */}
       <div style={{ display:'flex', gap:6, marginBottom:20, flexWrap:'wrap' }}>
-        {[['perfis','◎ Perfis'],['roles-admin','🛡 Roles de Admin'],['generos','⚧ Géneros'],['orientacoes','◇ Orientações'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['interesses','✷ Interesses privados'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['eventos','◇ Eventos'],['circulos','◎ Circles'],['recomendacoes','✦ Recomendações'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
+        {[['perfis','◎ Perfis'],['roles-admin','🛡 Roles de Admin'],['generos','⚧ Géneros'],['orientacoes','◇ Orientações'],['intencoes','✚ Intenções'],['limites','▲ Limites'],['interesses','✷ Interesses privados'],['localidades','📍 Localidades'],['subscricoes','✦ Subscrições'],['email','✉ Email'],['guia','◈ Guia'],['eventos','◇ Eventos'],['circulos','◎ Circles'],['recomendacoes','✦ Recomendações'],['afiliados','🎁 Afiliados']].map(([k,l]) => (
           <button key={k} onClick={()=>setSubTab(k)} style={{
             background:subTab===k?C.primaryDim:C.surface,
             border:`1.5px solid ${subTab===k?C.primary:C.border}`,
@@ -3390,6 +3564,9 @@ function ConfiguracoesTab() {
 
       {/* ── Limites subtab ── */}
       {subTab==='limites' && <BoundariesManager />}
+
+      {/* ── Localidades subtab (sistema de localidades GeoNames) ── */}
+      {subTab==='localidades' && <LocationsManager />}
 
       {/* ── Email subtab ── */}
       {subTab==='email' && <EmailDiagnosticPanel />}

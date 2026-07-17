@@ -5,8 +5,33 @@ import { notifyUser, notifyAdmins, notifyProfileMembers } from '../lib/notify'
 import { signMediaUrl } from '../lib/mediaAccessService'
 import { getVerificationBadges } from '../lib/verificationBadges'
 import { resolveMyProfileId } from '../lib/profileMembershipService'
+import { hasEntitlement } from '../lib/subscriptionEntitlementService'
+import type { DiscoveryFilters } from '../lib/discoveryService'
 
 const router = Router()
+
+// Secção 10 do pedido de monetização — `type` é básico (sempre grátis); os
+// restantes só são aplicados a quem tiver a entitlement ADVANCED_FILTERS.
+// Nunca confia num plano vindo do cliente — decide sempre aqui, no backend,
+// a partir de hasEntitlement.
+const parseAdvancedFilterParams = (query: any): Partial<DiscoveryFilters> => {
+  const out: Partial<DiscoveryFilters> = {}
+  if (query.verifiedOnly === 'true' || query.verifiedOnly === '1') out.verifiedOnly = true
+  if (query.maxDistanceKm !== undefined) {
+    const n = Number(query.maxDistanceKm)
+    if (Number.isFinite(n) && n > 0) out.maxDistanceKm = n
+  }
+  if (query.ageMin !== undefined) {
+    const n = Number(query.ageMin)
+    if (Number.isFinite(n) && n >= 18) out.ageMin = n
+  }
+  if (query.ageMax !== undefined) {
+    const n = Number(query.ageMax)
+    if (Number.isFinite(n) && n >= 18) out.ageMax = n
+  }
+  if (typeof query.intentionSlug === 'string' && query.intentionSlug.trim()) out.intentionSlug = query.intentionSlug.trim()
+  return out
+}
 
 // GET /api/discovery — the DiscoveryService pipeline (5.2), cursor-paginated (5.4)
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -27,8 +52,25 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null
     const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20))
 
+    // Secção 10 — filtros avançados pedidos pelo cliente só são realmente
+    // aplicados se o utilizador tiver ADVANCED_FILTERS; caso contrário são
+    // ignorados (nunca um erro 403 — Discovery continua a funcionar em
+    // FREE, só sem os filtros extra), e o corpo da resposta diz
+    // explicitamente quais foram aplicados e quais foram ignorados por
+    // exigirem Premium.
+    const requestedAdvanced = parseAdvancedFilterParams(req.query)
+    const requestedKeys = Object.keys(requestedAdvanced)
+    const canUseAdvancedFilters = requestedKeys.length > 0
+      ? await hasEntitlement(req.userId!, 'ADVANCED_FILTERS', viewerProfile.id)
+      : false
+    const advancedFilters = canUseAdvancedFilters ? requestedAdvanced : {}
+    const appliedFilters = ['type', ...(canUseAdvancedFilters ? requestedKeys : [])].filter(k => k === 'type' ? !!typeFilter : true)
+    const ignoredFilters = canUseAdvancedFilters ? [] : requestedKeys
+
     const { getCandidates } = await import('../lib/discoveryService')
-    const { items: rawItems, nextCursor } = await getCandidates(viewerProfile.id, { type: typeFilter }, cursor, limit)
+    const { items: rawItems, nextCursor } = await getCandidates(
+      viewerProfile.id, { type: typeFilter, ...advancedFilters }, cursor, limit
+    )
 
     // 11.5/11.12 — LAYER 3. applyRecommendations only ever reorders/relabels
     // the exact `rawItems` array Layers 1+2 already produced above — it
@@ -73,7 +115,9 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     // ExploreScreen.jsx (which reads res.data.profiles and doesn't yet know
     // about cursor pagination) — nextCursor is additive, adopted by the
     // frontend whenever it grows a "load more" control.
-    res.json({ profiles, nextCursor })
+    // appliedFilters/ignoredFilters (secção 10) — additive too, nunca
+    // quebra clientes antigos que não leem estes campos.
+    res.json({ profiles, nextCursor, appliedFilters, ignoredFilters, advancedFiltersAvailable: canUseAdvancedFilters })
   } catch (err: any) {
     console.error('[DISCOVERY]', err.message)
     res.status(500).json({ error: 'Erro interno.' })
@@ -136,8 +180,12 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
 
     switch (result.kind) {
       case 'ERROR':
-        return res.status(result.code === 'ACTIVE_MATCH_LIMIT' ? 403 : 400)
-          .json({ error: result.message, code: result.code })
+        return res.status(result.code === 'ACTIVE_MATCH_LIMIT' || result.code === 'MIN_COMPATIBILITY_REQUIRED' ? 403 : 400)
+          .json({
+            error: result.message, code: result.code,
+            ...(result.requiredScore !== undefined ? { requiredScore: result.requiredScore } : {}),
+            ...(result.actualScore !== undefined ? { actualScore: result.actualScore } : {}),
+          })
 
       case 'LIKE_RECORDED':
         // Send connection request notification to every member of the

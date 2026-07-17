@@ -2,6 +2,7 @@ import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { resolveMyProfileId } from '../lib/profileMembershipService'
+import { hasEntitlement } from '../lib/subscriptionEntitlementService'
 
 const router = Router()
 
@@ -40,13 +41,16 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
     })
     if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
 
-    const sub = await prisma.subscription.findUnique({ where: { userId: req.userId! } })
-    const isPremium = sub && sub.plan !== 'FREE'
+    // Secção 11/13 do pedido de monetização: nunca `plan !== 'FREE'`
+    // sozinho — hasEntitlement resolve plano + status + currentPeriodEnd +
+    // cancelAtPeriodEnd + contexto (inclui COUPLE_PREMIUM partilhado se
+    // profileId for um perfil de casal activo).
+    const canUseInvisible = await hasEntitlement(req.userId!, 'INVISIBLE_MODE', profileId)
 
     const { invisibleMode, showDistance, showOnlineStatus,
             allowPhotoRequests, notificationMode } = req.body
 
-    if (invisibleMode && !isPremium) {
+    if (invisibleMode && !canUseInvisible) {
       return res.status(403).json({
         error: 'Modo Invisível requer Premium.',
         code: 'PREMIUM_REQUIRED'

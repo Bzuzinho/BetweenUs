@@ -1,9 +1,53 @@
 import { Router, Response } from 'express'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
-import { resolveMyProfileId } from '../lib/profileMembershipService'
+import { resolveMyProfileId, getActiveMembers } from '../lib/profileMembershipService'
+import { mergePhotosForViewer } from '../lib/mediaAccessService'
+import { canViewIncomingConnectionProfile } from '../lib/subscriptionEntitlementService'
+import { buildScoreInput } from '../lib/discoveryService'
+import { getOrCalculateScore } from '../lib/compatibilityScoreService'
+import { ageFromDOB, bucketAge } from '../utils/age'
 
 const router = Router()
+
+// Secção 4/5 do pedido de monetização — bucket de 5 anos, nunca a idade
+// exacta, para o preview FREE. Para um perfil COUPLE/GROUP, cobre o
+// intervalo entre o membro mais novo e o mais velho (o que já é, por
+// natureza, uma "faixa etária" real do casal/grupo).
+const resolveAgeRange = async (profile: { userId: string | null; id: string }): Promise<string | null> => {
+  let userIds: string[]
+  if (profile.userId) {
+    userIds = [profile.userId]
+  } else {
+    userIds = (await getActiveMembers(profile.id)).map(m => m.userId)
+  }
+  if (userIds.length === 0) return null
+  const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { dateOfBirth: true } })
+  if (users.length === 0) return null
+  const ages = users.map(u => ageFromDOB(u.dateOfBirth))
+  const youngest = Math.min(...ages)
+  const oldest = Math.max(...ages)
+  return youngest === oldest ? bucketAge(youngest) : `${bucketAge(youngest).split('-')[0]}-${bucketAge(oldest).split('-')[1]}`
+}
+
+// Verificado só se TODOS os membros activos estiverem verificados (mesma
+// postura "tão forte quanto o membro menos elegível" já usada por
+// isSharedProfileEligible no discoveryService — nunca mostrar o selo de
+// verificação a mais do que é realmente garantido).
+const resolveVerified = async (profile: { userId: string | null; id: string }): Promise<boolean> => {
+  let userIds: string[]
+  if (profile.userId) {
+    userIds = [profile.userId]
+  } else {
+    userIds = (await getActiveMembers(profile.id)).map(m => m.userId)
+  }
+  if (userIds.length === 0) return false
+  const verifications = await prisma.verification.findMany({
+    where: { userId: { in: userIds }, status: 'APPROVED' },
+    select: { userId: true }
+  })
+  return new Set(verifications.map(v => v.userId)).size === userIds.length
+}
 
 // 6.6 — was Profile.userId-only (broke for a couple/group's non-creator
 // members, the same bug class fixed across photos.ts/travel.ts/agreements.ts
@@ -138,19 +182,82 @@ router.get('/pending-requests', requireAuth, async (req: AuthRequest, res: Respo
     const stillPendingIds = actorIds.filter((id: string) => !respondedIds.has(id) && !matchedIds.has(id))
     if (stillPendingIds.length === 0) return res.json({ pending: [] })
 
+    // Secção 4/5 do pedido de monetização — lista em si mantém-se sempre
+    // grátis (decisão de produto BETA.4, ver comentário acima), mas o NÍVEL
+    // DE DETALHE do perfil de quem pediu ligação depende do plano de quem
+    // está a ver: FREE só vê um preview não identificativo (tipo, faixa
+    // etária, cidade geral, score, intenções agregadas, verificação, foto
+    // desfocada); PREMIUM/COUPLE_PREMIUM vê o perfil completo (nome,
+    // bio, todas as fotos aprovadas — sempre passando por
+    // mergePhotosForViewer, nunca a foto limpa de uma PRIVATE_AFTER_MATCH/
+    // PRIVATE_AFTER_APPROVAL antes de existir match/aprovação real).
+    const canViewFull = await canViewIncomingConnectionProfile(req.userId!)
+
+    const myScoreInput = await buildScoreInput(myProfileId)
+
     const profiles = await prisma.profile.findMany({
       where: { id: { in: stillPendingIds } },
       select: {
-        id: true, displayName: true, city: true, type: true,
-        photos: { where: { moderationStatus: 'APPROVED', isPrimary: true }, take: 1 }
+        id: true, displayName: true, city: true, country: true, type: true,
+        bio: true, gender: true, orientation: true, relationshipStatus: true,
+        userId: true,
+        photos: { where: { moderationStatus: 'APPROVED' }, orderBy: [{ isPrimary: 'desc' }] },
+        intentions: { where: { preference: 'YES' }, include: { intention: { select: { name: true, slug: true } } } },
       }
     })
     const likedAtByProfile = new Map((incomingLikes as ActorRow[]).map((l: ActorRow) => [l.actorProfileId, l.createdAt]))
 
-    interface PendingProfileRow { id: string; displayName: string; city: string | null; type: string; photos: any[] }
-    const pending = (profiles as PendingProfileRow[])
-      .map((p: PendingProfileRow) => ({ profile: p, likedAt: likedAtByProfile.get(p.id) }))
-      .sort((a: { likedAt?: Date }, b: { likedAt?: Date }) => (b.likedAt?.getTime() || 0) - (a.likedAt?.getTime() || 0))
+    const pending = await Promise.all(profiles.map(async (p) => {
+      const ownerUserId = p.userId || (await getActiveMembers(p.id))[0]?.userId || ''
+      const mergedPhotos = await mergePhotosForViewer(p.photos as any, {
+        ownerUserId, viewerUserId: req.userId!, viewerProfileId: myProfileId,
+      })
+      const primaryPhoto = mergedPhotos.find((ph: any) => ph.isPrimary) || mergedPhotos[0] || null
+
+      const [ageRange, verified, scoreResult] = await Promise.all([
+        resolveAgeRange({ userId: p.userId, id: p.id }),
+        resolveVerified({ userId: p.userId, id: p.id }),
+        (async () => {
+          if (!myScoreInput) return null
+          const candidateInput = await buildScoreInput(p.id)
+          if (!candidateInput) return null
+          return getOrCalculateScore(myScoreInput, candidateInput)
+        })(),
+      ])
+
+      const preview = {
+        type: p.type,
+        ageRange,
+        city: p.city, // já é uma cidade geral — nunca coordenadas exactas (ver Profile.locationLat/Lng, nunca expostos aqui)
+        score: scoreResult?.score ?? null,
+        intentions: p.intentions.map(i => ({ name: i.intention.name, slug: i.intention.slug })),
+        verified,
+        photo: primaryPhoto ? { url: primaryPhoto.storagePath, accessLevel: primaryPhoto.accessLevel } : null,
+      }
+
+      const full = canViewFull ? {
+        displayName: p.displayName,
+        bio: p.bio,
+        gender: p.gender,
+        orientation: p.orientation,
+        relationshipStatus: p.relationshipStatus,
+        city: p.city,
+        country: p.country,
+        photos: mergedPhotos,
+      } : null
+
+      return {
+        // Mantido para compatibilidade com o fluxo aceitar/rejeitar
+        // (accept/:id, reject/:id usam só o id) — nunca depende do plano.
+        profile: { id: p.id, type: p.type },
+        likedAt: likedAtByProfile.get(p.id),
+        preview,
+        full,
+        canViewFullProfile: canViewFull,
+      }
+    }))
+
+    pending.sort((a, b) => (b.likedAt?.getTime() || 0) - (a.likedAt?.getTime() || 0))
 
     res.json({ pending })
   } catch (err: any) {

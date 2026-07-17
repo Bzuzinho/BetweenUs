@@ -1,0 +1,1237 @@
+From d3e940b5639fab32462787c36cf9f5177520b8d6 Mon Sep 17 00:00:00 2001
+From: "Ricardo (via Claude/Cowork)" <ricardo.jgvf@gmail.com>
+Date: Mon, 13 Jul 2026 10:29:45 +0100
+Subject: [PATCH] =?UTF-8?q?BETA.3=20=E2=80=94=20Production=20safety=20&=20?=
+ =?UTF-8?q?closed=20beta=20gate?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Remove prisma db push --accept-data-loss from the automatic start
+  command (server/start.sh, package.json). Schema changes now go through
+  Prisma Migrate (db:deploy, wired as Railway preDeployCommand) instead of
+  a live schema diff applied on every boot.
+- Add server/scripts/generate-baseline-migration.sh + migration_lock.toml
+  scaffold for the one-time baseline-migration cutover (documented in
+  docs/product/CLOSED_BETA_GATE.md - could not be executed in this
+  sandbox, no network access to binaries.prisma.sh).
+- Harden GET /health/email: was checking only the Gmail-SMTP fallback
+  vars (reporting misconfigured even with SendGrid correctly set) and
+  leaking SMTP_HOST/SMTP_USER/EMAIL_FROM/CLIENT_URL plus 8 chars of
+  SMTP_PASS with no auth. Now detects the real provider and returns
+  presence booleans only.
+- RegisterPage.jsx: replace the single bundled terms+age checkbox with
+  four explicit, unchecked-by-default checkboxes (age/terms/privacy/
+  sensitive-data). auth.ts registerSchema now hard-requires
+  ageConfirmed/privacyAccepted/sensitiveDataAccepted === true instead of
+  the BETA.2 soft optional-but-not-false check.
+- Fix Active Profile Context bug: discovery.ts like/pass/block/report
+  and matches.ts accept/reject used the direct Profile.userId relation
+  instead of resolveMyProfileId, so a couple/group non-creator member
+  got 404s and anyone with a switched active profile still acted as their
+  individual profile. privacy.ts GET/PUT had the same bug.
+- Add EligibilityService.forProfileContext(profileId, userId), wired into
+  discovery.ts like/pass as an enforcement gate.
+- Add npm run beta:gate (server/src/scripts/betaGate.ts) - schema/type/
+  env/start-command/health-endpoint checks, never prints secret values.
+- Add docs/product/CLOSED_BETA_GATE.md.
+
+Validated in this sandbox: server tsc --noEmit (PASS, exit 0), client
+vite build (PASS). npm test and prisma validate/generate could not run
+here - binaries.prisma.sh is blocked by this sandbox's network allowlist
+(confirmed via direct curl: 403 blocked-by-allowlist). GitHub Actions
+already proves that domain is reachable in CI - run the suite there or
+locally before merging.
+---
+ client/src/pages/RegisterPage.jsx             |  93 ++++++--
+ docs/product/CLOSED_BETA_GATE.md              | 203 ++++++++++++++++++
+ server/package.json                           |  11 +-
+ server/railway.json                           |   1 +
+ server/scripts/generate-baseline-migration.sh |  51 +++++
+ server/src/index.ts                           |  68 +++---
+ server/src/lib/eligibilityService.ts          |  92 ++++++++
+ server/src/routes/auth.ts                     |  27 ++-
+ server/src/routes/discovery.ts                |  64 ++++--
+ server/src/routes/matches.ts                  |  34 +--
+ server/src/routes/privacy.ts                  |  17 +-
+ server/src/scripts/betaGate.ts                | 164 ++++++++++++++
+ server/start.sh                               |  66 +++---
+ 13 files changed, 749 insertions(+), 142 deletions(-)
+ create mode 100644 docs/product/CLOSED_BETA_GATE.md
+ create mode 100755 server/scripts/generate-baseline-migration.sh
+ create mode 100644 server/src/scripts/betaGate.ts
+ mode change 100644 => 100755 server/start.sh
+
+diff --git a/client/src/pages/RegisterPage.jsx b/client/src/pages/RegisterPage.jsx
+index 05169f8..6d769ee 100644
+--- a/client/src/pages/RegisterPage.jsx
++++ b/client/src/pages/RegisterPage.jsx
+@@ -12,6 +12,28 @@ const C = {
+ 
+ const BETA_CLOSED = false // toggled by BETA_CLOSED env on backend
+ 
++// BETA.3 — one explicit, independently-toggleable, unchecked-by-default
++// checkbox per RGPD consent purpose (age/terms/privacy/sensitive-data).
++// Extracted so step 2 doesn't repeat the same markup four times.
++function ConsentCheckbox({ checked, onToggle, children, last }) {
++  return (
++    <div
++      onClick={onToggle}
++      style={{ display:'flex', gap:10, alignItems:'flex-start', marginBottom: last ? 20 : 12, cursor:'pointer' }}
++    >
++      <div style={{
++        width:18, height:18, borderRadius:5, flexShrink:0, marginTop:1,
++        background: checked ? C.primary : 'none',
++        border:`1.5px solid ${checked ? C.primary : C.border}`,
++        display:'flex', alignItems:'center', justifyContent:'center',
++      }}>
++        {checked && <span style={{ fontSize:11, color:'#0A141A', fontWeight:700 }}>✓</span>}
++      </div>
++      <span style={{ fontSize:13, color:C.text2, lineHeight:1.5 }}>{children}</span>
++    </div>
++  )
++}
++
+ export default function RegisterPage() {
+   const { register } = useAuth()
+   const navigate = useNavigate()
+@@ -19,7 +41,16 @@ export default function RegisterPage() {
+   const [step, setStep] = useState(1) // 1=account, 2=age+consent
+   const [form, setForm] = useState({
+     email:'', password:'', dateOfBirth:'', betaCode:'', refCode:'',
++    // BETA.3 fix — these three used to not exist on the form at all, so
++    // the wizard's single "aceito tudo" checkbox only ever sent
++    // termsAccepted; the backend silently accepted the missing fields
++    // (see server/src/routes/auth.ts's registerSchema, BETA.2 comment).
++    // Now each RGPD consent is its own explicit, unchecked-by-default
++    // checkbox — see step 2 below.
+     termsAccepted: false,
++    ageConfirmed: false,
++    privacyAccepted: false,
++    sensitiveDataAccepted: false,
+   })
+   const [error, setError] = useState('')
+   const [loading, setLoading] = useState(false)
+@@ -40,7 +71,10 @@ export default function RegisterPage() {
+ 
+   const handleSubmit = async () => {
+     if (!form.dateOfBirth) return setError('Data de nascimento obrigatória.')
++    if (!form.ageConfirmed) return setError('Tens de confirmar que tens pelo menos 18 anos.')
+     if (!form.termsAccepted) return setError('Tens de aceitar os Termos de Utilização.')
++    if (!form.privacyAccepted) return setError('Tens de aceitar a Política de Privacidade.')
++    if (!form.sensitiveDataAccepted) return setError('Tens de aceitar o tratamento de dados sensíveis.')
+ 
+     setLoading(true); setError('')
+     try {
+@@ -49,6 +83,9 @@ export default function RegisterPage() {
+         password: form.password,
+         dateOfBirth: form.dateOfBirth,
+         termsAccepted: true,
++        ageConfirmed: true,
++        privacyAccepted: true,
++        sensitiveDataAccepted: true,
+         betaCode: form.betaCode || undefined,
+         refCode: form.refCode || undefined,
+       })
+@@ -144,27 +181,43 @@ export default function RegisterPage() {
+                 max={new Date(Date.now() - 18 * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
+               />
+ 
+-              {/* Terms */}
+-              <div
+-                onClick={() => set('termsAccepted', !form.termsAccepted)}
+-                style={{ display:'flex', gap:10, alignItems:'flex-start', marginBottom:20, cursor:'pointer' }}
++              {/* BETA.3 fix — was a single bundled checkbox (terms + age,
++                  privacy/sensitive-data consent never actually collected).
++                  RGPD requires separate, explicit, opt-in consent per
++                  purpose (see docs/legal/CONSENT_POLICY.md) — four
++                  independent checkboxes, none pre-selected. */}
++              <ConsentCheckbox
++                checked={form.ageConfirmed}
++                onToggle={() => set('ageConfirmed', !form.ageConfirmed)}
+               >
+-                <div style={{
+-                  width:18, height:18, borderRadius:5, flexShrink:0, marginTop:1,
+-                  background: form.termsAccepted ? C.primary : 'none',
+-                  border:`1.5px solid ${form.termsAccepted ? C.primary : C.border}`,
+-                  display:'flex', alignItems:'center', justifyContent:'center',
+-                }}>
+-                  {form.termsAccepted && <span style={{ fontSize:11, color:'#0A141A', fontWeight:700 }}>✓</span>}
+-                </div>
+-                <span style={{ fontSize:13, color:C.text2, lineHeight:1.5 }}>
+-                  Aceito os{' '}
+-                  <Link to="/legal/terms" target="_blank" style={{ color:C.primary }}>Termos de Utilização</Link>
+-                  {' '}e a{' '}
+-                  <Link to="/legal/privacy" target="_blank" style={{ color:C.primary }}>Política de Privacidade</Link>.
+-                  Confirmo que tenho 18 anos ou mais.
+-                </span>
+-              </div>
++                Tenho 18 anos ou mais.
++              </ConsentCheckbox>
++
++              <ConsentCheckbox
++                checked={form.termsAccepted}
++                onToggle={() => set('termsAccepted', !form.termsAccepted)}
++              >
++                Aceito os{' '}
++                <Link to="/legal/terms" target="_blank" style={{ color:C.primary }}>Termos de Utilização</Link>.
++              </ConsentCheckbox>
++
++              <ConsentCheckbox
++                checked={form.privacyAccepted}
++                onToggle={() => set('privacyAccepted', !form.privacyAccepted)}
++              >
++                Aceito a{' '}
++                <Link to="/legal/privacy" target="_blank" style={{ color:C.primary }}>Política de Privacidade</Link>.
++              </ConsentCheckbox>
++
++              <ConsentCheckbox
++                checked={form.sensitiveDataAccepted}
++                onToggle={() => set('sensitiveDataAccepted', !form.sensitiveDataAccepted)}
++                last
++              >
++                Aceito o tratamento de dados sensíveis necessário ao serviço
++                (orientação, estado de relação, intenções) — ver{' '}
++                <Link to="/legal/privacy" target="_blank" style={{ color:C.primary }}>Política de Privacidade</Link>.
++              </ConsentCheckbox>
+ 
+               <div style={{ display:'flex', gap:10 }}>
+                 <button
+diff --git a/docs/product/CLOSED_BETA_GATE.md b/docs/product/CLOSED_BETA_GATE.md
+new file mode 100644
+index 0000000..46b73a9
+--- /dev/null
++++ b/docs/product/CLOSED_BETA_GATE.md
+@@ -0,0 +1,203 @@
++# Closed Beta Gate — Between Us
++> Versão: 1.0 | BETA.3 | Julho 2026
++> Ponto único de verificação antes de abrir (ou continuar a operar) a beta fechada com utilizadores reais.
++
++---
++
++## 1. Como usar este documento
++
++Este documento substitui, para efeitos de produção com dados reais, o `BETA_PRIVATE_READINESS_CHECKLIST.md` (mantido para o histórico do beta técnico/QA). A diferença central: BETA.3 assume que a base de dados já tem ou vai ter **dados reais de utilizadores** — todas as recomendações partem daí, não de um ambiente descartável.
++
++Antes de cada deploy que altera `schema.prisma`, ou antes de abrir a beta a um novo lote de convidados, corre:
++
++```
++cd server
++npm run beta:gate
++```
++
++O script (`server/src/scripts/betaGate.ts`) verifica ambiente, schema, tipos e configuração — nunca imprime valores de segredos, só presença/ausência. Ver secção 7.
++
++---
++
++## 2. Start command — o que mudou e porquê
++
++**Antes (BETA.2 e anteriores):**
++```
++npx prisma db push --accept-data-loss && node -r ts-node/register/transpile-only src/index.ts
++```
++Isto corria em **todo o boot** (todo o deploy, todo o restart do Railway). `db push` calcula um diff ao vivo entre `schema.prisma` e a base de dados e aplica-o imediatamente; com `--accept-data-loss`, qualquer diff destrutivo (coluna removida, tipo alterado, coluna estreitada) resultante de uma edição futura ao schema seria aplicado **automaticamente**, sem revisão, contra uma base de dados com dados reais. Isto já não é aceitável a partir do momento em que existem utilizadores reais.
++
++**Agora (BETA.3):**
++```
++node -r ts-node/register/transpile-only src/index.ts
++```
++(`server/start.sh`, chamado por `railway.json`'s `startCommand`). Não corre nenhum comando Prisma. `prisma generate` passou para `postinstall` (corre uma vez no build, não em cada boot).
++
++Aplicação de schema é feita por `npm run db:deploy` (`prisma migrate deploy`), correndo como **Railway Pre-Deploy Command** (`server/railway.json`'s `preDeployCommand`) — uma fase separada, antes da nova instância receber tráfego, nunca dentro do start command em si (que pode correr múltiplas vezes: restarts, scale-out).
++
++| Script | Comando | Quando correr |
++|---|---|---|
++| `npm start` | `node -r ts-node/register/transpile-only src/index.ts` | Automático — Railway startCommand |
++| `npm run db:deploy` | `prisma migrate deploy` | Automático — Railway preDeployCommand |
++| `npm run db:push:safe` | `prisma db push` (sem `--accept-data-loss`) | **Manual**, só localmente/staging, nunca em produção com dados reais sem backup prévio |
++| `npm run migrate:baseline` | gera a migração baseline (ver secção 3) | **Manual**, uma vez |
++
++---
++
++## 3. Estratégia de migração — baseline cutover
++
++O projeto nunca usou `prisma migrate` — não existe `prisma/migrations/`. `npm run db:deploy` não tem nada para aplicar até existir uma migração baseline que descreva o schema **tal como já existe** na base de dados de produção (aplicado historicamente via `db push`).
++
++Foi criada uma migração baseline vazia de estrutura (`prisma/migrations/migration_lock.toml`) e um gerador (`server/scripts/generate-baseline-migration.sh` / `npm run migrate:baseline`). **Isto não foi corrido contra uma base de dados real** — o ambiente onde este trabalho foi preparado não tem acesso de rede aos binários de motor do Prisma (`binaries.prisma.sh`), pelo que o ficheiro `migration.sql` da baseline tem de ser gerado num ambiente com esse acesso (uma máquina de desenvolvimento normal, ou o GitHub Actions existente — já provado que consegue alcançar `binaries.prisma.sh`, ver `.github/workflows/test.yml`).
++
++### Passo a passo (fazer uma vez, com atenção)
++
++1. **Backup primeiro.** Railway → Database → snapshot manual, ou `pg_dump` completo. Não avançar sem isto.
++2. Numa máquina/CI com rede para `binaries.prisma.sh`:
++   ```
++   cd server
++   npm install
++   npm run migrate:baseline
++   ```
++   Isto gera `prisma/migrations/<timestamp>_baseline/migration.sql` a partir do `schema.prisma` atual (diff a partir de uma base de dados vazia — não toca em nenhuma base de dados real).
++3. **Revê o SQL gerado.** Deve conter apenas `CREATE TABLE`/`CREATE TYPE`/`CREATE INDEX` para tudo o que já está em `schema.prisma` — nada de `DROP`/`ALTER ... DROP COLUMN`.
++4. Commit `prisma/migrations/` ao repositório.
++5. **Contra a base de dados de PRODUÇÃO real** (via Railway CLI/console, depois do backup do passo 1):
++   ```
++   npx prisma migrate resolve --applied <timestamp>_baseline
++   ```
++   Isto marca a migração como já aplicada, sem executar o SQL (as tabelas já existem, criadas historicamente via `db push`) — é o passo que evita que `migrate deploy` tente `CREATE TABLE` em tabelas que já existem e falhe o deploy.
++6. Só depois do passo 5 ter sucesso, o próximo deploy pode confiar em `preDeployCommand` (`npm run db:deploy`) para aplicar migrações futuras.
++
++**Se o passo 5 for saltado**: o próximo `migrate deploy` falha ao tentar recriar tabelas existentes. É um falhanço seguro (recusa, não apaga nada) mas bloqueia o deploy até ser resolvido — não é um cenário de perda de dados, só de indisponibilidade até correção.
++
++### Alternativa (não recomendada) — Opção A
++
++Continuar com `db push` manual (`npm run db:push:safe`, sem `--accept-data-loss`) durante mais algum tempo, sempre com backup imediatamente antes e sempre correndo manualmente (nunca automatizado no start/deploy). Prisma recusa aplicar um diff destrutivo sem `--accept-data-loss`, o que dá uma rede de segurança — mas não há histórico de migrações, não há forma de saber exatamente o que mudou entre deploys, e o hábito de "correr manualmente antes de cada deploy" depende inteiramente de disciplina humana. Escolhida a Opção B (baseline + `migrate deploy`) para esta fase.
++
++---
++
++## 4. Variáveis de ambiente obrigatórias
++
++Nenhum valor real deve aparecer em logs, respostas HTTP, ou ser colado em qualquer sítio fora do Railway → Variables.
++
++| Variável | Obrigatória | Efeito se ausente |
++|---|---|---|
++| `DATABASE_URL` | Sim | App não arranca |
++| `JWT_SECRET` | Sim | App não arranca / usa fallback inseguro |
++| `JWT_REFRESH_SECRET` | Sim | Idem |
++| `CONTACT_HASH_SECRET` | Sim | Hashing de contactos bloqueados usa fallback inseguro |
++| `CLIENT_URL` | Sim | Links de convite/checkout/reset partidos (histórico: já foi bug real) |
++| `BETA_CLOSED` | Sim, `true` | Registo fica aberto a qualquer pessoa, não só convidados |
++| `SENDGRID_API_KEY` ou (`SMTP_HOST`+`SMTP_USER`+`SMTP_PASS`) | Sim, pelo menos um | Emails de verificação/reset/alerta de segurança não são enviados |
++| `EMAIL_FROM` | Sim | Emails sem remetente configurado |
++| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Recomendado | Push notifications não funcionam |
++| `SENTRY_DSN` | Recomendado | Sem monitorização de erros em produção |
++| `ADMIN_EMAILS` | Sim | Ninguém consegue ser promovido a admin automaticamente |
++
++`npm run beta:gate` verifica presença de todas estas — nunca o valor.
++
++---
++
++## 5. Health endpoints
++
++- `GET /health` — status genérico, sem informação sensível.
++- `GET /health/email` — **corrigido em BETA.3**. Antes: verificava só as variáveis de fallback SMTP (Gmail), reportava "misconfigured" mesmo com SendGrid correto, e devolvia `SMTP_HOST`, `SMTP_USER`, `EMAIL_FROM`, `CLIENT_URL` e os primeiros 8 caracteres de `SMTP_PASS` em JSON sem autenticação. Agora: deteta o provider real (SendGrid vs SMTP), não faz ligação ao vivo, devolve só booleanos:
++  ```json
++  { "status": "configured" | "missing" | "error", "provider": "sendgrid" | "smtp" | "unknown", "checks": { "fromConfigured": true, "credentialsConfigured": true } }
++  ```
++- `GET /health/recommendations` — já auditado, só flags/config + reachability boolean, sem dados de utilizadores.
++
++---
++
++## 6. Registo — consentimento explícito
++
++**Antes (BETA.2 e anteriores)**: o backend já validava `ageConfirmed`/`privacyAccepted`/`sensitiveDataAccepted` mas de forma "suave" (`.optional().refine(v => v !== false)`) — porque `RegisterPage.jsx` nunca enviava estes campos, só um checkbox combinado de "Termos". Omitir o campo passava a validação.
++
++**Agora (BETA.3)**: `RegisterPage.jsx` tem quatro checkboxes independentes, nenhum pré-selecionado — "Tenho 18 anos ou mais", "Aceito os Termos", "Aceito a Política de Privacidade", "Aceito o tratamento de dados sensíveis". O backend (`registerSchema` em `server/src/routes/auth.ts`) passou a exigir os três campos (`ageConfirmed`, `privacyAccepted`, `sensitiveDataAccepted`) como `true` explícito — ausência do campo já não passa. Os testes existentes (`server/__tests__/auth.test.ts`) já enviavam estes três campos como `true` no payload base, pelo que não precisaram de alteração.
++
++---
++
++## 7. `npm run beta:gate` — o que verifica
++
++1. `prisma validate` — schema válido.
++2. `prisma generate` — cliente gera sem erro.
++3. `tsc --noEmit` — sem erros de tipos.
++4. Start command / `start.sh` não contém `db push` nem `--accept-data-loss`.
++5. `prisma/migrations/` existe e tem pelo menos uma migração.
++6. `/health/email` não devolve valores de configuração/segredos (verificação estática do código-fonte).
++7. Presença de `DATABASE_URL`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `CONTACT_HASH_SECRET`, `CLIENT_URL`.
++8. Presença de `VAPID_*` (aviso, não bloqueia).
++9. Presença de provider de email (SendGrid ou SMTP).
++10. Presença de `SENTRY_DSN` (aviso, não bloqueia).
++11. `BETA_CLOSED === 'true'`.
++12. `prisma/seed.ts` presente (seed estrutural de Intenções/Limites).
++13. `db:seed:beta:validate`, só se `BETA_SEED_ENABLED === 'true'`.
++
++Sai com código de saída ≠ 0 se houver qualquer FALHA bloqueante — pode ser usado em CI, não só correndo manualmente.
++
++**Nota de ambiente**: este script (e `prisma validate`/`generate`/`tsc`) precisam de acesso de rede a `binaries.prisma.sh` para os binários de motor do Prisma. Não corre num sandbox com essa rota bloqueada — correr localmente ou em CI (o GitHub Actions existente já prova que tem esse acesso).
++
++---
++
++## 8. Rollback plan
++
++1. **Deploy com erro de arranque** (crash loop): Railway → Deployments → reverter para o deployment anterior com um clique. `restartPolicyMaxRetries: 3` já limita tentativas automáticas antes de ficar em estado de falha visível.
++2. **Migração aplicada incorretamente**: `prisma migrate deploy` só aplica migrações para a frente — não há rollback automático de schema. Se uma migração recém-aplicada está errada:
++   - Reverter o deployment da aplicação para a versão anterior (não muda o schema).
++   - Escrever e aplicar uma nova migração corretiva (nunca editar/apagar uma migração já aplicada em produção).
++   - Se a migração já causou perda de dados: restaurar do backup mais recente (secção 3, passo 1) e avaliar impacto via `docs/legal/INCIDENT_RESPONSE_PLAN.md`.
++3. **Bug de produto pós-deploy sem impacto de schema**: reverter o deployment no Railway; o `preDeployCommand` não corre em rollback de deployment anterior (não há novo build), pelo que isto é seguro e imediato.
++4. **`BETA_CLOSED` acidentalmente `false` em produção**: mudar a variável no Railway e reiniciar o serviço — não requer novo deploy.
++
++---
++
++## 9. Checklist de deployment (por deploy)
++
++- [ ] `npm run beta:gate` sem FAIL bloqueante
++- [ ] `npm test` (backend) sem falhas
++- [ ] `npm run build` (client) sem erros
++- [ ] GitHub Actions (`.github/workflows/test.yml`) verde no commit a fazer deploy
++- [ ] Se o schema mudou: nova migração gerada e revista (nunca editar uma migração já commitada e aplicada)
++- [ ] Backup da base de dados feito se a migração é a primeira depois de dados reais existirem
++- [ ] Variáveis de ambiente do Railway confirmadas (secção 4)
++
++## 10. Checklist de migração (quando `schema.prisma` muda)
++
++- [ ] `npx prisma migrate dev --name <descrição>` localmente (ou `--create-only` + revisão manual) para gerar a migração
++- [ ] Revisto o SQL gerado — nenhum `DROP`/`ALTER ... DROP COLUMN` inesperado
++- [ ] Testado contra uma cópia/staging antes de produção, se a alteração for destrutiva
++- [ ] Backup imediatamente antes do deploy que aplica a migração em produção
++- [ ] `npm run db:deploy` corre como `preDeployCommand` (automático) — não correr `db push` manualmente em produção salvo emergência documentada
++
++## 11. Checklist de moderador (diário)
++
++- [ ] Fila de denúncias (`/admin` → Denúncias) sem itens `PENDING` há mais de 24h em prioridade CRÍTICA/ALTA
++- [ ] Fotos pendentes de moderação revistas
++- [ ] Verificações de identidade pendentes revistas
++- [ ] Alertas de Check-in de Encontro (cron a cada 10 min, `SAFETY_ALERT_OVERDUE_HOURS`) — confirmar que não há alertas por resolver
++- [ ] Ver `docs/product/MODERATION_WORKFLOW.md` para o fluxo completo de decisão
++
++## 12. Fluxo de convite (beta fechada)
++
++1. Admin cria `BetaInvite` no painel (código, `maxUses`, `expiresAt` opcional, `email` opcional para reservar a uma pessoa).
++2. Convidado recebe o link/código, regista-se em `/register` com o código.
++3. `POST /api/auth/register` valida o código via `validateBetaCode` (só corre a validação se `BETA_CLOSED === 'true'`) — código inválido/expirado/esgotado/reservado para outro email é rejeitado com um `errCode` específico (`BETA_REQUIRED`/`BETA_INVALID`/`BETA_EXPIRED`/`BETA_EXHAUSTED`/`BETA_EMAIL_MISMATCH`).
++4. Uso do código incrementa `useCount`; ao atingir `maxUses`, o convite é desativado automaticamente.
++5. `?ref=CODE` na URL regista também uma referral (sistema de afiliados) independente do beta code.
++
++## 13. Rotina diária de beta
++
++- [ ] Verificar `/health` e `/health/email` respondem
++- [ ] Checklist de moderador (secção 11)
++- [ ] Rever novos registos vs. convites usados (consistência)
++- [ ] Rever logs de erro (Sentry, se configurado) por picos anormais
++- [ ] Confirmar que o backup automático do Railway está ativo
++
++---
++
++## 14. Follow-ups conhecidos (não bloqueantes para abrir a beta)
++
++- `EligibilityService.forProfileContext` está implementado e usado em `discovery.ts` (`/:id/like`, `/:id/pass`). Não foi ainda propagado a `matches.ts`/`rooms.ts`/`photos.ts` — esses já resolvem o perfil ativo corretamente (não têm o bug de Active Profile Context), adicionar o gate ali é reforço defensivo, não correção de bug, fica para sprint seguinte.
++- Baseline migration gerada como script, não executada contra produção nesta sessão (sem acesso de rede a `binaries.prisma.sh` no ambiente onde este trabalho foi preparado) — ver secção 3 para os passos manuais pendentes.
++- URLs de fotos privadas assinadas — já implementado (`mediaAccessService.ts`), mas listado aqui porque `BETA_PRIVATE_READINESS_CHECKLIST.md` ainda o lista como pendente; confirmar e atualizar esse documento.
+diff --git a/server/package.json b/server/package.json
+index 55807b6..01d9353 100644
+--- a/server/package.json
++++ b/server/package.json
+@@ -1,15 +1,18 @@
+ {
+   "name": "between-us-server",
+-  "version": "2.3.0",
++  "version": "2.6.0",
+   "private": true,
+   "scripts": {
+-    "start": "npx prisma db push --accept-data-loss && node -r ts-node/register/transpile-only src/index.ts",
++    "start": "node -r ts-node/register/transpile-only src/index.ts",
+     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+     "test": "NODE_ENV=test dotenv -e .env.test -- jest --runInBand --forceExit",
+     "test:coverage": "NODE_ENV=test dotenv -e .env.test -- jest --runInBand --forceExit --coverage",
+     "test:watch": "NODE_ENV=test dotenv -e .env.test -- jest --watch --runInBand",
+     "typecheck": "tsc --noEmit",
++    "postinstall": "prisma generate",
++    "db:deploy": "npx prisma migrate deploy",
+     "db:migrate": "npx prisma migrate deploy",
++    "db:push:safe": "npx prisma db push",
+     "db:seed": "ts-node prisma/seed.ts",
+     "db:seed:beta": "ts-node --transpile-only prisma/betaSeed/index.ts",
+     "db:seed:beta:validate": "ts-node --transpile-only prisma/betaSeed/validate.ts",
+@@ -18,7 +21,9 @@
+     "db:backfill-individual-profiles": "ts-node --transpile-only src/scripts/backfillIndividualProfiles.ts",
+     "reset-password": "ts-node --transpile-only src/scripts/resetPassword.ts",
+     "hard-delete": "ts-node --transpile-only src/scripts/hardDelete.ts",
+-    "db:seed-performance": "ts-node --transpile-only src/scripts/seedPerformanceDataset.ts"
++    "db:seed-performance": "ts-node --transpile-only src/scripts/seedPerformanceDataset.ts",
++    "beta:gate": "ts-node --transpile-only src/scripts/betaGate.ts",
++    "migrate:baseline": "bash scripts/generate-baseline-migration.sh"
+   },
+   "dependencies": {
+     "@aws-sdk/client-s3": "^3.540.0",
+diff --git a/server/railway.json b/server/railway.json
+index f62e7a1..2c61709 100644
+--- a/server/railway.json
++++ b/server/railway.json
+@@ -5,6 +5,7 @@
+   },
+   "deploy": {
+     "startCommand": "bash start.sh",
++    "preDeployCommand": ["npm run db:deploy"],
+     "restartPolicyType": "ON_FAILURE",
+     "restartPolicyMaxRetries": 3
+   }
+diff --git a/server/scripts/generate-baseline-migration.sh b/server/scripts/generate-baseline-migration.sh
+new file mode 100755
+index 0000000..d6bf8b7
+--- /dev/null
++++ b/server/scripts/generate-baseline-migration.sh
+@@ -0,0 +1,51 @@
++#!/bin/bash
++# BETA.3 — one-time baseline migration generator.
++#
++# WHY THIS SCRIPT EXISTS (READ BEFORE RUNNING)
++# ---------------------------------------------
++# This project has never used `prisma migrate` — every schema change so far
++# went live via `prisma db push --accept-data-loss` directly against
++# production (see start.sh's old behaviour, removed in BETA.3). There is no
++# migrations/ history, so `prisma migrate deploy` currently has nothing to
++# apply. This script creates the FIRST migration: a "baseline" that
++# describes the schema AS IT ALREADY EXISTS in the production database
++# today, so Prisma Migrate can take over from here without trying to
++# re-create tables/columns that are already there.
++#
++# This script only WRITES a migration file locally. It does not touch any
++# database. Run it once, review the generated SQL, commit it — then follow
++# the "Baseline cutover" section in docs/product/CLOSED_BETA_GATE.md, which
++# covers marking it as already-applied against the real production database
++# (`prisma migrate resolve --applied`) BEFORE the next deploy runs
++# `db:deploy`. Skipping that step means `migrate deploy` will try to
++# CREATE TABLE on tables that already exist and fail the deploy (safe —
++# it refuses rather than dropping/overwriting anything — but it will block
++# the release until resolved).
++#
++# Requires network access to Prisma's engine binaries (binaries.prisma.sh) —
++# run this from a normal dev machine or CI, not a network-restricted sandbox.
++set -e
++cd "$(dirname "$0")/.."
++
++TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
++NAME="${1:-baseline}"
++DIR="prisma/migrations/${TIMESTAMP}_${NAME}"
++
++echo "--- Validating current schema ---"
++npx prisma validate
++
++echo "--- Generating baseline SQL (schema diff from empty database) ---"
++mkdir -p "$DIR"
++npx prisma migrate diff \
++  --from-empty \
++  --to-schema-datamodel prisma/schema.prisma \
++  --script > "${DIR}/migration.sql"
++
++echo
++echo "Baseline migration written to: ${DIR}/migration.sql"
++echo "Next steps (see docs/product/CLOSED_BETA_GATE.md → 'Baseline cutover'):"
++echo "  1. Review the SQL file — it should CREATE every table/enum/index in schema.prisma, nothing else."
++echo "  2. Commit prisma/migrations/ to git."
++echo "  3. Against the REAL production database (after taking a backup):"
++echo "       npx prisma migrate resolve --applied ${TIMESTAMP}_${NAME}"
++echo "  4. Only after step 3 succeeds, deploy with the new start.sh / preDeployCommand (npm run db:deploy)."
+diff --git a/server/src/index.ts b/server/src/index.ts
+index ca8ba3e..c19d9e0 100644
+--- a/server/src/index.ts
++++ b/server/src/index.ts
+@@ -87,48 +87,40 @@ app.use('/api/auth/register', strictLimiter)
+ app.use('/api/auth/password', strictLimiter)
+ 
+ app.get('/health', (_, res) => res.json({
+-  status: 'ok', app: 'Between Us API', version: '2.5.1',
++  status: 'ok', app: 'Between Us API', version: '2.6.0',
+   environment: process.env.NODE_ENV, timestamp: new Date().toISOString(),
+   sentry: !!process.env.SENTRY_DSN, // 3.7 — cheap visibility into whether error monitoring is actually wired up
+ }))
+ 
+-// Email diagnostic endpoint — for debugging SMTP config
+-app.get('/health/email', async (req, res) => {
+-  const config = {
+-    SMTP_HOST:  process.env.SMTP_HOST  || null,
+-    SMTP_PORT:  process.env.SMTP_PORT  || '465',
+-    SMTP_USER:  process.env.SMTP_USER  || 'resend',
+-    SMTP_PASS:  process.env.SMTP_PASS  ? `set (${process.env.SMTP_PASS.slice(0,8)}…)` : null,
+-    EMAIL_FROM: process.env.EMAIL_FROM || null,
+-    CLIENT_URL: process.env.CLIENT_URL || null,
+-  }
+-
+-  const missing = Object.entries(config).filter(([,v]) => !v).map(([k]) => k)
+-
+-  if (missing.length > 0) {
+-    return res.json({
+-      status: 'misconfigured',
+-      missing,
+-      config,
+-      fix: 'Set missing variables in Railway → Service → Variables'
+-    })
+-  }
+-
+-  // Try to connect
+-  try {
+-    const nodemailer = require('nodemailer')
+-    const t = nodemailer.createTransport({
+-      host: process.env.SMTP_HOST,
+-      port: Number(process.env.SMTP_PORT || 465),
+-      secure: Number(process.env.SMTP_PORT || 465) === 465,
+-      auth: { user: process.env.SMTP_USER || 'resend', pass: process.env.SMTP_PASS },
+-    })
+-    await t.verify()
+-    res.json({ status: 'ok', message: 'SMTP connection verified ✅', config })
+-  } catch (err: any) {
+-    res.json({ status: 'error', message: err.message, config,
+-      hint: 'Check Resend dashboard → API Keys → SMTP credentials' })
+-  }
++// Email diagnostic endpoint.
++// BETA.3 fix — this used to check ONLY the Gmail-SMTP-fallback vars
++// (SMTP_HOST/SMTP_USER/SMTP_PASS), so it reported "misconfigured" even when
++// SendGrid (the actual primary provider — see lib/email.ts) was correctly
++// configured, and it leaked SMTP_HOST, SMTP_USER, EMAIL_FROM and the first
++// 8 characters of SMTP_PASS in a JSON response with no auth at all. Now:
++// checks whichever provider lib/email.ts actually uses, does not attempt a
++// live connection (that requires the real credentials and risks leaking
++// connection-error details), and returns presence booleans only — never a
++// config value, never any part of a secret.
++app.get('/health/email', (_req, res) => {
++  const hasSendgrid = !!process.env.SENDGRID_API_KEY
++  const hasSmtp = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS)
++  const provider: 'sendgrid' | 'smtp' | 'unknown' = hasSendgrid ? 'sendgrid' : hasSmtp ? 'smtp' : 'unknown'
++
++  const fromConfigured = !!process.env.EMAIL_FROM
++  const credentialsConfigured = hasSendgrid || hasSmtp
++
++  const status: 'configured' | 'missing' | 'error' =
++    provider === 'unknown' ? 'missing' : (credentialsConfigured && fromConfigured) ? 'configured' : 'error'
++
++  res.json({
++    status,
++    provider,
++    checks: {
++      fromConfigured,
++      credentialsConfigured,
++    },
++  })
+ })
+ 
+ // 11.5.5 — Intelligent Recommendations diagnostic endpoint, same
+diff --git a/server/src/lib/eligibilityService.ts b/server/src/lib/eligibilityService.ts
+index b5fcd7a..73d29b8 100644
+--- a/server/src/lib/eligibilityService.ts
++++ b/server/src/lib/eligibilityService.ts
+@@ -156,6 +156,98 @@ export async function forSharedProfileMember(userId: string): Promise<{ eligible
+   return { eligible, reasons }
+ }
+ 
++// ── forProfileContext(profileId, userId) — BETA.3 Task 6 ───────────────────
++//
++// forUser() above answers "what can this User's ACCOUNT do", and for
++// canLike/canMatch/canAppearInDiscovery it does so via `user.profile` — the
++// direct Profile.userId relation, i.e. the User's own individually-owned
++// Profile. forSharedProfileMember's own comment already flags why that's
++// wrong for a Shared Profile's non-owning member (legitimately has no
++// individually-owned Profile at all).
++//
++// forProfileContext is the profile-context-aware replacement: it takes the
++// ACTUAL profileId a request is acting as — resolved via
++// activeProfileContextService.resolveActiveProfileId /
++// profileMembershipService.resolveMyProfileId, never trusted blindly from
++// the client — and evaluates eligibility against THAT profile specifically,
++// after confirming userId is actually allowed to act as it (owner of an
++// Individual Profile, or an ACCEPTED ProfileMember of a Shared Profile).
++// This is what routes should gate product actions on going forward instead
++// of re-deriving ad-hoc "does a profile exist" checks per route.
++//
++// Scope note: wired into discovery.ts's POST /:id/like and /:id/pass in
++// this same pass (the two routes BETA.3 also fixed for the underlying
++// Active Profile Context resolution bug — see discovery.ts). Not yet wired
++// into matches.ts/rooms.ts/photos.ts's own action routes — those already
++// correctly resolve the acting profile via resolveMyProfileId, so there's
++// no active-profile-context BUG there today; adding this gate to them too
++// is additive defense-in-depth, not a bug fix, and is flagged as a
++// follow-up rather than bundled into this pass (same reasoning as this
++// file's original "wiring in as an enforcement gate is a larger change
++// with real regression risk across several routes at once" note below,
++// scoped down now that two concrete call sites exist and are covered by
++// tests).
++export interface ProfileContextEligibility {
++  canUseAsContext: boolean
++  canAppearInDiscovery: boolean
++  canLike: boolean
++  canMatch: boolean
++  canChat: boolean
++  canRequestPrivatePhotos: boolean
++  reasons: string[]
++}
++
++export async function forProfileContext(profileId: string, userId: string): Promise<ProfileContextEligibility> {
++  const deny = (reasons: string[]): ProfileContextEligibility => ({
++    canUseAsContext: false, canAppearInDiscovery: false, canLike: false,
++    canMatch: false, canChat: false, canRequestPrivatePhotos: false, reasons
++  })
++
++  const user = await prisma.user.findUnique({ where: { id: userId }, select: { status: true, adminRole: true } })
++  if (!user) return deny(['USER_NOT_FOUND'])
++
++  const blocked = BLOCKED_APP_STATUSES.has(user.status)
++  if (blocked) return deny([`ACCOUNT_${user.status}`])
++
++  const profile = await prisma.profile.findUnique({
++    where: { id: profileId },
++    select: { id: true, userId: true, status: true, privacySettings: true }
++  })
++  if (!profile) return deny(['PROFILE_NOT_FOUND'])
++
++  // Confirm userId may actually act as this profile — owner of an
++  // Individual Profile, or an ACCEPTED ProfileMember of a Shared Profile.
++  // Dynamic import: same circular-require workaround profileMembershipService
++  // itself already uses for activeProfileContextService.
++  const { isActiveMember } = await import('./profileMembershipService')
++  const isOwner = profile.userId === userId
++  const isMember = isOwner ? false : await isActiveMember(profileId, userId)
++  if (!isOwner && !isMember) return deny(['NOT_A_MEMBER_OF_PROFILE'])
++
++  const reasons: string[] = []
++  const isAdmin = !!user.adminRole
++  if (isAdmin) reasons.push('ADMIN_ACCOUNT')
++
++  const canUseAsContext = true
++
++  const profileApproved = profile.status === 'APPROVED'
++  if (!profileApproved) reasons.push('PROFILE_NOT_APPROVED')
++  const visibleInDiscoverySetting = (profile as any).privacySettings?.visibleInDiscovery !== false
++  const notInvisible = !(profile as any).privacySettings?.invisibleMode
++  if (!visibleInDiscoverySetting || !notInvisible) reasons.push('INVISIBLE_MODE_OR_HIDDEN')
++
++  // Matches forUser()'s existing semantics exactly: canLike/canMatch/canChat/
++  // canRequestPrivatePhotos don't require the profile to be APPROVED or
++  // visible — only canAppearInDiscovery does. Not invented stricter here.
++  const canAppearInDiscovery = canUseAsContext && profileApproved && !isAdmin && visibleInDiscoverySetting && notInvisible
++  const canLike = canUseAsContext
++  const canMatch = canLike
++  const canChat = canUseAsContext
++  const canRequestPrivatePhotos = canUseAsContext
++
++  return { canUseAsContext, canAppearInDiscovery, canLike, canMatch, canChat, canRequestPrivatePhotos, reasons }
++}
++
+ // ── Recommendation (not implemented in this pass) ──────────────────────────
+ // This service currently only *reports* eligibility (used by the admin
+ // AdminAccountTab/UserDetail views so admins can see why a user isn't
+diff --git a/server/src/routes/auth.ts b/server/src/routes/auth.ts
+index 43ede72..0d9d828 100644
+--- a/server/src/routes/auth.ts
++++ b/server/src/routes/auth.ts
+@@ -54,21 +54,18 @@ const registerSchema = z.object({
+   termsAccepted: z.boolean().refine(v => v === true, 'Tens de aceitar os Termos de Utilização'),
+   betaCode: z.string().optional(),
+   refCode: z.string().optional(),
+-  // BETA.2 fix — these three are mandatory RGPD consents (age
+-  // verification, privacy policy, sensitive-data processing). They were
+-  // previously plain optional booleans, so sending `false` for any of
+-  // them still returned 201 — registration never actually enforced them.
+-  // Kept `.optional()` (field may be absent) but reject an explicit
+-  // `false` — verified client/src/pages/RegisterPage.jsx's real submit
+-  // payload never sends these fields at all (its step-2 "age+consent"
+-  // screen only has a termsAccepted checkbox), so requiring the key to be
+-  // present would 400 every real registration. That's a separate,
+-  // pre-existing frontend gap (the UI doesn't actually collect these
+-  // consents despite the step being labelled for it) — flagged here, not
+-  // fixed, since it's outside the current backend test-suite scope.
+-  ageConfirmed: z.boolean().optional().refine(v => v !== false, 'Tens de confirmar que tens pelo menos 18 anos'),
+-  privacyAccepted: z.boolean().optional().refine(v => v !== false, 'Tens de aceitar a Política de Privacidade'),
+-  sensitiveDataAccepted: z.boolean().optional().refine(v => v !== false, 'Tens de aceitar o processamento de dados sensíveis'),
++  // BETA.3 fix — these three are mandatory RGPD consents (age
++  // verification, privacy policy, sensitive-data processing). BETA.2 made
++  // them reject an explicit `false` but still allowed the key to be
++  // entirely absent, specifically because client/src/pages/RegisterPage.jsx
++  // never sent them at all (its step-2 screen only had a single
++  // termsAccepted checkbox) — requiring the key would have 400'd every
++  // real registration. RegisterPage.jsx now collects all three as their
++  // own unchecked-by-default checkboxes (BETA.3), so the soft-optional
++  // escape hatch is closed here too: the field must be present AND `true`.
++  ageConfirmed: z.boolean({ required_error: 'Tens de confirmar que tens pelo menos 18 anos' }).refine(v => v === true, 'Tens de confirmar que tens pelo menos 18 anos'),
++  privacyAccepted: z.boolean({ required_error: 'Tens de aceitar a Política de Privacidade' }).refine(v => v === true, 'Tens de aceitar a Política de Privacidade'),
++  sensitiveDataAccepted: z.boolean({ required_error: 'Tens de aceitar o processamento de dados sensíveis' }).refine(v => v === true, 'Tens de aceitar o processamento de dados sensíveis'),
+   communityGuidelinesAccepted: z.boolean().optional(),
+   locationConsent: z.boolean().optional().default(false),
+   marketingConsent: z.boolean().optional().default(false),
+diff --git a/server/src/routes/discovery.ts b/server/src/routes/discovery.ts
+index 10ba597..7c85e3a 100644
+--- a/server/src/routes/discovery.ts
++++ b/server/src/routes/discovery.ts
+@@ -94,8 +94,31 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
+ // place that decides whether a match needs double consent.
+ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) => {
+   try {
+-    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
+-    if (!viewer?.profile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
++    // BETA.3 fix — was `user.findUnique(...).profile`, the direct
++    // Profile.userId relation (the user's own individually-owned
++    // profile). That silently ignores Active Profile Context: a
++    // couple/group's non-creator member (no individually-owned Profile
++    // at all) got 404 "Cria o teu perfil primeiro" even though they can
++    // browse Discovery fine as their shared profile, and anyone who
++    // switched their active context to a shared profile still liked as
++    // their individual profile regardless. resolveMyProfileId (=
++    // activeProfileContextService.resolveActiveProfileId) is the same
++    // resolution GET / already uses for this exact reason (see the
++    // comment above this router's GET / handler).
++    const viewerProfileId = await resolveMyProfileId(req.userId!)
++    if (!viewerProfileId) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
++    // BETA.3 (Task 6) — centralized enforcement gate instead of just
++    // checking the profile exists. See eligibilityService.ts's
++    // forProfileContext for what this actually checks (account status +
++    // genuine ownership/membership of viewerProfileId) — it's stricter in
++    // shape but not in outcome for any legitimate caller, since
++    // resolveMyProfileId above already only ever returns a profile this
++    // user genuinely owns or is an ACCEPTED member of.
++    const { forProfileContext } = await import('../lib/eligibilityService')
++    const eligibility = await forProfileContext(viewerProfileId, req.userId!)
++    if (!eligibility.canLike) return res.status(403).json({ error: 'Não podes realizar esta ação.', reasons: eligibility.reasons })
++    const viewerProfile = await prisma.profile.findUnique({ where: { id: viewerProfileId } })
++    if (!viewerProfile) return res.status(404).json({ error: 'Cria o teu perfil primeiro.' })
+ 
+     const target = await prisma.profile.findUnique({
+       where: { id: req.params.id },
+@@ -104,7 +127,7 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
+     if (!target) return res.status(404).json({ error: 'Perfil não encontrado.' })
+ 
+     const { createLikeOrMatch } = await import('../lib/matchService')
+-    const result = await createLikeOrMatch(viewer.profile.id, target.id)
++    const result = await createLikeOrMatch(viewerProfile.id, target.id)
+ 
+     switch (result.kind) {
+       case 'ERROR':
+@@ -116,8 +139,8 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
+         // with match-creation logic.
+         notifyUser(target.user.id, 'connection_request',
+           '🔔 Pedido de ligação',
+-          `${viewer.profile.displayName || 'Alguém'} quer ligar-se contigo. Vê o perfil e decide.`,
+-          { fromProfileId: viewer.profile.id, tab: 'matches' }
++          `${viewerProfile.displayName || 'Alguém'} quer ligar-se contigo. Vê o perfil e decide.`,
++          { fromProfileId: viewerProfile.id, tab: 'matches' }
+         ).catch(() => {})
+         return res.json({ ok: true, matched: false, matchId: null })
+ 
+@@ -144,10 +167,15 @@ router.post('/:id/like', requireAuth, async (req: AuthRequest, res: Response) =>
+ // POST /api/discovery/:id/pass
+ router.post('/:id/pass', requireAuth, async (req: AuthRequest, res: Response) => {
+   try {
+-    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
+-    if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
++    // BETA.3 fix — same Active Profile Context bug class as /:id/like above.
++    const viewerProfileId = await resolveMyProfileId(req.userId!)
++    if (!viewerProfileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
++    // BETA.3 (Task 6) — same forProfileContext enforcement gate as /:id/like.
++    const { forProfileContext } = await import('../lib/eligibilityService')
++    const eligibility = await forProfileContext(viewerProfileId, req.userId!)
++    if (!eligibility.canLike) return res.status(403).json({ error: 'Não podes realizar esta ação.', reasons: eligibility.reasons })
+     const { recordPass } = await import('../lib/matchService')
+-    await recordPass(viewer.profile.id, req.params.id)
++    await recordPass(viewerProfileId, req.params.id)
+     res.json({ ok: true })
+   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
+ })
+@@ -155,24 +183,25 @@ router.post('/:id/pass', requireAuth, async (req: AuthRequest, res: Response) =>
+ // POST /api/discovery/:id/block
+ router.post('/:id/block', requireAuth, async (req: AuthRequest, res: Response) => {
+   try {
+-    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
+-    if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
++    // BETA.3 fix — same Active Profile Context bug class as /:id/like above.
++    const viewerProfileId = await resolveMyProfileId(req.userId!)
++    if (!viewerProfileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+     // 11.5.6 — dedup: only fire BLOCK signal on genuine transition into
+     // BLOCK (matches LIKE/PASS pattern) — a repeat POST .../block (double
+     // click, client retry) must not inflate blockRate, which feeds
+     // directly into the guardrail comparison's recommendDisable decision.
+     const priorAction = await prisma.profileAction.findUnique({
+-      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
++      where: { actorProfileId_targetProfileId: { actorProfileId: viewerProfileId, targetProfileId: req.params.id } },
+       select: { action: true }
+     })
+     await prisma.profileAction.upsert({
+-      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id } },
++      where: { actorProfileId_targetProfileId: { actorProfileId: viewerProfileId, targetProfileId: req.params.id } },
+       update: { action: 'BLOCK' },
+-      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.id, action: 'BLOCK' }
++      create: { actorProfileId: viewerProfileId, targetProfileId: req.params.id, action: 'BLOCK' }
+     })
+     if (priorAction?.action !== 'BLOCK') {
+       const { recordSignal } = await import('../lib/recommendationSignalService')
+-      recordSignal(viewer.profile.id, req.params.id, 'BLOCK').catch(() => {})
++      recordSignal(viewerProfileId, req.params.id, 'BLOCK').catch(() => {})
+     }
+     res.json({ ok: true })
+   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
+@@ -205,10 +234,11 @@ router.post('/:id/report', requireAuth, async (req: AuthRequest, res: Response)
+     })
+     notifyAdmins('new_report', '⚠️ Nova denúncia', `Denúncia: ${reason}`, { reportId: report.id, tab: 'reports' }).catch(()=>{})
+ 
+-    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
+-    if (viewer?.profile) {
++    // BETA.3 fix — same Active Profile Context bug class as above.
++    const viewerProfileId = await resolveMyProfileId(req.userId!)
++    if (viewerProfileId) {
+       const { recordSignal } = await import('../lib/recommendationSignalService')
+-      recordSignal(viewer.profile.id, req.params.id, 'REPORT').catch(() => {})
++      recordSignal(viewerProfileId, req.params.id, 'REPORT').catch(() => {})
+     }
+     res.json({ ok: true })
+   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
+diff --git a/server/src/routes/matches.ts b/server/src/routes/matches.ts
+index b432f18..afe15ba 100644
+--- a/server/src/routes/matches.ts
++++ b/server/src/routes/matches.ts
+@@ -167,8 +167,15 @@ router.post('/:id/messages', requireAuth, async (req: AuthRequest, res: Response
+ // POST /api/matches/accept/:fromProfileId — accept connection request
+ router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res: Response) => {
+   try {
+-    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
+-    if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
++    // BETA.3 fix — was `user.findUnique(...).profile`, the direct
++    // Profile.userId relation, same Active Profile Context bug class
++    // fixed across discovery.ts this same sprint (6.6's header comment
++    // above already fixed this for GET /, but these two POST routes were
++    // missed). getUserProfileId === resolveMyProfileId.
++    const viewerProfileId = await getUserProfileId(req.userId!)
++    if (!viewerProfileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
++    const viewerProfile = await prisma.profile.findUnique({ where: { id: viewerProfileId } })
++    if (!viewerProfile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+ 
+     const fromProfile = await prisma.profile.findUnique({
+       where: { id: req.params.fromProfileId },
+@@ -178,15 +185,15 @@ router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res:
+ 
+     // Verify there's a like from them to us
+     const theirLike = await prisma.profileAction.findFirst({
+-      where: { actorProfileId: fromProfile.id, targetProfileId: viewer.profile.id, action: 'LIKE' }
++      where: { actorProfileId: fromProfile.id, targetProfileId: viewerProfile.id, action: 'LIKE' }
+     })
+     if (!theirLike) return res.status(400).json({ error: 'Sem pedido de ligação pendente.' })
+ 
+     // Check if match already exists
+     const existing = await prisma.match.findFirst({
+       where: { OR: [
+-        { profileOneId: viewer.profile.id, profileTwoId: fromProfile.id },
+-        { profileOneId: fromProfile.id, profileTwoId: viewer.profile.id },
++        { profileOneId: viewerProfile.id, profileTwoId: fromProfile.id },
++        { profileOneId: fromProfile.id, profileTwoId: viewerProfile.id },
+       ]}
+     })
+     if (existing) return res.json({ ok: true, matchId: existing.id, alreadyMatched: true })
+@@ -195,7 +202,7 @@ router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res:
+     const match = await prisma.match.create({
+       data: {
+         profileOneId: fromProfile.id,
+-        profileTwoId: viewer.profile.id,
++        profileTwoId: viewerProfile.id,
+         status: 'ACTIVE',
+         matchedAt: new Date(),
+         conversation: { create: { type: 'ONE_TO_ONE' } }
+@@ -204,16 +211,16 @@ router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res:
+ 
+     // Record our like too
+     await prisma.profileAction.upsert({
+-      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: fromProfile.id } },
++      where: { actorProfileId_targetProfileId: { actorProfileId: viewerProfile.id, targetProfileId: fromProfile.id } },
+       update: { action: 'LIKE' },
+-      create: { actorProfileId: viewer.profile.id, targetProfileId: fromProfile.id, action: 'LIKE' }
++      create: { actorProfileId: viewerProfile.id, targetProfileId: fromProfile.id, action: 'LIKE' }
+     })
+ 
+     // Notify the requester
+     const { notifyUser } = await import('../lib/notify')
+     notifyUser(fromProfile.user.id, 'match',
+       '💫 Ligação aceite!',
+-      `${viewer.profile.displayName || 'Alguém'} aceitou a tua ligação. Podem conversar agora.`,
++      `${viewerProfile.displayName || 'Alguém'} aceitou a tua ligação. Podem conversar agora.`,
+       { matchId: match.id, tab: 'matches' }
+     ).catch(() => {})
+ 
+@@ -227,14 +234,15 @@ router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res:
+ // POST /api/matches/reject/:fromProfileId — reject connection request
+ router.post('/reject/:fromProfileId', requireAuth, async (req: AuthRequest, res: Response) => {
+   try {
+-    const viewer = await prisma.user.findUnique({ where: { id: req.userId! }, include: { profile: true } })
+-    if (!viewer?.profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
++    // BETA.3 fix — same Active Profile Context bug class as accept above.
++    const viewerProfileId = await getUserProfileId(req.userId!)
++    if (!viewerProfileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+ 
+     // Record pass action
+     await prisma.profileAction.upsert({
+-      where: { actorProfileId_targetProfileId: { actorProfileId: viewer.profile.id, targetProfileId: req.params.fromProfileId } },
++      where: { actorProfileId_targetProfileId: { actorProfileId: viewerProfileId, targetProfileId: req.params.fromProfileId } },
+       update: { action: 'PASS' },
+-      create: { actorProfileId: viewer.profile.id, targetProfileId: req.params.fromProfileId, action: 'PASS' }
++      create: { actorProfileId: viewerProfileId, targetProfileId: req.params.fromProfileId, action: 'PASS' }
+     })
+     res.json({ ok: true })
+   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
+diff --git a/server/src/routes/privacy.ts b/server/src/routes/privacy.ts
+index dfecafc..0842c41 100644
+--- a/server/src/routes/privacy.ts
++++ b/server/src/routes/privacy.ts
+@@ -8,8 +8,18 @@ const router = Router()
+ // GET /api/privacy — get my privacy settings
+ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
+   try {
++    // BETA.3 fix — was a direct Profile.userId lookup, which 404'd for a
++    // couple/group's non-creator member (no individually-owned Profile
++    // row) and, for anyone with both an Individual Profile and an active
++    // Shared Profile, always returned the Individual Profile's privacy
++    // settings regardless of which profile they're currently acting as.
++    // Same Active Profile Context bug class already fixed on this file's
++    // own POST /block/:profileId route below (7.11) — GET/PUT / were
++    // missed.
++    const profileId = await resolveMyProfileId(req.userId!)
++    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+     const profile = await prisma.profile.findUnique({
+-      where: { userId: req.userId! },
++      where: { id: profileId },
+       include: { privacySettings: true }
+     })
+     if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+@@ -22,8 +32,11 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
+ // PUT /api/privacy — update privacy settings
+ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
+   try {
++    // BETA.3 fix — same Active Profile Context bug class as GET / above.
++    const profileId = await resolveMyProfileId(req.userId!)
++    if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+     const profile = await prisma.profile.findUnique({
+-      where: { userId: req.userId! }
++      where: { id: profileId }
+     })
+     if (!profile) return res.status(404).json({ error: 'Perfil não encontrado.' })
+ 
+diff --git a/server/src/scripts/betaGate.ts b/server/src/scripts/betaGate.ts
+new file mode 100644
+index 0000000..992cbd8
+--- /dev/null
++++ b/server/src/scripts/betaGate.ts
+@@ -0,0 +1,164 @@
++// BETA.3 (Task 7) — npm run beta:gate
++//
++// Single go/no-go check before opening the closed beta to real users (or
++// before any subsequent deploy while it's open). Every check below prints
++// PASS/WARN/FAIL and a short reason — NEVER a secret value, only whether
++// one is present. Exits non-zero if any hard FAIL is found so it can also
++// be wired into CI as a gate, not just run by hand.
++//
++// This intentionally does NOT re-run the full Jest suite or hit a real
++// database with destructive commands — `npm test` and `npm run
++// db:seed:beta:validate` are separate, existing steps (see
++// docs/product/CLOSED_BETA_GATE.md's validation checklist) that this
++// script assumes are run alongside it, not instead of it.
++import { execSync } from 'child_process'
++import * as fs from 'fs'
++import * as path from 'path'
++
++type Status = 'PASS' | 'WARN' | 'FAIL'
++interface CheckResult { name: string; status: Status; detail: string }
++
++const results: CheckResult[] = []
++const record = (name: string, status: Status, detail: string) => {
++  results.push({ name, status, detail })
++  const icon = status === 'PASS' ? '✅' : status === 'WARN' ? '⚠️ ' : '❌'
++  console.log(`${icon} [${status}] ${name} — ${detail}`)
++}
++
++const root = path.resolve(__dirname, '..', '..') // server/
++
++const run = (cmd: string): { ok: boolean; output: string } => {
++  try {
++    const output = execSync(cmd, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }).toString()
++    return { ok: true, output }
++  } catch (err: any) {
++    return { ok: false, output: (err.stdout?.toString() || '') + (err.stderr?.toString() || err.message) }
++  }
++}
++
++// ── 1. Prisma schema validity ───────────────────────────────────────────
++{
++  const r = run('npx prisma validate')
++  record('prisma validate', r.ok ? 'PASS' : 'FAIL', r.ok ? 'schema.prisma is valid' : 'schema.prisma failed validation — see prisma validate output')
++}
++
++// ── 2. Prisma client generation ─────────────────────────────────────────
++{
++  const r = run('npx prisma generate')
++  record('prisma generate', r.ok ? 'PASS' : 'FAIL', r.ok ? 'client generated' : 'failed to generate Prisma client')
++}
++
++// ── 3. Backend typecheck ────────────────────────────────────────────────
++{
++  const r = run('npx tsc --noEmit')
++  record('tsc --noEmit', r.ok ? 'PASS' : 'FAIL', r.ok ? 'no type errors' : 'type errors present — run `npm run typecheck` for details')
++}
++
++// ── 4. Start command no longer runs db push ─────────────────────────────
++// Strips comment lines first — start.sh's own explanatory header
++// deliberately mentions "db push"/"--accept-data-loss" in prose (why they
++// were removed), which would otherwise false-positive this check against
++// its own documentation.
++{
++  const stripBashComments = (src: string) => src.split('\n').filter(l => !l.trim().startsWith('#')).join('\n')
++  const startSh = path.join(root, 'start.sh')
++  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
++  const startScript = String(pkg.scripts?.start || '')
++  const startShContent = fs.existsSync(startSh) ? stripBashComments(fs.readFileSync(startSh, 'utf8')) : ''
++  const hasDbPush = /db\s+push/.test(startScript) || /db\s+push/.test(startShContent)
++  const hasAcceptDataLoss = /accept-data-loss/.test(startScript) || /accept-data-loss/.test(startShContent)
++  if (hasDbPush || hasAcceptDataLoss) {
++    record('start command safety', 'FAIL', '`db push` (or --accept-data-loss) found in package.json start / start.sh — must not run automatically on boot')
++  } else {
++    record('start command safety', 'PASS', 'start.sh / npm start do not run prisma db push')
++  }
++}
++
++// ── 5. Migration history exists ─────────────────────────────────────────
++{
++  const migrationsDir = path.join(root, 'prisma', 'migrations')
++  const exists = fs.existsSync(migrationsDir) && fs.readdirSync(migrationsDir).some(f => fs.statSync(path.join(migrationsDir, f)).isDirectory())
++  record('migration history', exists ? 'PASS' : 'WARN', exists
++    ? 'prisma/migrations/ has at least one migration'
++    : 'no prisma/migrations/ found — run `npm run migrate:baseline` and follow docs/product/CLOSED_BETA_GATE.md before relying on db:deploy')
++}
++
++// ── 6. Health endpoint safety (static check — no live HTTP call) ────────
++// Strips `//` comment lines first — the fix's own explanatory comment
++// mentions SMTP_HOST/SMTP_PASS/EMAIL_FROM/CLIENT_URL in prose (describing
++// what used to leak), which would otherwise false-positive this check
++// against its own documentation. Only flags the actual dangerous shape:
++// one of these env vars used as a response VALUE (`: process.env.X`) or
++// sliced (the old `SMTP_PASS.slice(0,8)` partial-secret leak).
++{
++  const stripTsComments = (src: string) => src.split('\n').filter(l => !l.trim().startsWith('//')).join('\n')
++  const indexTs = fs.readFileSync(path.join(root, 'src', 'index.ts'), 'utf8')
++  const emailBlockMatch = indexTs.match(/app\.get\('\/health\/email'[\s\S]*?\n\}\)/)
++  const emailBlock = emailBlockMatch ? stripTsComments(emailBlockMatch[0]) : ''
++  const leaksSecretLikeValue = /:\s*process\.env\.(SMTP_HOST|SMTP_USER|SMTP_PASS|EMAIL_FROM|CLIENT_URL)\b|SMTP_PASS[^,\n]*\.slice\(/.test(emailBlock)
++  record('/health/email safety', leaksSecretLikeValue ? 'FAIL' : 'PASS', leaksSecretLikeValue
++    ? '/health/email appears to echo raw config/secret values — see docs/product/CLOSED_BETA_GATE.md'
++    : '/health/email returns booleans only, no config values')
++}
++
++// ── 7. Required environment variables (presence only, never printed) ───
++const requiredEnvVars = ['DATABASE_URL', 'JWT_SECRET', 'JWT_REFRESH_SECRET', 'CONTACT_HASH_SECRET', 'CLIENT_URL']
++for (const key of requiredEnvVars) {
++  const present = !!process.env[key] && process.env[key] !== ''
++  record(`env: ${key}`, present ? 'PASS' : 'FAIL', present ? 'set' : 'MISSING — required')
++}
++
++// ── 8. VAPID (push notifications) ───────────────────────────────────────
++{
++  const vapidOk = !!process.env.VAPID_PUBLIC_KEY && !!process.env.VAPID_PRIVATE_KEY && !!process.env.VAPID_SUBJECT
++  record('env: VAPID_*', vapidOk ? 'PASS' : 'WARN', vapidOk ? 'set' : 'not fully configured — push notifications will not work, non-blocking for closed beta')
++}
++
++// ── 9. Email provider (SendGrid primary, SMTP fallback) ─────────────────
++{
++  const hasSendgrid = !!process.env.SENDGRID_API_KEY
++  const hasSmtp = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS)
++  record('env: email provider', (hasSendgrid || hasSmtp) ? 'PASS' : 'FAIL', hasSendgrid ? 'SendGrid configured' : hasSmtp ? 'SMTP fallback configured' : 'MISSING — no email provider configured, registration/verification/safety emails will not send')
++}
++
++// ── 10. Sentry ───────────────────────────────────────────────────────────
++{
++  const present = !!process.env.SENTRY_DSN
++  record('env: SENTRY_DSN', present ? 'PASS' : 'WARN', present ? 'set' : 'not set — error monitoring disabled, non-blocking but strongly recommended for closed beta')
++}
++
++// ── 11. BETA_CLOSED ──────────────────────────────────────────────────────
++{
++  const isClosed = process.env.BETA_CLOSED === 'true'
++  record('env: BETA_CLOSED', isClosed ? 'PASS' : 'FAIL', isClosed ? 'true — invite-only registration enforced' : 'not "true" — registration is OPEN to anyone, must be "true" for closed beta')
++}
++
++// ── 12. Structural seed present (Intentions/Boundaries) ─────────────────
++{
++  const seedPath = path.join(root, 'prisma', 'seed.ts')
++  const seedExists = fs.existsSync(seedPath)
++  record('structural seed script', seedExists ? 'PASS' : 'FAIL', seedExists ? 'prisma/seed.ts present — run `npm run db:seed` before opening beta if not already applied' : 'prisma/seed.ts missing')
++}
++
++// ── 13. Beta seed validator (only if BETA_SEED_ENABLED) ─────────────────
++if (process.env.BETA_SEED_ENABLED === 'true') {
++  const r = run('npx ts-node --transpile-only prisma/betaSeed/validate.ts')
++  record('db:seed:beta:validate', r.ok ? 'PASS' : 'FAIL', r.ok ? 'beta seed data validated' : 'beta seed validation failed — see output above')
++} else {
++  record('db:seed:beta:validate', 'WARN', 'BETA_SEED_ENABLED not "true" — skipped (expected once real invite flow replaces seeded beta accounts)')
++}
++
++// ── Summary ───────────────────────────────────────────────────────────────
++const fails = results.filter(r => r.status === 'FAIL')
++const warns = results.filter(r => r.status === 'WARN')
++console.log('\n' + '─'.repeat(60))
++console.log(`beta:gate — ${results.length} checks, ${fails.length} FAIL, ${warns.length} WARN, ${results.length - fails.length - warns.length} PASS`)
++console.log('─'.repeat(60))
++if (fails.length > 0) {
++  console.log('\nBLOCKING failures:')
++  fails.forEach(f => console.log(`  - ${f.name}: ${f.detail}`))
++  process.exit(1)
++} else {
++  console.log('\nNo blocking failures. Review WARN items before opening to real users.')
++  process.exit(0)
++}
+diff --git a/server/start.sh b/server/start.sh
+old mode 100644
+new mode 100755
+index 184a193..7c6f06e
+--- a/server/start.sh
++++ b/server/start.sh
+@@ -1,37 +1,35 @@
+ #!/bin/bash
++# Between Us API — production start command.
++#
++# BETA.3 fix: this used to run `prisma db push --accept-data-loss` on every
++# boot, plus an inline duplicate re-seed of Intentions. `db push` computes a
++# live schema diff against the database and applies it immediately — with
++# `--accept-data-loss` baked in, any destructive diff (dropped/narrowed
++# column, changed type, etc.) that a future schema.prisma edit introduces
++# would be applied AUTOMATICALLY on the next deploy, silently, against a
++# database that by then holds real user data. That is not acceptable once
++# the app has real user data (BETA.3 gate).
++#
++# Schema changes now go through Prisma Migrate instead:
++#   - `npm run db:deploy` (`prisma migrate deploy`) applies already-reviewed,
++#     committed migration files — no live diffing, no interactive prompts,
++#     nothing destructive that wasn't already reviewed as a checked-in SQL
++#     file. Wired as this service's Railway "Pre-Deploy Command" (see
++#     railway.json) so it runs once, before the new instance takes traffic —
++#     never as part of this start script, which can run multiple times
++#     (restarts, scale-out).
++#   - `npm run db:push:safe` (`prisma db push`, WITHOUT --accept-data-loss)
++#     still exists for manual/local use only. If Prisma detects a
++#     destructive change it refuses and prints a warning instead of
++#     silently applying it — a human has to re-run it with
++#     --accept-data-loss themselves, on purpose, after taking a backup. See
++#     docs/product/CLOSED_BETA_GATE.md for the full migration strategy and
++#     the one-time baseline-migration cutover steps.
++#
++# The one-off Intentions re-seed that used to live here is redundant with
++# `npm run db:seed` (prisma/seed.ts already seeds Intentions idempotently
++# via upsert) and ran on every single boot for no reason — removed.
+ set -e
+-echo "=== Between Us API v2.3.0 ==="
+-echo "--- Prisma Generate ---"
+-npx prisma generate
+-echo "--- Database Push ---"
+-npx prisma db push --accept-data-loss
+-echo "--- Seed ---"
+-node -e "
+-const { PrismaClient } = require('@prisma/client');
+-const prisma = new PrismaClient();
+-const intentions = [
+-  { name: 'Conversar primeiro', slug: 'chat_first' },
+-  { name: 'Encontro casual', slug: 'casual_encounter' },
+-  { name: 'Ligação recorrente', slug: 'recurring_connection' },
+-  { name: 'Envolvimento emocional', slug: 'emotional_connection' },
+-  { name: 'Experiência a três', slug: 'trio_experience' },
+-  { name: 'Swing', slug: 'swing' },
+-  { name: 'Explorar fetiches', slug: 'fetish_exploration' },
+-  { name: 'Apenas online', slug: 'online_only' },
+-  { name: 'Amizade colorida', slug: 'friends_with_benefits' },
+-  { name: 'Poliamor', slug: 'polyamory' },
+-  { name: 'Procurar casal', slug: 'seek_couple' },
+-  { name: 'Procurar terceira pessoa', slug: 'seek_third' },
+-  { name: 'Ainda a descobrir', slug: 'exploring' },
+-];
+-async function seed() {
+-  for (const i of intentions) {
+-    await prisma.intention.upsert({ where:{slug:i.slug}, update:{}, create:i });
+-  }
+-  console.log('Seed complete');
+-  await prisma.\$disconnect();
+-}
+-seed().catch(e => { console.error('Seed error:', e.message); process.exit(0); });
+-" || echo "Seed skipped"
++echo "=== Between Us API v2.6.0 ==="
+ echo "--- Starting server ---"
+-node -r ts-node/register/transpile-only src/index.ts
++exec node -r ts-node/register/transpile-only src/index.ts
+-- 
+2.34.1
+

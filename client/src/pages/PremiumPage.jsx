@@ -23,7 +23,8 @@ const PLANS = [
     features: [
       '👁 Modo Invisível — navega sem seres visto',
       '✈️ Travel Mode — explora antes de chegar',
-      '❤️ Ver quem deu like em ti',
+      '🔗 Ligar-te a perfis independentemente do Between Score',
+      '👤 Ver o perfil completo de quem te enviou um pedido de ligação',
       '🔒 Bloqueio de contactos',
       '📷 Soft Reveal avançado',
       '🔍 Filtros premium',
@@ -53,19 +54,32 @@ export default function PremiumPage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const [sub, setSub] = useState(null)
+  const [planInfo, setPlanInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [checkingOut, setCheckingOut] = useState(null)
   const [msg, setMsg] = useState('')
 
   useEffect(() => {
-    api.get('/subscriptions/me')
-      .then(r => setSub(r.data))
-      .catch(() => {})
-      .finally(() => setLoading(false))
+    Promise.all([
+      api.get('/subscriptions/me').then(r => setSub(r.data)).catch(() => {}),
+      // Elegibilidade PREMIUM vs COUPLE_PREMIUM é sempre calculada no
+      // backend (secção 15/16) — nunca deduzida aqui a partir de dados
+      // locais.
+      api.get('/subscriptions/plans').then(r => setPlanInfo(r.data)).catch(() => {}),
+    ]).finally(() => setLoading(false))
 
     if (params.get('success')) setMsg('✅ Subscrição ativada! Bem-vindo/a ao Premium.')
     if (params.get('cancelled')) setMsg('Pagamento cancelado. Podes tentar novamente.')
   }, [])
+
+  // Só mostra um plano se o backend disser que é elegível. Sem dados ainda
+  // (planInfo null) assume-se elegível para não bloquear a primeira
+  // renderização — o botão de checkout volta a validar no backend de
+  // qualquer forma.
+  const isEligible = (planId) => planInfo?.eligibility ? !!planInfo.eligibility[planId]?.allowed : true
+  const ineligibleReason = (planId) => planInfo?.eligibility?.[planId]?.reason || null
+  const visiblePlans = PLANS.filter(p => isEligible(p.id))
+  const coupleContextButNotActive = planInfo?.activeContext?.type === 'INDIVIDUAL' && ineligibleReason('COUPLE_PREMIUM') === 'COUPLE_PROFILE_REQUIRED'
 
   const handleCheckout = async (planId) => {
     setCheckingOut(planId)
@@ -155,8 +169,8 @@ export default function PremiumPage() {
           </div>
         )}
 
-        {/* Plans */}
-        {!isPremium && PLANS.map(plan => (
+        {/* Plans — só os elegíveis segundo o backend (secção 14/16) */}
+        {!isPremium && visiblePlans.map(plan => (
           <div key={plan.id} style={{ background:C.bgCard,
             border:`1px solid ${C.border}`, borderRadius:24,
             padding:24, marginBottom:16 }}>
@@ -206,7 +220,7 @@ export default function PremiumPage() {
               style={{ width:'100%',
                 background: plan.id === 'PREMIUM'
                   ? `linear-gradient(135deg,${C.primary},${C.primaryDim})`
-                  : `linear-gradient(135deg,${colors.lavender},${C.text2})`,
+                  : `linear-gradient(135deg,${C.primary},${C.text2})`,
                 border:'none', borderRadius:50, padding:'15px',
                 fontSize:15, fontWeight:700,
                 color: plan.id === 'PREMIUM' ? '#1A0A2E' : '#0A141A',
