@@ -48,6 +48,14 @@ afterEach(async () => {
     // they're still per-test data that must not leak between tests.
     'recommendation_signals', 'recommendation_ranking_logs',
     'couple_profiles', 'profiles',
+    // Sistema de localidades — geo_locations é catálogo (como
+    // between_score_configs/intentions/boundaries), mas os testes deste
+    // sprint criam as suas próprias localidades sintéticas por teste
+    // (nunca dependem do import real do GeoNames), por isso É limpo aqui
+    // como dado por-teste — ao contrário dos catálogos admin-managed
+    // reais, não há nenhuma expectativa de "seed persistente" para isto
+    // nos testes.
+    'geo_locations',
     // 3.9: new Sprint 3 tables — must be cleaned between test suites too
     'legal_documents',
     'subscriptions', 'user_consents', 'users',

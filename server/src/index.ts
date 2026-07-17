@@ -202,6 +202,7 @@ import agreementsRouter        from './routes/agreements'
 import eventsRouter            from './routes/events'
 import circlesRouter           from './routes/circles'
 import recommendationsRouter    from './routes/recommendations'
+import locationsRouter          from './routes/locations'
 
 app.use('/api/auth',          authRouter)
 app.use('/api/profiles',      profileRouter)
@@ -232,6 +233,10 @@ app.use('/api/agreements',    agreementsRouter)
 app.use('/api/events',         eventsRouter)
 app.use('/api/circles',        circlesRouter)
 app.use('/api/admin/recommendations', recommendationsRouter)
+// Sistema de localidades (catálogo GeoNames) — /api/locations/admin/* fica
+// dentro deste próprio router (locations.ts já protege esses caminhos com
+// requireAdmin('catalog'), mesmo padrão de catalog.ts's /admin/*).
+app.use('/api/locations',     locationsRouter)
 
 // 7.8 — Socket.IO authentication. The Sprint 7 audit found NO auth at all
 // on the connection handshake: any socket (authenticated HTTP session or

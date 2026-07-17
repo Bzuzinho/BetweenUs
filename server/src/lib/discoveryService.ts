@@ -18,10 +18,25 @@ import { evaluateCompleteness } from './profileCompletenessService'
 import { getOrCalculateScore } from './compatibilityScoreService'
 import { buildExplanation } from './compatibilityExplanationService'
 import { hashContactWithVersion } from './contactHashService'
+import { ageFromDOB } from '../utils/age'
+import { haversineKm } from '../utils/location'
+import { isTravelModeRelevantAt, normalizeCity, normalizeCountry, GEO_LOCATION_SELECT, deriveTravelModeLocation, type GeoCoordinates } from './effectiveLocationService'
 import type { BetweenScoreBoundaryInput, BetweenScoreProfileInput, BetweenScoreReasonCode } from './betweenScoreService'
+import { calculateDistanceKm } from './distanceService'
 
 export interface DiscoveryFilters {
+  // Básico — sempre disponível, em qualquer plano.
   type?: 'INDIVIDUAL' | 'COUPLE' | 'GROUP'
+  // Secção 10 do pedido de monetização — avançados. Este serviço não sabe
+  // nada sobre planos: quem chama (discovery.ts) é responsável por só
+  // preencher estes campos depois de confirmar a entitlement
+  // ADVANCED_FILTERS via subscriptionEntitlementService, e por reportar ao
+  // cliente que filtros foram mesmo aplicados.
+  verifiedOnly?: boolean
+  maxDistanceKm?: number
+  ageMin?: number
+  ageMax?: number
+  intentionSlug?: string
 }
 
 export interface DiscoveryCandidateItem {
@@ -85,8 +100,15 @@ const fetchCandidatePool = async (viewerProfile: any, filters: DiscoveryFilters,
       intentions: { include: { intention: true } },
       boundaries: { include: { boundary: true } },
       privacySettings: true,
-      travelModes: { where: { active: true } },
-    },
+      // Sistema de localidades — carregado junto com o pool (nunca uma
+      // query extra por candidato, mesma preocupação de performance do
+      // resto deste ficheiro) para permitir distância real via catálogo em
+      // resolveEffectiveLocationFromProfile/toScoreInput abaixo. Nunca
+      // devolvido tal-e-qual ao frontend — GEO_LOCATION_SELECT inclui
+      // latitude/longitude, usados só para cálculo aqui no backend.
+      homeLocation: { select: GEO_LOCATION_SELECT },
+      travelModes: { where: { active: true }, include: { destinationLocation: { select: GEO_LOCATION_SELECT } } },
+    } as any,
     orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], // stable base order, independent of score
     take: POOL_CAP,
   })
@@ -213,17 +235,115 @@ const toBoundaryInputs = (profile: any): BetweenScoreBoundaryInput[] =>
     category: pb.boundary?.category || null,
   })).filter((b: BetweenScoreBoundaryInput) => !!b.slug)
 
-const toScoreInput = (profile: any): BetweenScoreProfileInput => ({
-  id: profile.id,
-  relationshipStatus: profile.relationshipStatus,
-  discretionLevel: profile.discretionLevel,
-  city: profile.city,
-  locationLat: profile.locationLat,
-  locationLng: profile.locationLng,
-  intentions: toIntentionInputs(profile),
-  boundaries: toBoundaryInputs(profile),
-  activeTravelCities: (profile.travelModes || []).map((t: any) => t.city),
-})
+// Fase 3D — localização efectiva a partir do `profile.travelModes` já
+// eager-loaded (where: { active: true }, sem select — por isso vem a linha
+// TravelMode completa: city/country/startDate/endDate/status). Nunca faz
+// uma query extra por candidato: getCurrentTravelMode/getEffectiveLocation
+// de effectiveLocationService.ts fazem exactamente esta lógica mas via
+// Prisma call, o que aqui reimplementamos em memória com as MESMAS regras
+// (activo+status implícito SCHEDULED — ver travel.ts: active nunca é true
+// senão com status SCHEDULED — orderBy startDate asc, primeiro cujo
+// endDate ainda não passou) precisamente para preservar o perfil de
+// performance do pipeline de Discovery (Step 1 já traz tudo o que é
+// preciso, Steps 7-12 não devem voltar à BD por perfil).
+interface ResolvedEffectiveLocation {
+  city: string | null
+  country: string | null
+  cityNormalized: string | null
+  source: 'HOME' | 'TRAVEL_FUTURE' | 'TRAVEL_ACTIVE'
+  // Sistema de localidades — id + coordenadas da GeoLocation efectiva
+  // (destino de Travel Mode se FUTURE/ACTIVE, senão homeLocation), null
+  // para perfis ainda sem catálogo (fallback total para city/country acima
+  // — nunca misturado: um locationId só aparece aqui quando a MESMA fonte
+  // (travel ou home) também forneceu o city/country devolvidos).
+  locationId: string | null
+  coordinates: GeoCoordinates | null
+}
+
+const resolveEffectiveLocationFromProfile = (
+  profile: any, atDate: Date = new Date()
+): ResolvedEffectiveLocation => {
+  const candidates = ((profile.travelModes || []) as any[])
+    .filter(t => t.endDate && new Date(t.endDate).getTime() >= atDate.getTime())
+    .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+  const travel = candidates[0]
+  if (travel) {
+    const relevance = isTravelModeRelevantAt({ startDate: new Date(travel.startDate), endDate: new Date(travel.endDate) }, atDate)
+    if (relevance === 'FUTURE' || relevance === 'ACTIVE') {
+      const derived = deriveTravelModeLocation(travel)
+      return {
+        city: derived.city || travel.city || null,
+        country: derived.country || normalizeCountry(travel.country),
+        cityNormalized: derived.cityNormalized || normalizeCity(travel.city),
+        source: relevance === 'ACTIVE' ? 'TRAVEL_ACTIVE' : 'TRAVEL_FUTURE',
+        locationId: derived.locationId,
+        coordinates: derived.coordinates,
+      }
+    }
+  }
+  const geo = profile.homeLocation || null
+  if (geo) {
+    return {
+      city: geo.name,
+      country: normalizeCountry(geo.countryCode),
+      cityNormalized: normalizeCity(geo.name),
+      source: 'HOME',
+      locationId: geo.id,
+      coordinates: { latitude: geo.latitude, longitude: geo.longitude },
+    }
+  }
+  return {
+    city: profile.city || null,
+    country: normalizeCountry(profile.country),
+    cityNormalized: normalizeCity(profile.city),
+    source: 'HOME',
+    locationId: null,
+    coordinates: null,
+  }
+}
+
+const toScoreInput = (profile: any): BetweenScoreProfileInput => {
+  const effective = resolveEffectiveLocationFromProfile(profile)
+  return {
+    id: profile.id,
+    relationshipStatus: profile.relationshipStatus,
+    discretionLevel: profile.discretionLevel,
+    // BetweenScoreProfileInput.city é só usado para comparação (nunca
+    // apresentação — ver compatibilityExplanationService.ts/etc., nenhum
+    // lê .city para mostrar texto), por isso passa-se já o valor
+    // normalizado (sem acentos, minúsculas) em vez do valor de
+    // apresentação — "Porto"/"porto "/"PORTO" têm de pontuar como iguais.
+    city: effective.cityNormalized,
+    country: effective.country,
+    locationLat: profile.locationLat,
+    locationLng: profile.locationLng,
+    locationId: effective.locationId,
+    coordinates: effective.coordinates,
+    intentions: toIntentionInputs(profile),
+    boundaries: toBoundaryInputs(profile),
+    activeTravelCities: (profile.travelModes || []).map((t: any) => t.city),
+  }
+}
+
+// Exported single-profile fetch+shape, reused by
+// subscriptionEntitlementService.canSendConnectionRequest so the FREE
+// minimum-score gate scores a connection request through the EXACT same
+// input-building code Discovery itself uses — never a second, slightly
+// different reimplementation that could drift from the real ranking
+// pipeline. Returns null if the profile doesn't exist.
+export const buildScoreInput = async (profileId: string): Promise<BetweenScoreProfileInput | null> => {
+  const profile = await prisma.profile.findUnique({
+    where: { id: profileId },
+    include: {
+      intentions: { include: { intention: true } },
+      boundaries: { include: { boundary: true } },
+      travelModes: { where: { active: true }, include: { destinationLocation: { select: GEO_LOCATION_SELECT } } },
+      homeLocation: { select: GEO_LOCATION_SELECT },
+    } as any,
+  })
+  if (!profile) return null
+  return toScoreInput(profile)
+}
 
 // Discovery validation follow-up — Candidate Constraints (Step 7, ahead of
 // Between Score). `toConstraintBoundaryInputs` mirrors `toBoundaryInputs`
@@ -252,26 +372,55 @@ const toStructuralProps = (profile: any): CandidateStructuralProps => ({
 // requested close together, the same caveat any ranked feed has. Composite
 // tuple with `id` as the final tiebreaker guarantees no duplicate/ambiguous
 // position even when two candidates land on the exact same score.
-interface Cursor { score: number; createdAt: string; id: string; premium?: boolean }
+// `locationTier` (Fase 3D) — 0 = mesma cidade efectiva, 1 = mesmo país
+// efectivo (sem ser mesma cidade), 2 = resto. Adicionado como dimensão
+// própria, ANTES de score, tal como `premium` — nunca dobrado dentro do
+// próprio Between Score (mesma razão do comentário do Step 11.5: o score se
+// mostra ao utilizador com reason codes explícitos, não pode ser inflacionado
+// por um sinal que não é de compatibilidade real).
+interface Cursor { score: number; createdAt: string; id: string; premium?: boolean; locationTier?: number }
 
 const encodeCursor = (c: Cursor): string => Buffer.from(JSON.stringify(c)).toString('base64url')
 const decodeCursor = (raw: string): Cursor | null => {
   try { return JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) } catch { return null }
 }
 
-// Strict "is `a` ranked after `b`" for the (premium desc, score desc,
-// createdAt desc, id asc) order. `premium` is deliberately checked FIRST
-// as a separate tie-break dimension, not folded into `score` — see the
-// Step 11.5 comment below for why Between Score itself must stay an
-// untouched, honest compatibility signal.
-const isAfterCursor = (item: { score: number; createdAt: Date; id: string; premium: boolean }, cursor: Cursor): boolean => {
+// Strict "is `a` ranked after `b`" for the (premium desc, locationTier asc,
+// score desc, createdAt desc, id asc) order. `premium` and `locationTier`
+// are deliberately checked FIRST as separate tie-break dimensions, not
+// folded into `score` — see the Step 11.5 comment below for why Between
+// Score itself must stay an untouched, honest compatibility signal.
+const isAfterCursor = (item: { score: number; createdAt: Date; id: string; premium: boolean; locationTier: number }, cursor: Cursor): boolean => {
   const cursorPremium = !!cursor.premium
   if (item.premium !== cursorPremium) return !item.premium
+  const cursorTier = cursor.locationTier ?? 2
+  if (item.locationTier !== cursorTier) return item.locationTier > cursorTier
   if (item.score !== cursor.score) return item.score < cursor.score
   const itemTime = item.createdAt.getTime()
   const cursorTime = new Date(cursor.createdAt).getTime()
   if (itemTime !== cursorTime) return itemTime < cursorTime
   return item.id > cursor.id
+}
+
+// Fase 3D — Discovery ponto "prioridade": mesma cidade efectiva > mesmo
+// país efectivo > resto. Usa os campos já normalizados de
+// BetweenScoreProfileInput (city/country aqui já são cityNormalized/país
+// ISO normalizado — ver toScoreInput acima), nunca coordenadas.
+const locationTierFor = (
+  viewer: BetweenScoreProfileInput, candidate: BetweenScoreProfileInput
+): number => {
+  // Sistema de localidades — com catálogo dos dois lados, "mesma cidade
+  // efectiva" é decidido por locationId (nunca por nome — ver o mesmo
+  // raciocínio em betweenScoreService.baseLocationScore sobre localidades
+  // homónimas em distritos diferentes).
+  if (viewer.locationId && candidate.locationId) {
+    if (viewer.locationId === candidate.locationId) return 0
+    if (viewer.country && candidate.country && viewer.country === candidate.country) return 1
+    return 2
+  }
+  if (viewer.city && candidate.city && viewer.city === candidate.city) return 0
+  if (viewer.country && candidate.country && viewer.country === candidate.country) return 1
+  return 2
 }
 
 // ── Step 11.5: Premium priority (monetization package, BETA.4) ───────────
@@ -316,6 +465,84 @@ const resolvePremiumCandidates = async (pool: any[]): Promise<(candidate: any) =
   }
 }
 
+// ── Step 1.5: Advanced filters (secção 10, monetização) ────────────────────
+// Aplicados em memória sobre a pool já limitada (POOL_CAP), não como
+// cláusulas Prisma — mantém a lógica de "quem conta como verificado/que
+// idade tem um perfil de casal" num único sítio (o mesmo critério ALL-member
+// já usado por isSharedProfileEligible e por matches.ts's resolveVerified),
+// em vez de reimplementar isso como WHERE clauses separadas por tipo de
+// perfil.
+const filterPoolByVerification = async (pool: any[]): Promise<any[]> => {
+  const kept = await Promise.all(pool.map(async (c) => {
+    const userIds: string[] = c.userId ? [c.userId] : (await getActiveMembers(c.id)).map((m: any) => m.userId)
+    if (userIds.length === 0) return false
+    const verifications = await prisma.verification.findMany({
+      where: { userId: { in: userIds }, status: 'APPROVED' },
+      select: { userId: true }
+    })
+    return new Set(verifications.map((v: { userId: string }) => v.userId)).size === userIds.length
+  }))
+  return pool.filter((_, i) => kept[i])
+}
+
+const filterPoolByAgeRange = async (pool: any[], ageMin?: number, ageMax?: number): Promise<any[]> => {
+  const kept = await Promise.all(pool.map(async (c) => {
+    const userIds: string[] = c.userId ? [c.userId] : (await getActiveMembers(c.id)).map((m: any) => m.userId)
+    if (userIds.length === 0) return false
+    const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { dateOfBirth: true } })
+    if (users.length === 0) return false
+    const ages = users.map((u: { dateOfBirth: Date }) => ageFromDOB(u.dateOfBirth))
+    // Para um casal/grupo, basta que a faixa do perfil sobreponha a faixa
+    // pedida (não exige que TODOS os membros caiam dentro do intervalo) —
+    // mesma lógica de "faixa etária" já usada no preview de pedidos
+    // recebidos (matches.ts's resolveAgeRange).
+    const youngest = Math.min(...ages)
+    const oldest = Math.max(...ages)
+    if (ageMin !== undefined && oldest < ageMin) return false
+    if (ageMax !== undefined && youngest > ageMax) return false
+    return true
+  }))
+  return pool.filter((_, i) => kept[i])
+}
+
+// Sistema de localidades — prefere as coordenadas da localização EFECTIVA
+// do catálogo (viagem, se relevante, senão localidade habitual) a
+// Profile.locationLat/locationLng (coarse, sempre a localização habitual,
+// nunca actualizado por Travel Mode) sempre que ambos os lados as têm.
+// Mantém o fallback legacy para perfis ainda sem homeLocationId — nunca
+// exclui um candidato só por não ter adoptado o catálogo ainda.
+const filterPoolByDistance = (pool: any[], viewerProfile: any, maxDistanceKm: number): any[] => {
+  const viewerEffective = resolveEffectiveLocationFromProfile(viewerProfile)
+  if (viewerEffective.coordinates) {
+    return pool.filter(c => {
+      const candidateEffective = resolveEffectiveLocationFromProfile(c)
+      if (candidateEffective.coordinates) {
+        return calculateDistanceKm(viewerEffective.coordinates!, candidateEffective.coordinates) <= maxDistanceKm
+      }
+      // Candidato ainda sem catálogo — cai para a coarse dele, se existir.
+      if (c.locationLat == null || c.locationLng == null) return false
+      return haversineKm(viewerEffective.coordinates!.latitude, viewerEffective.coordinates!.longitude, c.locationLat, c.locationLng) <= maxDistanceKm
+    })
+  }
+  if (viewerProfile.locationLat == null || viewerProfile.locationLng == null) return pool
+  return pool.filter(c => {
+    if (c.locationLat == null || c.locationLng == null) return false
+    return haversineKm(viewerProfile.locationLat, viewerProfile.locationLng, c.locationLat, c.locationLng) <= maxDistanceKm
+  })
+}
+
+const filterPoolByIntention = (pool: any[], intentionSlug: string): any[] =>
+  pool.filter(c => (c.intentions || []).some((pi: any) => pi.preference === 'YES' && pi.intention?.slug === intentionSlug))
+
+const applyAdvancedFilters = async (pool: any[], filters: DiscoveryFilters, viewerProfile: any): Promise<any[]> => {
+  let result = pool
+  if (filters.verifiedOnly) result = await filterPoolByVerification(result)
+  if (filters.ageMin !== undefined || filters.ageMax !== undefined) result = await filterPoolByAgeRange(result, filters.ageMin, filters.ageMax)
+  if (filters.maxDistanceKm !== undefined) result = filterPoolByDistance(result, viewerProfile, filters.maxDistanceKm)
+  if (filters.intentionSlug) result = filterPoolByIntention(result, filters.intentionSlug)
+  return result
+}
+
 export const getCandidates = async (
   viewerProfileId: string,
   filters: DiscoveryFilters = {},
@@ -330,14 +557,16 @@ export const getCandidates = async (
       // via the existing `boundary: true` include (constraintType is a
       // scalar column on Boundary, no extra include needed).
       boundaries: { include: { boundary: true } },
-      travelModes: { where: { active: true } },
+      travelModes: { where: { active: true }, include: { destinationLocation: { select: GEO_LOCATION_SELECT } } },
+      // Sistema de localidades — ver comentário em fetchCandidatePool.
+      homeLocation: { select: GEO_LOCATION_SELECT },
       // Discovery validation follow-up — needed for the reverse direction
       // of Candidate Constraints: a candidate with e.g. singles_only=YES
       // must not see the viewer either if the viewer is a COUPLE, and
       // verified_only needs the viewer's own verification status when the
       // CANDIDATE is the one with the constraint.
       user: { select: { verification: { select: { status: true } } } },
-    }
+    } as any
   })
   if (!viewerProfile) return { items: [], nextCursor: null }
 
@@ -385,7 +614,12 @@ export const getCandidates = async (
   ;(myMatches as MyMatchRow[]).forEach((m: MyMatchRow) => excludeIds.add(m.profileOneId === viewerProfileId ? m.profileTwoId : m.profileOneId))
 
   // Step 1
-  const pool = await fetchCandidatePool(viewerProfile, filters, excludeIds)
+  const rawPool = await fetchCandidatePool(viewerProfile, filters, excludeIds)
+
+  // Step 1.5 (secção 10, monetização) — filtros avançados, já sanitizados
+  // por quem chamou (discovery.ts só preenche estes campos depois de
+  // confirmar ADVANCED_FILTERS).
+  const pool = await applyAdvancedFilters(rawPool, filters, viewerProfile)
 
   // Step 11.5 setup — batched once for the whole pool, see comment above.
   const isCandidatePremium = await resolvePremiumCandidates(pool)
@@ -397,7 +631,7 @@ export const getCandidates = async (
   const viewerStructuralProps = toStructuralProps(viewerProfile)
   const likedIds = new Set((myActions as MyActionRow[]).filter((a: MyActionRow) => a.action === 'LIKE').map((a: MyActionRow) => a.targetProfileId))
 
-  const scored: Array<{ candidate: any; score: number; breakdown: any; reasonCodes: string[]; explanation: string[]; isPremium: boolean }> = []
+  const scored: Array<{ candidate: any; score: number; breakdown: any; reasonCodes: string[]; explanation: string[]; isPremium: boolean; locationTier: number }> = []
 
   for (const candidate of pool) {
     // Step 2 — BETA.2 (FASE C): Shared Profile candidates (userId null)
@@ -449,14 +683,21 @@ export const getCandidates = async (
 
     const explanation = await buildExplanation(result.reasonCodes as any, viewerProfileId, candidate.id)
 
-    scored.push({ candidate, score: result.score, breakdown: result.breakdown, reasonCodes: result.reasonCodes, explanation, isPremium: isCandidatePremium(candidate) })
+    scored.push({
+      candidate, score: result.score, breakdown: result.breakdown, reasonCodes: result.reasonCodes, explanation,
+      isPremium: isCandidatePremium(candidate), locationTier: locationTierFor(viewerScoreInput, candidateScoreInput),
+    })
   }
 
-  // Step 12 — Ranking: stable full order (premium desc, score desc,
-  // createdAt desc, id asc) — see Step 11.5 comment for why premium is a
-  // separate leading dimension rather than a score adjustment.
+  // Step 12 — Ranking: stable full order (premium desc, locationTier asc,
+  // score desc, createdAt desc, id asc) — see Step 11.5 comment for why
+  // premium is a separate leading dimension rather than a score
+  // adjustment; locationTier (Fase 3D) follows the same reasoning —
+  // "mesma cidade efectiva > mesmo país efectivo > resto" (pedido Fase 3D,
+  // secção Discovery) is ordering, never a score inflation.
   scored.sort((a, b) => {
     if (a.isPremium !== b.isPremium) return a.isPremium ? -1 : 1
+    if (a.locationTier !== b.locationTier) return a.locationTier - b.locationTier
     if (b.score !== a.score) return b.score - a.score
     const timeDiff = b.candidate.createdAt.getTime() - a.candidate.createdAt.getTime()
     if (timeDiff !== 0) return timeDiff
@@ -466,7 +707,7 @@ export const getCandidates = async (
   // Step 13 — Pagination
   const decodedCursor = cursor ? decodeCursor(cursor) : null
   const startIndex = decodedCursor
-    ? scored.findIndex(s => isAfterCursor({ score: s.score, createdAt: s.candidate.createdAt, id: s.candidate.id, premium: s.isPremium }, decodedCursor))
+    ? scored.findIndex(s => isAfterCursor({ score: s.score, createdAt: s.candidate.createdAt, id: s.candidate.id, premium: s.isPremium, locationTier: s.locationTier }, decodedCursor))
     : 0
   const safeStart = startIndex === -1 ? scored.length : startIndex
   const page = scored.slice(safeStart, safeStart + limit)
@@ -488,7 +729,7 @@ export const getCandidates = async (
 
   const last = page[page.length - 1]
   const nextCursor = hasMore && last
-    ? encodeCursor({ score: last.score, createdAt: last.candidate.createdAt.toISOString(), id: last.candidate.id, premium: last.isPremium })
+    ? encodeCursor({ score: last.score, createdAt: last.candidate.createdAt.toISOString(), id: last.candidate.id, premium: last.isPremium, locationTier: last.locationTier })
     : null
 
   return { items, nextCursor }

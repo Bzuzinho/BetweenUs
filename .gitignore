@@ -43,3 +43,10 @@ yarn-debug.log*
 # Uploads temporários
 uploads/
 tmp/
+
+# Sistema de localidades — dumps GeoNames descarregados localmente para
+# npm run geo:import (ver docs/product/GEONAMES_IMPORT.md). Nunca comitar
+# estes ficheiros: são grandes, redistribuíveis a qualquer momento a
+# partir de download.geonames.org, e o repositório só precisa do RESULTADO
+# do import (a tabela geo_locations), não da fonte em bruto.
+server/data/geonames/

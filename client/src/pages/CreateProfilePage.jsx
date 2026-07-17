@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
+import LocationAutocomplete from '../components/LocationAutocomplete'
 
 const C = {
   bg:'#0A141A', card:'#102129', input:'#0F1E26', plum:'#1E3340',
@@ -39,8 +40,14 @@ export default function CreateProfilePage() {
   const [step, setStep] = useState(1)
   const [form, setForm] = useState({
     displayName: '', bio: '', gender: '', orientation: '',
-    relationshipStatus: 'SINGLE', city: '', country: 'Portugal',
+    relationshipStatus: 'SINGLE',
     discretionLevel: 'SELECTIVE',
+    // Sistema de localidades — countryCode/homeLocationId/homeLocationLabel/
+    // customLocality substituem os antigos campos de texto livre city/
+    // country no onboarding. PT como país de partida porque é o único
+    // país importado até agora (ver docs/product/GEONAMES_IMPORT.md) — o
+    // utilizador pode trocar antes de pesquisar.
+    countryCode: 'PT', homeLocationId: null, homeLocationLabel: null, customLocality: '',
     intentions: []  // array of slugs (strings) — converted to objects before sending
   })
   const [error, setError] = useState('')
@@ -105,8 +112,14 @@ export default function CreateProfilePage() {
         gender:             form.gender || undefined,
         orientation:        form.orientation || undefined,
         relationshipStatus: form.relationshipStatus,
-        city:               form.city.trim() || undefined,
-        country:            form.country || undefined,
+        // Sistema de localidades — homeLocationId vem do catálogo (nunca
+        // texto livre); customLocality é só apresentação. Ambos opcionais
+        // no onboarding (podes criar perfil sem localização e adicionar
+        // depois em EditProfilePage), mas nunca um homeLocationId
+        // inventado a partir de texto — LocationAutocomplete só o define
+        // quando uma opção real da pesquisa é escolhida.
+        homeLocationId:     form.homeLocationId || undefined,
+        customLocality:     form.customLocality.trim() || undefined,
         discretionLevel:    form.discretionLevel,
         intentions:         form.intentions.map(slug => ({ slug, preference: 'YES' })),
       }
@@ -236,9 +249,26 @@ export default function CreateProfilePage() {
                 ))}
               </select>
 
-              <input style={inp} placeholder="Cidade (opcional)"
-                value={form.city}
-                onChange={e => set('city', e.target.value)} />
+              {/* Sistema de localidades — nunca GPS, nunca geocoding em
+                  runtime: escolha de uma localidade do catálogo GeoNames
+                  (ver LocationAutocomplete.jsx). Opcional aqui — quem
+                  preferir pode preencher mais tarde em EditProfilePage. */}
+              <LocationAutocomplete
+                countryCode={form.countryCode}
+                onCountryChange={code => set('countryCode', code)}
+                locationId={form.homeLocationId}
+                locationLabel={form.homeLocationLabel}
+                onSelectLocation={loc => setForm(p => ({
+                  ...p,
+                  homeLocationId: loc?.id || null,
+                  homeLocationLabel: loc?.label || null,
+                  countryCode: loc?.countryCode || p.countryCode,
+                }))}
+                customLocality={form.customLocality}
+                onCustomLocalityChange={v => set('customLocality', v)}
+                label="Localização habitual"
+                required={false}
+              />
 
               <button
                 style={{ ...btnPrimary, width: '100%' }}

@@ -14,6 +14,12 @@ import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
 import { resolveMyProfileId, getActiveMembers } from '../lib/profileMembershipService'
 import { isApprovalSatisfied } from '../lib/approvalPolicyService'
+import { hasEntitlement } from '../lib/subscriptionEntitlementService'
+import {
+  getHomeLocation, getEffectiveLocation, isTravelModeRelevantAt,
+  toPublicEffectiveLocation, withoutCoordinates,
+  deriveTravelModeLocation, TRAVEL_LOCATION_SELECT,
+} from '../lib/effectiveLocationService'
 
 const router = Router()
 
@@ -21,6 +27,34 @@ const travelSelect = {
   id: true, profileId: true, city: true, country: true, startDate: true, endDate: true,
   active: true, status: true, createdByUserId: true, createdAt: true,
   approvals: { select: { userId: true, approvedAt: true } },
+  // Sistema de localidades — carregados só para derivar `location` abaixo
+  // (deriveTravelModeLocation); `destinationLocation` em si (com
+  // latitude/longitude) nunca sai desta rota tal-e-qual — ver withRelevance.
+  ...TRAVEL_LOCATION_SELECT,
+}
+
+// Fase 3D — anota cada TravelMode com a sua relevância temporal
+// (FUTURE/ACTIVE/EXPIRED/null), calculada em tempo de leitura (não há cron
+// a actualizar `status`/`active` na expiração — ver
+// effectiveLocationService.isTravelModeRelevantAt). O frontend usa isto
+// para escolher o texto certo: "Vais estar em X entre..." (FUTURE) vs "Em
+// Travel Mode em X até..." (ACTIVE) — nunca "Estás em X" antes da data de
+// início (secção UI do pedido Fase 3D).
+//
+// Sistema de localidades — também anota `location` (país/cidade/rótulo já
+// derivados da GeoLocation associada, se existir — nunca coordenadas, ver
+// withoutCoordinates) e remove o objecto bruto `destinationLocation`
+// (que tem latitude/longitude) da resposta, para nunca vazar coordenadas
+// mesmo indirectamente através desta lista.
+const withRelevance = (t: any) => {
+  const { destinationLocation, ...rest } = t
+  return {
+    ...rest,
+    relevance: t.status === 'SCHEDULED' && t.active
+      ? isTravelModeRelevantAt({ startDate: t.startDate, endDate: t.endDate })
+      : null,
+    location: withoutCoordinates(deriveTravelModeLocation(t)),
+  }
 }
 
 // GET /api/travel/me
@@ -31,24 +65,65 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const modes = await (prisma as any).travelMode.findMany({
     where: { profileId }, orderBy: { startDate: 'desc' }, select: travelSelect
   })
-  res.json({ travelModes: modes })
+  // Fase 3D — devolve também a localização habitual e a localização
+  // efectiva já resolvidas (nunca coordenadas), para o frontend poder
+  // mostrar "Localização habitual: X" e "Travel Mode agendado/activo: Y"
+  // sem ter de replicar a lógica de effectiveLocationService.
+  const [homeLocation, effectiveLocation] = await Promise.all([
+    getHomeLocation(profileId),
+    getEffectiveLocation(profileId),
+  ])
+  res.json({
+    travelModes: modes.map(withRelevance),
+    homeLocation: withoutCoordinates(homeLocation),
+    effectiveLocation: toPublicEffectiveLocation(effectiveLocation),
+  })
 })
 
 // POST /api/travel — propose (individual: activates immediately; couple/
 // group: enters WAITING_MEMBER_APPROVAL until every active member approves)
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
+    // Sistema de localidades — city/country continuam aceites por
+    // compatibilidade (frontend ainda não migrado, ou um cliente antigo),
+    // mas o fluxo novo passa destinationLocationId (localidade do catálogo
+    // GeoLocation) + customDestinationLocality opcional (só apresentação —
+    // nunca usado para distância). Exige-se pelo menos um dos dois
+    // (destinationLocationId OU city) porque uma janela de viagem sem
+    // localidade nenhuma não faz sentido.
     const body = z.object({
-      city: z.string().min(1), country: z.string().optional().nullable(),
+      city: z.string().min(1).optional(),
+      country: z.string().optional().nullable(),
       startDate: z.string(), endDate: z.string(),
+      destinationLocationId: z.string().optional().nullable(),
+      customDestinationLocality: z.string().max(120).optional().nullable(),
     }).parse(req.body)
+
+    if (!body.destinationLocationId && !body.city) {
+      return res.status(400).json({ error: 'Escolhe um destino do catálogo ou indica uma cidade.' })
+    }
 
     if (new Date(body.endDate) <= new Date(body.startDate)) {
       return res.status(400).json({ error: 'Data de fim deve ser posterior ao início.' })
     }
 
+    if (body.destinationLocationId) {
+      const location = await (prisma as any).geoLocation.findUnique({ where: { id: body.destinationLocationId }, select: { id: true, active: true } })
+      if (!location || !location.active) return res.status(400).json({ error: 'Destino inválido.' })
+    }
+
     const profileId = await resolveMyProfileId(req.userId!)
     if (!profileId) return res.status(404).json({ error: 'Perfil não encontrado.' })
+
+    // Secção 9 do pedido de monetização — FREE nunca pode criar Travel
+    // Mode; PREMIUM (individual) e COUPLE_PREMIUM (casal, com aprovação
+    // dos dois — já implementada abaixo) podem. GROUP nunca herda o
+    // benefício via COUPLE_PREMIUM de outrem (ver o caso especial em
+    // hasEntitlement).
+    const canUseTravelMode = await hasEntitlement(req.userId!, 'TRAVEL_MODE', profileId)
+    if (!canUseTravelMode) {
+      return res.status(403).json({ error: 'Travel Mode requer Premium.', code: 'PREMIUM_REQUIRED' })
+    }
 
     const activeMembers = await getActiveMembers(profileId)
     const needsApproval = activeMembers.length > 1
@@ -63,7 +138,9 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
     const travel = await (prisma as any).travelMode.create({
       data: {
-        profileId, city: body.city, country: body.country || null,
+        profileId, city: body.city || null, country: body.country || null,
+        destinationLocationId: body.destinationLocationId || null,
+        customDestinationLocality: body.customDestinationLocality || null,
         startDate: new Date(body.startDate), endDate: new Date(body.endDate),
         createdByUserId: req.userId!,
         active: !needsApproval,
@@ -72,6 +149,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
       },
       select: travelSelect
     })
+    const travelDestinationLabel = deriveTravelModeLocation(travel).displayLabel || body.city || 'destino'
 
     if (!needsApproval) {
       const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
@@ -81,12 +159,12 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
       const others = activeMembers.filter(m => m.userId !== req.userId!)
       await Promise.all(others.map(m => notifyUser(
         m.userId, 'travel_approval_required', '✈️ Travel Mode proposto',
-        `O teu parceiro propôs Travel Mode para ${body.city}. Precisa da tua aprovação.`,
+        `O teu parceiro propôs Travel Mode para ${travelDestinationLabel}. Precisa da tua aprovação.`,
         { travelModeId: travel.id, tab: 'travel' }
       )))
     }
 
-    res.status(201).json({ travelMode: travel })
+    res.status(201).json({ travelMode: withRelevance(travel) })
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
     console.error('[TRAVEL CREATE]', err.message)
@@ -129,7 +207,7 @@ router.post('/:id/approve', requireAuth, async (req: AuthRequest, res: Response)
       })
       const { invalidateScoresForProfile } = await import('../lib/scoreInvalidationService')
       await invalidateScoresForProfile(travel.profileId).catch(() => {})
-      return res.json({ ok: true, travelMode: updated, message: 'Travel Mode aprovado por todos e ativo.' })
+      return res.json({ ok: true, travelMode: withRelevance(updated), message: 'Travel Mode aprovado por todos e ativo.' })
     }
 
     res.json({ ok: true, travelMode: null, message: 'Aprovação registada. A aguardar restantes membros.' })

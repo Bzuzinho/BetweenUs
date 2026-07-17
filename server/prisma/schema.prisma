@@ -112,6 +112,19 @@ enum ProfileVisibility {
   INVISIBLE
 }
 
+// Sistema de localidades (secção 13 do pedido) — o que é mostrado no
+// perfil quando existe customLocality preenchida. CUSTOM_LOCALITY mostra
+// o texto livre (ex. "Casal do Guerra"); REFERENCE_LOCALITY mostra o nome
+// oficial da localidade catalogada (ex. "Benedita"); REGION_ONLY mostra só
+// a região/distrito (ex. "Distrito de Leiria") para quem quer menos
+// detalhe. Nunca afecta o cálculo de distância — isso usa sempre
+// homeLocation/destinationLocation, nunca este campo.
+enum ProfileLocationVisibility {
+  CUSTOM_LOCALITY
+  REFERENCE_LOCALITY
+  REGION_ONLY
+}
+
 enum PhotoVisibility {
   PUBLIC
   BLURRED
@@ -477,6 +490,34 @@ model Profile {
   locationLng        Float?
   city               String?
   country            String?
+  // Fase 3D (Travel Mode por país/cidade, sem georreferenciação) — city/
+  // country acima SÃO a "localização habitual" (home location); não foram
+  // duplicados em campos novos homeCity/homeCountry para não criar dois
+  // sítios com a mesma verdade. Este campo é só o relógio da política de
+  // alteração: null enquanto nunca foi confirmada fora do onboarding;
+  // carimbado quando o onboarding termina (PUT /onboarding/step, step
+  // final) e outra vez em cada alteração pós-onboarding aceite. Ver
+  // effectiveLocationService.canChangeHomeLocation — enquanto
+  // status=DRAFT a correcção é sempre livre; depois disso, cooldown de
+  // HOME_LOCATION_COOLDOWN_DAYS (default 90). Nunca uma gate paga — é
+  // política de integridade de dados, não uma entitlement comercial.
+  homeLocationUpdatedAt DateTime?
+  // Sistema de localidades GeoNames (secção 5 do pedido) — homeLocationId
+  // aponta para uma linha catalogada em GeoLocation (nome oficial, país,
+  // região/concelho, coordenadas aproximadas do centro da localidade —
+  // NUNCA do utilizador). city/country acima ficam como estavam, para
+  // compatibilidade com perfis criados antes desta funcionalidade: nenhum
+  // dado é apagado, e nenhum perfil legacy deixa de funcionar só por não
+  // ter homeLocationId ainda. Ver effectiveLocationService — quando
+  // homeLocationId é null, cai-se em fallback para city/country (Fase 3D).
+  // customLocality é só apresentação (ex.: "Casal do Guerra"), nunca usada
+  // para calcular distância — a distância usa sempre as coordenadas de
+  // homeLocation. locationVisibility decide o que é mostrado no perfil
+  // quando customLocality existe (secção 13 do pedido).
+  homeLocationId     String?
+  homeLocation       GeoLocation? @relation("ProfileHomeLocation", fields: [homeLocationId], references: [id])
+  customLocality     String?
+  locationVisibility ProfileLocationVisibility @default(REFERENCE_LOCALITY)
   visibilityMode     ProfileVisibility @default(PUBLIC)
   discretionLevel    DiscretionLevel   @default(SELECTIVE)
   betweenScore       Int?
@@ -528,6 +569,10 @@ model Profile {
   // all, meaning a full table scan of profiles for every single discovery
   // request regardless of profile count.
   @@index([status, type])
+  // Sistema de localidades — usado por geo:audit-profiles (contar perfis
+  // com/sem homeLocationId) e pelo pipeline de Discovery (juntar a
+  // GeoLocation ao resolver a localização efectiva de cada candidato).
+  @@index([homeLocationId])
   @@map("profiles")
 }
 
@@ -1544,6 +1589,17 @@ model TravelMode {
   profile         Profile          @relation(fields: [profileId], references: [id], onDelete: Cascade)
   city            String
   country         String?
+  // Sistema de localidades GeoNames (secção 6 do pedido) — destinationLocationId
+  // aponta para a localidade de destino catalogada; city/country acima
+  // ficam como estavam para compatibilidade com Travel Mode criado antes
+  // desta funcionalidade. Um novo Travel Mode deve preencher
+  // destinationLocationId; a leitura (effectiveLocationService) cai em
+  // fallback para city/country quando destinationLocationId é null.
+  // customDestinationLocality é só apresentação (ex.: "Foz do Douro"),
+  // nunca usada para calcular distância.
+  destinationLocationId     String?
+  destinationLocation       GeoLocation? @relation("TravelDestinationLocation", fields: [destinationLocationId], references: [id])
+  customDestinationLocality String?
   startDate       DateTime
   endDate         DateTime
   active          Boolean          @default(true)
@@ -1558,7 +1614,66 @@ model TravelMode {
   // had zero indexes and, more importantly, zero callers at all outside
   // its own CRUD routes.
   @@index([profileId, active])
+  @@index([destinationLocationId])
   @@map("travel_modes")
+}
+
+// Sistema de localidades — catálogo interno de localidades (país +
+// distrito/região + concelho, quando disponível + coordenadas aproximadas
+// do centro da localidade), importado do GeoNames (secção 3/4 do pedido:
+// https://download.geonames.org/export/dump/PT.zip, licença CC BY 4.0 —
+// ver docs/product/GEONAMES_IMPORT.md). NUNCA contém localização do
+// utilizador — só o catálogo de localidades que o utilizador pode
+// escolher como referência. latitude/longitude nunca saem da API pública
+// (ver routes/locations.ts) — servem só para o backend calcular
+// distâncias aproximadas (distanceService.ts).
+model GeoLocation {
+  id             String   @id @default(cuid())
+  geonamesId     Int      @unique
+  countryCode    String
+  name           String
+  // Normalizado só para pesquisa/comparação (trim, minúsculas, sem
+  // acentos) — nunca usado para apresentação. Ver
+  // locationNormalizationService.normalizeLocationName. "Porto",
+  // "PORTO" e " porto " têm todos o mesmo normalizedName.
+  normalizedName String
+  asciiName      String?
+  // GeoNames já traz esta coluna no dump principal (separada por vírgulas,
+  // tipicamente curta para localidades povoadas de Portugal) — decidido
+  // NÃO criar uma tabela GeoLocationAlias separada nem importar o dump de
+  // alternate names completo (alternateNamesV2, muito mais volumoso e sem
+  // utilidade clara para pesquisa dentro de Portugal): guardar o texto tal
+  // como vem do ficheiro principal é suficiente para a pesquisa por
+  // prefixo/alias cobrir a maioria dos casos reais (ex.: "Pôrto" como
+  // alias histórico de "Porto"), com muito menos complexidade.
+  alternateNames String?
+  latitude       Float
+  longitude      Float
+  featureClass   String
+  featureCode    String?
+  population     BigInt?
+  admin1Code     String?
+  admin2Code     String?
+  admin1Name     String?
+  admin2Name     String?
+  timezone       String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  homeProfiles       Profile[]    @relation("ProfileHomeLocation")
+  travelDestinations TravelMode[] @relation("TravelDestinationLocation")
+
+  // Pesquisa por país + prefixo de nome (rota GET /api/locations/search).
+  @@index([countryCode, normalizedName])
+  // Desempate por população quando há muitas correspondências no mesmo
+  // prefixo (rota de pesquisa, secção 9 do pedido: "ordenação por ...
+  // população").
+  @@index([countryCode, population])
+  // Usado pelo script de importação para filtrar por classe/código de
+  // feature (localidades povoadas P/PPL* vs outras classes do GeoNames).
+  @@index([featureClass, featureCode])
+  @@map("geo_locations")
 }
 
 // 6.7 — one row per required approver (every ACCEPTED ProfileMember at
