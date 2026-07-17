@@ -7,7 +7,7 @@ async function main() {
   const reports = await prisma.report.findMany({
     where: {
       reporter: { isTestAccount: true },
-      reported: { isTestAccount: true },
+      reportedUser: { is: { isTestAccount: true } },
       reason: { notIn: Array.from(EXEMPT_REASONS) as any },
     },
     select: {
