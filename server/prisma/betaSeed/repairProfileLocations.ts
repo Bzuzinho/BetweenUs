@@ -1,6 +1,17 @@
 import prisma from '../../src/lib/prisma'
 import { normalizeLocationName, normalizeCountryCode } from '../../src/lib/locationNormalizationService'
 
+// Cidades usadas pelo seed beta. Usar geonamesId torna a associação estável,
+// independente do nome principal do catálogo (por exemplo, Lisbon vs Lisboa)
+// e elimina ambiguidades com localidades homónimas.
+const BETA_CITY_GEONAMES_IDS: Record<string, number> = {
+  lisboa: 2267057,
+  porto: 2735943,
+  coimbra: 2740636,
+  braga: 2742032,
+  faro: 2268337,
+}
+
 const FEATURE_PRIORITY: Record<string, number> = {
   PPLC: 100,
   PPLA: 90,
@@ -81,6 +92,7 @@ async function main() {
   }) as any[]
 
   let updated = 0
+  let alreadyCorrect = 0
   const unresolved: string[] = []
 
   for (const profile of profiles) {
@@ -95,25 +107,47 @@ async function main() {
       continue
     }
 
-    const normalizedName = normalizeLocationName(profile.city)
-    const candidates = await (prisma as any).geoLocation.findMany({
-      where: {
-        countryCode,
-        active: true,
-        normalizedName,
-      },
-      select: {
-        id: true,
-        geonamesId: true,
-        name: true,
-        featureCode: true,
-        population: true,
-        admin1Name: true,
-        admin2Name: true,
-      },
-    })
+    const cityKey = normalizeLocationName(profile.city)
+    const deterministicGeonamesId = countryCode === 'PT' ? BETA_CITY_GEONAMES_IDS[cityKey] : undefined
 
-    const selected = chooseLocation(profile.city, candidates)
+    let selected: any | null = null
+
+    if (deterministicGeonamesId) {
+      selected = await (prisma as any).geoLocation.findFirst({
+        where: {
+          geonamesId: deterministicGeonamesId,
+          countryCode,
+          active: true,
+        },
+        select: { id: true, geonamesId: true },
+      })
+    }
+
+    // Fallback para cidades futuras que não estejam no mapa fixo.
+    if (!selected) {
+      const candidates = await (prisma as any).geoLocation.findMany({
+        where: {
+          countryCode,
+          active: true,
+          OR: [
+            { normalizedName: cityKey },
+            { asciiName: { equals: profile.city, mode: 'insensitive' } },
+            { alternateNames: { contains: profile.city, mode: 'insensitive' } },
+          ],
+        },
+        select: {
+          id: true,
+          geonamesId: true,
+          name: true,
+          featureCode: true,
+          population: true,
+          admin1Name: true,
+          admin2Name: true,
+        },
+      })
+      selected = chooseLocation(profile.city, candidates)
+    }
+
     if (!selected) {
       unresolved.push(`${profile.displayName || profile.id}: ${profile.city}, ${profile.country}`)
       continue
@@ -128,10 +162,12 @@ async function main() {
         } as any,
       })
       updated++
+    } else {
+      alreadyCorrect++
     }
   }
 
-  console.log(`Beta profile locations: ${updated} atualizado(s), ${profiles.length - updated} já correto(s), ${unresolved.length} por resolver`)
+  console.log(`Beta profile locations: ${updated} atualizado(s), ${alreadyCorrect} já correto(s), ${unresolved.length} por resolver`)
 
   if (unresolved.length > 0) {
     console.error('Perfis beta sem localização determinística:')
