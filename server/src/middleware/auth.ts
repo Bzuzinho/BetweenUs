@@ -13,6 +13,64 @@ export interface AuthRequest extends Request {
   }
 }
 
+/**
+ * Couple invitations are intentionally guarded here as a defence-in-depth
+ * measure. The legacy join route is still mounted in routes/couples.ts, so
+ * every authenticated call to it must satisfy the same product invariants:
+ * the invited account owns an Individual Profile and uses the exact email
+ * address the invitation was issued to.
+ */
+const enforceCoupleInviteJoinRules = async (req: AuthRequest, res: Response): Promise<boolean> => {
+  const match = req.originalUrl.match(/^\/api\/couples\/join\/([^/?#]+)/)
+  if (req.method !== 'POST' || !match) return true
+
+  const token = decodeURIComponent(match[1])
+  const couple = await prisma.coupleProfile.findUnique({
+    where: { coupleInviteToken: token },
+    select: {
+      partnerOneUserId: true,
+      partnerTwoInviteEmail: true,
+      coupleStatus: true,
+    }
+  })
+
+  if (!couple) {
+    res.status(404).json({ error: 'Convite inválido ou expirado.', code: 'COUPLE_INVITE_INVALID' })
+    return false
+  }
+  if (couple.coupleStatus === 'ACTIVE') {
+    res.status(409).json({ error: 'Este convite já foi aceite.', code: 'COUPLE_INVITE_USED' })
+    return false
+  }
+  if (couple.partnerOneUserId === req.userId) {
+    res.status(400).json({ error: 'Não podes aceitar o teu próprio convite.', code: 'COUPLE_INVITE_SELF' })
+    return false
+  }
+
+  const invitedEmail = couple.partnerTwoInviteEmail?.trim().toLowerCase()
+  if (!invitedEmail || invitedEmail !== req.user!.email.trim().toLowerCase()) {
+    res.status(403).json({
+      error: 'Este convite está reservado para outro endereço de email.',
+      code: 'COUPLE_INVITE_EMAIL_MISMATCH'
+    })
+    return false
+  }
+
+  const individualProfile = await prisma.profile.findUnique({
+    where: { userId: req.userId! },
+    select: { id: true, type: true, status: true }
+  })
+  if (!individualProfile || individualProfile.type !== 'INDIVIDUAL') {
+    res.status(409).json({
+      error: 'Antes de aceitares o convite tens de criar o teu perfil individual.',
+      code: 'INDIVIDUAL_PROFILE_REQUIRED'
+    })
+    return false
+  }
+
+  return true
+}
+
 export const requireAuth = async (
   req: AuthRequest,
   res: Response,
@@ -63,8 +121,12 @@ export const requireAuth = async (
 
     req.userId = user.id
     req.user = user
+
+    if (!(await enforceCoupleInviteJoinRules(req, res))) return
+
     next()
-  } catch {
+  } catch (err: any) {
+    console.error('[AUTH]', err?.message || err)
     return res.status(401).json({ error: 'Invalid or expired token' })
   }
 }
