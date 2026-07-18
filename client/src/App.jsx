@@ -8,7 +8,8 @@ import VerifyEmailPage from './pages/VerifyEmailPage'
 import CreateProfilePage from './pages/CreateProfilePage'
 import EditProfilePage from './pages/EditProfilePage'
 import AccountPage from './pages/AccountPage'
-import CouplePage, { CoupleInvitePage } from './pages/CouplePage'
+import CouplePage from './pages/CouplePage'
+import CoupleInvitePage from './pages/CoupleInvitePage'
 import GroupPage, { GroupInvitePage } from './pages/GroupPage'
 import ReferralsPage from './pages/ReferralsPage'
 import PhotosPage from './pages/PhotosPage'
@@ -34,6 +35,11 @@ const LoadingScreen = () => (
   </div>
 )
 
+const pendingCoupleInviteRoute = () => {
+  const token = sessionStorage.getItem('pendingCoupleInvite')
+  return token ? `/couple-invite/${encodeURIComponent(token)}` : null
+}
+
 // BETA.2.5 — recoverable fallback for a route that ends up in a state
 // resolvePostLoginRoute/PrivateRoute genuinely cannot classify (should not
 // normally happen — this is a safety net, not the primary fix). The
@@ -51,7 +57,7 @@ function AuthErrorScreen({ onRetry }) {
       <div style={{ color:'#7E8FA3', fontSize:13, maxWidth:320 }}>Isto pode ser temporário. Tenta novamente ou termina sessão.</div>
       <div style={{ display:'flex', gap:10, marginTop:6 }}>
         <button onClick={onRetry} style={{ background:'#B8A7FF', border:'none', borderRadius:10, padding:'10px 18px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>Tentar novamente</button>
-        <button onClick={() => logout().then(() => window.location.href = '/login')} style={{ background:'none', border:'1px solid #1E3340', borderRadius:10, padding:'10px 18px', color:'#AAB6C2', fontSize:13, cursor:'pointer' }}>Terminar sessão</button>
+        <button onClick={() => logout().then(() => window.location.href = '/login')} style={{ background:'none', border:'1px solid #1E3340', borderRadius:10, padding:'10px 18px', color:'#AAB6C2', fontSize:13 }}>Terminar sessão</button>
       </div>
       <div style={{ color:'#4A6B7A', fontSize:11, marginTop:4 }}>Se o problema persistir, contacta o suporte com esta referência: AUTH_ROUTE_UNRESOLVED</div>
     </div>
@@ -59,11 +65,16 @@ function AuthErrorScreen({ onRetry }) {
 }
 
 function PrivateRoute({ children, requireProfile = true }) {
-  const { user, loading, refreshUser } = useAuth()
+  const { user, loading } = useAuth()
   if (loading) return <LoadingScreen />
   if (!user) return <Navigate to="/login" replace />
   if (user.adminRole) return children
   if (requireProfile && !user.profile) return <Navigate to="/create-profile" replace />
+
+  const inviteRoute = pendingCoupleInviteRoute()
+  if (user.profile && inviteRoute && !window.location.pathname.startsWith('/couple-invite/')) {
+    return <Navigate to={inviteRoute} replace />
+  }
   return children
 }
 
@@ -77,13 +88,10 @@ function AdminRoute({ children }) {
 
 function PublicRoute({ children }) {
   const { user, loading } = useAuth()
-  // Was `if (loading) return null` — rendered a genuinely blank page (not
-  // even a spinner) for the entire duration of the initial /auth/me call.
-  // Combined with no axios timeout (lib/api.js), a hung request here
-  // looked exactly like "a aplicação fica permanentemente a pensar" with
-  // nothing on screen to even suggest something was loading.
   if (loading) return <LoadingScreen />
   if (user) {
+    const inviteRoute = pendingCoupleInviteRoute()
+    if (inviteRoute) return <Navigate to={user.profile ? inviteRoute : '/create-profile'} replace />
     const { route } = resolvePostLoginRoute(user)
     return <Navigate to={route} replace />
   }
@@ -93,12 +101,10 @@ function PublicRoute({ children }) {
 function RootRedirect() {
   const { user, loading, refreshUser } = useAuth()
   if (loading) return <LoadingScreen />
+  const inviteRoute = pendingCoupleInviteRoute()
+  if (user && inviteRoute) return <Navigate to={user.profile ? inviteRoute : '/create-profile'} replace />
   const { route, reason } = resolvePostLoginRoute(user)
   if (reason === 'NOT_AUTHENTICATED') return <Navigate to={route} replace />
-  // Defensive: resolvePostLoginRoute is total (always returns a route for
-  // any input), so this branch is unreachable in practice — kept as an
-  // explicit safety net per the "nenhum estado válido deve produzir
-  // loading infinito" requirement, not as the primary fix.
   if (!route) return <AuthErrorScreen onRetry={refreshUser} />
   return <Navigate to={route} replace />
 }
@@ -117,7 +123,7 @@ export default function App() {
         <Route path="/verify-email"    element={<VerifyEmailPage />} />
         <Route path="/join"            element={<BetaJoinPage />} />
         <Route path="/join/:code"      element={<BetaJoinPage />} />
-        <Route path="/otp-login"         element={<OtpLoginPage />} />
+        <Route path="/otp-login"       element={<OtpLoginPage />} />
         <Route path="/legal/:page"     element={<LegalPage />} />
         <Route path="/couple-invite/:token" element={<CoupleInvitePage />} />
         <Route path="/group-invite/:token" element={<GroupInvitePage />} />
