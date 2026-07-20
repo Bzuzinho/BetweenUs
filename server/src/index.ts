@@ -18,19 +18,8 @@ dotenv.config()
 const app = express()
 const httpServer = createServer(app)
 
-// Closed Beta audit (FASE 2.5) — Railway sits in front of the app as a
-// reverse proxy. Without `trust proxy`, Express's req.ip resolves to
-// Railway's internal hop (not the real client), which every IP-keyed
-// rate limiter below (globalLimiter, strictLimiter, and any route-local
-// limiter falling back to req.ip) silently relies on — meaning every
-// real client behind that proxy was sharing one bucket, making login/
-// register/password-reset throttling far weaker than the configured
-// numbers suggest. `1` trusts exactly one hop (Railway's own edge),
-// matching Railway's documented single-proxy architecture — not `true`,
-// which would trust an arbitrary X-Forwarded-For chain from the client.
 app.set('trust proxy', 1)
 
-// 3.7 — init before any other middleware so it can capture as much as possible
 initSentry(app)
 app.use(Sentry.Handlers.requestHandler())
 
@@ -44,14 +33,8 @@ const ALLOWED_ORIGINS = isProd
 export const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, methods: ['GET','POST'], credentials: true }
 })
-// 7.12 — publish into socketRegistry so route/service code can reach `io`
-// without ever importing this whole module (which would re-run its
-// top-level side effects, including httpServer.listen() below).
 import('./lib/socketRegistry').then(({ setIo }) => setIo(io))
 
-// 3.8: real CSP + hardened headers. API is JSON-only (no HTML views), so we
-// lock content sources down hard; CSP_REPORT_ONLY lets ops flip to audit mode
-// without a redeploy if something unexpected breaks in production.
 const cspReportOnly = process.env.CSP_REPORT_ONLY === 'true'
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -94,62 +77,38 @@ const strictLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10,
   message: { error: 'Demasiadas tentativas. Tenta em 15 minutos.' } })
 
 app.use('/api', globalLimiter)
-app.use('/api/auth/login',    strictLimiter)
+app.use('/api/auth/login', strictLimiter)
 app.use('/api/auth/register', strictLimiter)
 app.use('/api/auth/password', strictLimiter)
 
 app.get('/health', (_, res) => res.json({
   status: 'ok', app: 'Between Us API', version: '2.6.0',
   environment: process.env.NODE_ENV, timestamp: new Date().toISOString(),
-  sentry: !!process.env.SENTRY_DSN, // 3.7 — cheap visibility into whether error monitoring is actually wired up
+  sentry: !!process.env.SENTRY_DSN,
 }))
 
-// Email diagnostic endpoint.
-// BETA.3 fix — this used to check ONLY the Gmail-SMTP-fallback vars
-// (SMTP_HOST/SMTP_USER/SMTP_PASS), so it reported "misconfigured" even when
-// SendGrid (the actual primary provider — see lib/email.ts) was correctly
-// configured, and it leaked SMTP_HOST, SMTP_USER, EMAIL_FROM and the first
-// 8 characters of SMTP_PASS in a JSON response with no auth at all. Now:
-// checks whichever provider lib/email.ts actually uses, does not attempt a
-// live connection (that requires the real credentials and risks leaking
-// connection-error details), and returns presence booleans only — never a
-// config value, never any part of a secret.
 app.get('/health/email', (_req, res) => {
   const hasSendgrid = !!process.env.SENDGRID_API_KEY
   const hasSmtp = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS)
   const provider: 'sendgrid' | 'smtp' | 'unknown' = hasSendgrid ? 'sendgrid' : hasSmtp ? 'smtp' : 'unknown'
-
   const fromConfigured = !!process.env.EMAIL_FROM
   const credentialsConfigured = hasSendgrid || hasSmtp
-
   const status: 'configured' | 'missing' | 'error' =
     provider === 'unknown' ? 'missing' : (credentialsConfigured && fromConfigured) ? 'configured' : 'error'
 
   res.json({
     status,
     provider,
-    checks: {
-      fromConfigured,
-      credentialsConfigured,
-    },
+    checks: { fromConfigured, credentialsConfigured },
   })
 })
 
-// 11.5.5 — Intelligent Recommendations diagnostic endpoint, same
-// unauthenticated "cheap ops visibility" pattern as /health/email. Exposes
-// only flags/config + a table-reachability check — no signal data, no
-// user/profile ids, nothing sensitive (unlike the admin-only
-// /api/admin/recommendations/* routes, which need auth because they show
-// real cohort metrics).
 app.get('/health/recommendations', async (_req, res) => {
   const shadowModeEnabled = isShadowModeEnabled()
   const intelligentRecommendationsEnabled = isIntelligentRecommendationsEnabled()
   const retentionDays = Number(process.env.RECOMMENDATION_LOG_RETENTION_DAYS || 90)
 
   try {
-    // Cheap reachability check for the ranking-log table shadow mode
-    // writes to — a count, never a write, so this endpoint can't itself
-    // pollute the log it's checking.
     const logTableReachable = await (prisma as any).recommendationRankingLog.count().then(() => true).catch(() => false)
     res.json({
       status: 'ok',
@@ -161,92 +120,75 @@ app.get('/health/recommendations', async (_req, res) => {
       productionRecommendedConfig: { shadowModeEnabled: true, intelligentRecommendationsEnabled: false },
     })
   } catch (err: any) {
-    // Closed Beta audit (FASE 2.4) — unauthenticated endpoint; this used to
-    // return err.message unconditionally. The only awaited call above
-    // already self-swallows its own errors (.catch(() => false)), so this
-    // catch currently only fires on an unexpected synchronous error, but
-    // gate it the same way the global error handler (bottom of this file)
-    // already gates everything else, so a future change here can't
-    // reintroduce a raw Prisma/DB error message on a public route.
     console.error('[HEALTH/RECOMMENDATIONS]', err.message)
     res.json({ status: 'error', message: isProd ? 'Erro interno.' : err.message, shadowModeEnabled, intelligentRecommendationsEnabled })
   }
 })
 
-import authRouter          from './routes/auth'
-import profileRouter       from './routes/profiles'
-import discoveryRouter     from './routes/discovery'
-import matchRouter         from './routes/matches'
-import privacyRouter       from './routes/privacy'
-import reportsRouter       from './routes/reports'
-import adminRouter         from './routes/admin'
+import authRouter from './routes/auth'
+import profileRouter from './routes/profiles'
+import discoveryRouter from './routes/discovery'
+import matchRouter from './routes/matches'
+import privacyRouter from './routes/privacy'
+import reportsRouter from './routes/reports'
+import adminOperationalOverridesRouter from './routes/adminOperationalOverrides'
+import adminRouter from './routes/admin'
 import subscriptionsRouter from './routes/subscriptions'
-import couplesRouter       from './routes/couples'
-import photosRouter        from './routes/photos'
-import contactsRouter      from './routes/contacts'
+import couplesRouter from './routes/couples'
+import photosRouter from './routes/photos'
+import contactsRouter from './routes/contacts'
 import verificationsRouter from './routes/verifications'
-import travelRouter        from './routes/travel'
-import consentRouter       from './routes/consent'
-import safetyRouter        from './routes/safety'
-import roomsRouter          from './routes/rooms'
-import pushRouter           from './routes/push'
-import guideRouter          from './routes/guide'
-import betaRouter          from './routes/beta'
-import notificationsRouter  from './routes/notifications'
-import catalogRouter         from './routes/catalog'
-import groupsRouter           from './routes/groups'
-import referralsRouter        from './routes/referrals'
-import legalRouter            from './routes/legal'
+import travelRouter from './routes/travel'
+import consentRouter from './routes/consent'
+import safetyRouter from './routes/safety'
+import roomsRouter from './routes/rooms'
+import pushRouter from './routes/push'
+import guideRouter from './routes/guide'
+import betaRouter from './routes/beta'
+import notificationsRouter from './routes/notifications'
+import catalogRouter from './routes/catalog'
+import groupsRouter from './routes/groups'
+import referralsRouter from './routes/referrals'
+import legalRouter from './routes/legal'
 import privateInterestsRouter from './routes/privateInterests'
-import agreementsRouter        from './routes/agreements'
-import eventsRouter            from './routes/events'
-import circlesRouter           from './routes/circles'
-import recommendationsRouter    from './routes/recommendations'
-import locationsRouter          from './routes/locations'
+import agreementsRouter from './routes/agreements'
+import eventsRouter from './routes/events'
+import circlesRouter from './routes/circles'
+import recommendationsRouter from './routes/recommendations'
+import locationsRouter from './routes/locations'
 
-app.use('/api/auth',          authRouter)
-app.use('/api/profiles',      profileRouter)
-app.use('/api/discovery',     discoveryRouter)
-app.use('/api/matches',       matchRouter)
-app.use('/api/privacy',       privacyRouter)
-app.use('/api/reports',       reportsRouter)
-app.use('/api/admin',         adminRouter)
+app.use('/api/auth', authRouter)
+app.use('/api/profiles', profileRouter)
+app.use('/api/discovery', discoveryRouter)
+app.use('/api/matches', matchRouter)
+app.use('/api/privacy', privacyRouter)
+app.use('/api/reports', reportsRouter)
+app.use('/api/admin', adminOperationalOverridesRouter)
+app.use('/api/admin', adminRouter)
 app.use('/api/subscriptions', subscriptionsRouter)
-app.use('/api/couples',       couplesRouter)
-app.use('/api/photos',        photosRouter)
-app.use('/api/contacts',      contactsRouter)
+app.use('/api/couples', couplesRouter)
+app.use('/api/photos', photosRouter)
+app.use('/api/contacts', contactsRouter)
 app.use('/api/verifications', verificationsRouter)
-app.use('/api/travel',        travelRouter)
-app.use('/api/consent',       consentRouter)
-app.use('/api/safety',        safetyRouter)
-app.use('/api/rooms',          roomsRouter)
-app.use('/api/push',           pushRouter)
-app.use('/api/guide',          guideRouter)
-app.use('/api/beta',          betaRouter)
+app.use('/api/travel', travelRouter)
+app.use('/api/consent', consentRouter)
+app.use('/api/safety', safetyRouter)
+app.use('/api/rooms', roomsRouter)
+app.use('/api/push', pushRouter)
+app.use('/api/guide', guideRouter)
+app.use('/api/beta', betaRouter)
 app.use('/api/notifications', notificationsRouter)
-app.use('/api/catalog',       catalogRouter)
-app.use('/api/groups',        groupsRouter)
-app.use('/api/referrals',     referralsRouter)
-app.use('/api/legal',          legalRouter)
+app.use('/api/catalog', catalogRouter)
+app.use('/api/groups', groupsRouter)
+app.use('/api/referrals', referralsRouter)
+app.use('/api/legal', legalRouter)
 app.use('/api/private-interests', privateInterestsRouter)
-app.use('/api/agreements',    agreementsRouter)
-app.use('/api/events',         eventsRouter)
-app.use('/api/circles',        circlesRouter)
+app.use('/api/agreements', agreementsRouter)
+app.use('/api/events', eventsRouter)
+app.use('/api/circles', circlesRouter)
 app.use('/api/admin/recommendations', recommendationsRouter)
-// Sistema de localidades (catálogo GeoNames) — /api/locations/admin/* fica
-// dentro deste próprio router (locations.ts já protege esses caminhos com
-// requireAdmin('catalog'), mesmo padrão de catalog.ts's /admin/*).
-app.use('/api/locations',     locationsRouter)
+app.use('/api/locations', locationsRouter)
 
-// 7.8 — Socket.IO authentication. The Sprint 7 audit found NO auth at all
-// on the connection handshake: any socket (authenticated HTTP session or
-// not) could join_room for any roomId just by guessing/knowing the id,
-// since join_room did zero membership checks. Every connection now must
-// present a valid access token (same JWT requireAuth already verifies)
-// during the handshake, or the connection is rejected outright — socket.
-// data.userId is then the ONLY source of truth for "who is this socket",
-// exactly like req.userId is for HTTP. No event handler below ever reads
-// a userId/senderUserId out of the payload the client sent.
 io.use((socket, next) => {
   try {
     ;(socket.data as any).userId = resolveSocketUserId(socket.handshake)
@@ -259,12 +201,6 @@ io.use((socket, next) => {
 io.on('connection', socket => {
   const userId = (socket.data as any).userId as string
 
-  // ── Conversation — Closed Beta audit (FASE 1.1) found these two handlers
-  // joined/broadcast to 'conversation:<id>' using an id fully controlled by
-  // the client with NO membership check, unlike Private Room's room:join /
-  // typing:start below. Now both re-validate membership on every call via
-  // conversationAuthorizationService, the Socket.IO-side equivalent of
-  // matches.ts's verifyMatchMembership (used by the REST message endpoints).
   socket.on('join_conversation', async (id: string) => {
     const { resolveConversationMembership } = await import('./lib/conversationAuthorizationService')
     const auth = await resolveConversationMembership(id, userId)
@@ -279,10 +215,6 @@ io.on('connection', socket => {
     socket.to('conversation:' + data.conversationId).emit('typing', data)
   })
 
-  // ── Private Room (7.8) — every handler re-validates membership through
-  // RoomAuthorizationService on every call, not just at join time (a
-  // member could be removed mid-session; socket.io rooms don't know that
-  // on their own). ──
   socket.on('room:join', async (roomId: string) => {
     const { resolveRoomMembership } = await import('./lib/roomAuthorizationService')
     const auth = await resolveRoomMembership(roomId, userId)
@@ -333,13 +265,10 @@ io.on('connection', socket => {
   })
 })
 
-// 3.8: explicit JSON 404 instead of Express's default text/html fallback
 app.use((req: express.Request, res: express.Response) => {
   res.status(404).json({ error: 'Rota não encontrada.' })
 })
 
-// 3.7 — reports uncaught route errors to Sentry (no-op if SENTRY_DSN unset).
-// Must come after routes/404, before our own JSON error handler below.
 app.use(Sentry.Handlers.errorHandler())
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -352,14 +281,8 @@ httpServer.listen(PORT, () => {
   console.log('[SERVER] Between Us API v2.5.0 — port', PORT)
   console.log('[SERVER] Environment:', process.env.NODE_ENV)
   if (isProd && !process.env.SMTP_PASS) console.warn('[WARN] SMTP_PASS not set — emails will not send')
-  // 9.6 — safetyAlertCron.ts's single combined "detect overdue + alert"
-  // step is replaced by three distinct jobs, each owning one
-  // SafetyCheckinStateMachine transition (request/overdue/escalation).
   import('./jobs/safetyCheckinJobs').then(({ startSafetyCheckinJobs }) => startSafetyCheckinJobs())
-  // 7.7 — was written (T8) but never actually scheduled anywhere; wiring
-  // it in-process here, same pattern as safetyAlertCron above.
   import('./jobs/cleanupExpiredMessages').then(({ startRoomMessageCleanupCron }) => startRoomMessageCleanupCron())
-  // 8.6 — same in-process interval pattern, expires overdue ConsentCheck rows.
   import('./jobs/expireConsentChecks').then(({ startExpireConsentChecksCron }) => startExpireConsentChecksCron())
   import('./jobs/recommendationLogCleanupJob').then(({ startRecommendationLogCleanupCron }) => startRecommendationLogCleanupCron())
 })
