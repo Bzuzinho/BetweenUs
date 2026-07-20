@@ -1,10 +1,8 @@
 -- Fase 3D — Travel Mode por país/cidade (sem georreferenciação)
 --
--- Migration puramente aditiva: uma única coluna nullable, sem valor
--- por omissão obrigatório, sem tocar em dados existentes, sem renomear
--- nem remover nada. Guarda quando a "localização habitual" (Profile.city/
--- Profile.country, já existentes) foi confirmada pela última vez fora do
--- onboarding — usado por effectiveLocationService.canChangeHomeLocation
--- para aplicar o cooldown de correção (ver comentário no schema.prisma).
+-- Migration puramente aditiva e idempotente. A coluna pode já existir em
+-- ambientes que receberam o campo antes de o histórico Prisma ser baselined.
+-- IF NOT EXISTS permite repetir o deploy sem falhar nem alterar dados.
 
-ALTER TABLE "profiles" ADD COLUMN "homeLocationUpdatedAt" TIMESTAMP(3);
+ALTER TABLE "profiles"
+ADD COLUMN IF NOT EXISTS "homeLocationUpdatedAt" TIMESTAMP(3);

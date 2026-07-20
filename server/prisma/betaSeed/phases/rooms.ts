@@ -11,6 +11,7 @@ import { canTransitionRoom, type RoomEvent } from '../../../src/lib/privateRoomS
 import { blockProfile } from '../../../src/lib/blockService'
 import { createLikeOrMatch, transition } from '../../../src/lib/matchService'
 import { isApprovalSatisfied } from '../../../src/lib/approvalPolicyService'
+import { withTemporaryPremium } from '../withTemporaryPremium'
 
 type ProfileMap = Record<string, { profileId: string; userId?: string; memberUserIds?: string[] }>
 
@@ -49,7 +50,6 @@ export const seedPrivateRooms = async (
 ): Promise<Record<string, string>> => {
   const roomIds: Record<string, string> = {}
 
-  // ROOM A — INDIVIDUAL_PAIR — ACTIVE (from match_individual_active: Marta/Joana).
   if (matchIds.match_individual_active) {
     const r = await createFromMatch(matchIds.match_individual_active)
     if (r.ok && r.room) {
@@ -62,10 +62,6 @@ export const seedPrivateRooms = async (
     }
   }
 
-  // ROOM B — COUPLE_SINGLE — WAITING_CONSENT (from match_couple_active:
-  // Couple 1 x Joana). Only Joana accepts — the couple's members don't —
-  // so the room stays WAITING_CONSENT (roomRuleService.acceptRuleSet's
-  // real "not everyone accepted yet" branch).
   if (matchIds.match_couple_active) {
     const r = await createFromMatch(matchIds.match_couple_active)
     if (r.ok && r.room) {
@@ -75,16 +71,17 @@ export const seedPrivateRooms = async (
     }
   }
 
-  // ROOM C — COUPLE_COUPLE — ACTIVE. Needs its own couple x couple match
-  // (not built in discoveryMatch.ts, which only pairs couples with
-  // individuals) — created here since it exists purely to seed this room.
+  // ROOM C — couple x couple; temporarily bypass only the commercial
+  // connection threshold while retaining all safety and approval logic.
   const c1 = couples['couple_1_third_match']
   const c2 = couples['couple_2_conflict']
   if (c1 && c2) {
-    await createLikeOrMatch(c1.profileId, c2.profileId)
-    const reciprocal = await createLikeOrMatch(c2.profileId, c1.profileId)
-    const matchId = reciprocal.kind === 'MATCH_PENDING_COUPLE_APPROVAL' || reciprocal.kind === 'ALREADY_MATCHED' ? reciprocal.matchId : null
-    if (matchId) {
+    await withTemporaryPremium([...(c1.memberUserIds || []), ...(c2.memberUserIds || [])], async () => {
+      await createLikeOrMatch(c1.profileId, c2.profileId)
+      const reciprocal = await createLikeOrMatch(c2.profileId, c1.profileId)
+      const matchId = reciprocal.kind === 'MATCH_PENDING_COUPLE_APPROVAL' || reciprocal.kind === 'ALREADY_MATCHED' ? reciprocal.matchId : null
+      if (!matchId) return
+
       const match = await prisma.match.findUnique({ where: { id: matchId } })
       if (match && match.status !== 'ACTIVE') {
         for (const uid of [...(c1.memberUserIds || []), ...(c2.memberUserIds || [])]) {
@@ -106,10 +103,9 @@ export const seedPrivateRooms = async (
           await acceptRuleSet(r.room.id, uid)
         }
       }
-    }
+    })
   }
 
-  // ROOM D — PAUSED (from match_paused: Alex x Rui).
   if (matchIds.match_paused) {
     const r = await createFromMatch(matchIds.match_paused)
     if (r.ok && r.room) {
@@ -122,7 +118,6 @@ export const seedPrivateRooms = async (
     }
   }
 
-  // ROOM E — CLOSED (from match_ended: Rui x Diogo).
   if (matchIds.match_ended) {
     const r = await createFromMatch(matchIds.match_ended)
     if (r.ok && r.room) {
@@ -135,12 +130,6 @@ export const seedPrivateRooms = async (
     }
   }
 
-  // ROOM F — SAFETY_LOCKED. Built from match_blocked (Alex x Ines), room
-  // created first (still ACTIVE match at this point — see
-  // discoveryMatch.ts's comment on why the block call was deliberately
-  // deferred to here), then ONE blockProfile() call produces BOTH the
-  // BLOCKED match (discoveryMatch.ts's scenario 8) and this SAFETY_LOCKED
-  // room, exactly as blockService.ts's 2-member-room policy describes.
   if (matchIds.match_blocked) {
     const r = await createFromMatch(matchIds.match_blocked)
     if (r.ok && r.room) {
@@ -153,11 +142,6 @@ export const seedPrivateRooms = async (
     }
   }
 
-  // ROOM G — GROUP_INDIVIDUAL — ACTIVE, all rules accepted. From
-  // match_group_individual_active (Trio Aurora x Miguel). BETA.2 (FASE E)
-  // — demonstrates a 4-person Private Room (3 group members + Miguel),
-  // proving createFromMatch/PrivateRoomMember creation is genuinely
-  // N-party and not hardcoded to 2 logical sides.
   if (matchIds.match_group_individual_active && group) {
     const r = await createFromMatch(matchIds.match_group_individual_active)
     if (r.ok && r.room) {

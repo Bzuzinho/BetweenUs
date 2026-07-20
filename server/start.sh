@@ -38,6 +38,12 @@
 # scripts (db:seed*, reset-password, hard-delete, beta:gate, backfills) —
 # none of those are in the request-serving path this script starts.
 set -e
+
+# Closed beta product policy: 70 made the core Free flow practically
+# unreachable for new users with a sparse catalogue. Keep an environment
+# override, but use 35 as the launch-safe default.
+export FREE_MIN_CONNECTION_SCORE="${FREE_MIN_CONNECTION_SCORE:-35}"
+
 echo "=== Between Us API v2.6.0 ==="
-echo "--- Starting server ---"
+echo "--- Starting server (FREE_MIN_CONNECTION_SCORE=${FREE_MIN_CONNECTION_SCORE}) ---"
 exec node dist/index.js
