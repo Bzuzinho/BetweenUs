@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { SUPPORTED_LANGUAGES, translations } from './translations'
+import { exploreTranslations } from './exploreTranslations'
+import { accountTranslations } from './accountTranslations'
 
 const STORAGE_KEY = 'betweenus.language'
 const DEFAULT_LANGUAGE = 'pt-PT'
@@ -7,6 +9,19 @@ const I18nContext = createContext(null)
 
 const resolveLanguage = value => SUPPORTED_LANGUAGES.includes(value) ? value : DEFAULT_LANGUAGE
 const getNestedValue = (object, path) => path.split('.').reduce((value, key) => value?.[key], object)
+
+const supplementalCatalogs = {
+  explore: exploreTranslations,
+  account: accountTranslations,
+  common: accountTranslations,
+}
+
+function getSupplementalValue(language, key) {
+  const namespace = key.split('.')[0]
+  const catalog = supplementalCatalogs[namespace]
+  if (!catalog) return undefined
+  return getNestedValue(catalog[language], key)
+}
 
 export function I18nProvider({ children }) {
   const [language, setLanguageState] = useState(() => resolveLanguage(localStorage.getItem(STORAGE_KEY)))
@@ -23,7 +38,9 @@ export function I18nProvider({ children }) {
 
   const t = useCallback((key, fallback) => {
     return getNestedValue(translations[language], key)
+      ?? getSupplementalValue(language, key)
       ?? getNestedValue(translations[DEFAULT_LANGUAGE], key)
+      ?? getSupplementalValue(DEFAULT_LANGUAGE, key)
       ?? fallback
       ?? key
   }, [language])
