@@ -22,7 +22,9 @@ if (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 254) {
     exit;
 }
 
-$backendUrl = getenv('BETWEENUS_BACKEND_URL') ?: 'https://betweenus-production.up.railway.app';
+// Default to the Railway backend service. This can still be overridden by
+// setting BETWEENUS_BACKEND_URL in the hosting environment.
+$backendUrl = getenv('BETWEENUS_BACKEND_URL') ?: 'https://fearless-stillness-production-e5f6.up.railway.app';
 $endpoint = rtrim($backendUrl, '/') . '/api/beta/applications';
 
 $ch = curl_init($endpoint);
