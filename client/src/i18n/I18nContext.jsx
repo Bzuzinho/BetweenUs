@@ -6,7 +6,6 @@ const DEFAULT_LANGUAGE = 'pt-PT'
 const I18nContext = createContext(null)
 
 const resolveLanguage = value => SUPPORTED_LANGUAGES.includes(value) ? value : DEFAULT_LANGUAGE
-
 const getNestedValue = (object, path) => path.split('.').reduce((value, key) => value?.[key], object)
 
 export function I18nProvider({ children }) {
@@ -29,7 +28,21 @@ export function I18nProvider({ children }) {
       ?? key
   }, [language])
 
-  const value = useMemo(() => ({ language, setLanguage, t }), [language, setLanguage, t])
+  const formatDate = useCallback((value, options = {}) => {
+    if (!value) return ''
+    const date = value instanceof Date ? value : new Date(value)
+    if (Number.isNaN(date.getTime())) return ''
+    return new Intl.DateTimeFormat(language, options).format(date)
+  }, [language])
+
+  const formatNumber = useCallback((value, options = {}) => {
+    return new Intl.NumberFormat(language, options).format(value)
+  }, [language])
+
+  const value = useMemo(
+    () => ({ language, setLanguage, t, formatDate, formatNumber }),
+    [language, setLanguage, t, formatDate, formatNumber]
+  )
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }
