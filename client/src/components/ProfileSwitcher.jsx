@@ -1,16 +1,10 @@
 // BETA.2 (FASE C) — Profile Switcher.
 //
-// Lets a user with more than one profile context (their own Individual
-// Profile, plus any Shared Profile — COUPLE/GROUP — they belong to) pick
-// which one they're currently acting as. Backed by GET /auth/me's
-// availableProfileContexts/activeProfileContext and
-// POST /auth/active-profile (activeProfileContextService.ts on the
-// server) — this component is purely a thin UI over that, no client-side
-// resolution logic of its own.
-//
-// Renders nothing when there's nothing to switch between (the common
-// case today: most users only have their own Individual Profile), so it's
-// safe to mount unconditionally in AppShell.
+// The authenticated header always identifies the real account holder. Users
+// who belong to a couple can open the dropdown and choose whether they are
+// acting through their individual profile or the shared couple profile.
+// Individual-only users see their individual profile without an unnecessary
+// dropdown.
 import { useState } from 'react'
 import api from '../lib/api'
 import { useAuth } from '../context/AuthContext'
@@ -20,7 +14,7 @@ const C = {
   primary:'#B8A7FF', text:'#F5F7FA', muted:'#7E8FA3',
 }
 
-const TYPE_LABEL = { INDIVIDUAL: 'Individual', COUPLE: 'Casal', GROUP: 'Grupo' }
+const TYPE_LABEL = { INDIVIDUAL: 'Perfil individual', COUPLE: 'Perfil de casal', GROUP: 'Perfil de grupo' }
 
 export default function ProfileSwitcher() {
   const { user, refreshUser } = useAuth()
@@ -28,62 +22,117 @@ export default function ProfileSwitcher() {
   const [switching, setSwitching] = useState(false)
 
   const contexts = user?.availableProfileContexts || []
-  const active = user?.activeProfileContext
+  const active = user?.activeProfileContext || user?.individualProfile || null
+  const individual = contexts.find(ctx => ctx.type === 'INDIVIDUAL') || user?.individualProfile || null
+  const hasCoupleProfile = contexts.some(ctx => ctx.type === 'COUPLE')
+  const canSwitchProfile = hasCoupleProfile && contexts.length > 1
 
-  if (contexts.length <= 1) return null
+  const realName = user?.accountName?.trim() || user?.email?.split('@')[0] || 'Utilizador'
+  const activeProfileName = active?.displayName || individual?.displayName || 'Perfil individual'
+  const activeTypeLabel = TYPE_LABEL[active?.type] || TYPE_LABEL.INDIVIDUAL
 
   const handleSwitch = async (profileId) => {
-    if (profileId === active?.profileId) { setOpen(false); return }
+    if (profileId === active?.profileId || profileId === active?.id) {
+      setOpen(false)
+      return
+    }
+
     setSwitching(true)
     try {
       await api.post('/auth/active-profile', { profileId })
       await refreshUser()
     } catch {
-      // best-effort — leave the menu open so the user can retry
+      // Best effort: keep the current context if the request fails.
     } finally {
       setSwitching(false)
       setOpen(false)
     }
   }
 
-  return (
-    <div style={{ position:'relative' }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        disabled={switching}
-        style={{
-          display:'flex', alignItems:'center', gap:8,
-          background:C.surface, border:`1px solid ${C.border}`, borderRadius:10,
-          padding:'8px 12px', color:C.text, fontSize:13, cursor:'pointer'
-        }}
-      >
-        <span style={{ color:C.muted, fontSize:11 }}>{TYPE_LABEL[active?.type] || ''}</span>
-        <span style={{ fontWeight:600 }}>{active?.displayName || 'Perfil'}</span>
-        <span style={{ color:C.muted, fontSize:10 }}>{open ? '▲' : '▼'}</span>
-      </button>
+  const headerContent = (
+    <>
+      <span style={{
+        width:30, height:30, borderRadius:'50%', flexShrink:0,
+        display:'flex', alignItems:'center', justifyContent:'center',
+        background:'rgba(184,167,255,0.12)', color:C.primary,
+        fontSize:13, fontWeight:700,
+      }}>
+        {realName.charAt(0).toUpperCase()}
+      </span>
+      <span style={{ minWidth:0, textAlign:'left', lineHeight:1.2 }}>
+        <span style={{ display:'block', color:C.text, fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+          {realName}
+        </span>
+        <span style={{ display:'block', color:C.muted, fontSize:10, marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+          {activeTypeLabel} · {activeProfileName}
+        </span>
+      </span>
+      {canSwitchProfile && (
+        <span style={{ color:C.muted, fontSize:10, marginLeft:2 }}>{open ? '▲' : '▼'}</span>
+      )}
+    </>
+  )
 
-      {open && (
+  return (
+    <div style={{ position:'relative', minWidth:0 }}>
+      {canSwitchProfile ? (
+        <button
+          type="button"
+          aria-label="Mudar de perfil"
+          aria-expanded={open}
+          onClick={() => setOpen(value => !value)}
+          disabled={switching}
+          style={{
+            maxWidth:250, display:'flex', alignItems:'center', gap:8,
+            background:C.surface, border:`1px solid ${C.border}`, borderRadius:12,
+            padding:'7px 10px', cursor:switching ? 'wait' : 'pointer', minWidth:0,
+          }}
+        >
+          {headerContent}
+        </button>
+      ) : (
         <div style={{
-          position:'absolute', top:'calc(100% + 6px)', left:0, minWidth:220, zIndex:50,
-          background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, overflow:'hidden'
+          maxWidth:250, display:'flex', alignItems:'center', gap:8,
+          background:C.surface, border:`1px solid ${C.border}`, borderRadius:12,
+          padding:'7px 10px', minWidth:0,
         }}>
-          {contexts.map(ctx => (
-            <button
-              key={ctx.profileId}
-              onClick={() => handleSwitch(ctx.profileId)}
-              style={{
-                display:'flex', flexDirection:'column', alignItems:'flex-start', width:'100%',
-                background: ctx.profileId === active?.profileId ? 'rgba(184,167,255,0.12)' : 'transparent',
-                border:'none', borderBottom:`1px solid ${C.border}`, padding:'10px 12px',
-                color:C.text, fontSize:13, cursor:'pointer', textAlign:'left'
-              }}
-            >
-              <span style={{ fontWeight:600 }}>{ctx.displayName}</span>
-              <span style={{ color:C.muted, fontSize:11 }}>
-                {TYPE_LABEL[ctx.type] || ctx.type} · {ctx.role === 'OWNER' ? 'Dono' : 'Membro'}
-              </span>
-            </button>
-          ))}
+          {headerContent}
+        </div>
+      )}
+
+      {canSwitchProfile && open && (
+        <div style={{
+          position:'absolute', top:'calc(100% + 6px)', right:0, minWidth:240, zIndex:50,
+          background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:'hidden',
+          boxShadow:'0 14px 36px rgba(0,0,0,0.35)',
+        }}>
+          <div style={{ padding:'9px 12px', color:C.muted, fontSize:10, textTransform:'uppercase', letterSpacing:'0.06em', borderBottom:`1px solid ${C.border}` }}>
+            Usar a aplicação como
+          </div>
+          {contexts
+            .filter(ctx => ctx.type === 'INDIVIDUAL' || ctx.type === 'COUPLE')
+            .map(ctx => {
+              const isActive = ctx.profileId === active?.profileId || ctx.profileId === active?.id
+              return (
+                <button
+                  type="button"
+                  key={ctx.profileId}
+                  onClick={() => handleSwitch(ctx.profileId)}
+                  disabled={switching}
+                  style={{
+                    display:'flex', flexDirection:'column', alignItems:'flex-start', width:'100%',
+                    background:isActive ? 'rgba(184,167,255,0.12)' : 'transparent',
+                    border:'none', borderBottom:`1px solid ${C.border}`, padding:'11px 12px',
+                    color:C.text, fontSize:13, cursor:switching ? 'wait' : 'pointer', textAlign:'left',
+                  }}
+                >
+                  <span style={{ fontWeight:600 }}>{ctx.displayName || TYPE_LABEL[ctx.type]}</span>
+                  <span style={{ color:C.muted, fontSize:11, marginTop:2 }}>
+                    {TYPE_LABEL[ctx.type] || ctx.type}{isActive ? ' · Ativo' : ''}
+                  </span>
+                </button>
+              )
+            })}
         </div>
       )}
     </div>
