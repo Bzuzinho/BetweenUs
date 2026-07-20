@@ -176,8 +176,11 @@ function RoomChat({ room:initialRoom, onBack }) {
   const send = async () => {
     if (!body.trim() || sending || !canSend) return
     const text = body.trim(); setBody(''); setSending(true); setError('')
-    try { await api.post(`/rooms/${room.id}/messages`, { body:text }) }
-    catch { setBody(text); setError(t('rooms.genericError')) }
+    try {
+      const response = await api.post(`/rooms/${room.id}/messages`, { body:text })
+      const message = response.data?.message || response.data
+      if (message?.id) setMessages(previous => previous.some(item => item.id === message.id) ? previous : [...previous, message])
+    } catch { setBody(text); setError(t('rooms.genericError')) }
     finally { setSending(false) }
   }
   const notifyTyping = start => getSocket().emit(start ? 'typing:start' : 'typing:stop', room.id)
