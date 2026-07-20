@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
+import { Logo } from '../lib/design'
 
 const C = {
   bg:'#0A141A', card:'#102129', input:'#0F1E26', border:'#1E3340',
@@ -117,10 +118,9 @@ export default function RegisterPage() {
 
         {/* Logo */}
         <div style={{ textAlign:'center', marginBottom:36 }}>
-          <svg width="56" height="28" viewBox="0 0 56 28" style={{ display:'block', margin:'0 auto 12px' }}>
-            <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" strokeWidth="3.5"/>
-            <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.75"/>
-          </svg>
+          <div style={{ display:'flex', justifyContent:'center', marginBottom:12 }}>
+            <Logo size={56} />
+          </div>
           <div style={{ fontSize:24, fontWeight:500, color:C.text }}>Criar conta</div>
           <div style={{ fontSize:13, color:C.muted, marginTop:4 }}>Privacidade por defeito. Consentimento primeiro.</div>
         </div>

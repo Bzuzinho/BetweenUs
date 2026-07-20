@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { resolvePostLoginRoute } from '../lib/postLoginRoute'
+import { Logo } from '../lib/design'
 
 const C = {
   bg:'#0A141A', surface:'#102129', border:'#1E3340', input:'#0F1E26',
@@ -60,10 +61,9 @@ export default function LoginPage() {
 
         {/* Logo */}
         <div style={{ textAlign:'center', marginBottom:40 }}>
-          <svg width="56" height="28" viewBox="0 0 56 28" style={{ display:'block', margin:'0 auto 14px' }}>
-            <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" strokeWidth="3.5"/>
-            <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.75"/>
-          </svg>
+          <div style={{ display:'flex', justifyContent:'center', marginBottom:14 }}>
+            <Logo size={56} />
+          </div>
           <div style={{ fontSize:28, fontWeight:500, color:C.text, letterSpacing:'-0.01em' }}>Between Us</div>
           <div style={{ fontSize:14, color:C.muted, marginTop:6 }}>Adult connections. Private by design.</div>
         </div>

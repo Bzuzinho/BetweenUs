@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 import { getUserDisplayName } from '../lib/userDisplay'
+import { Logo } from '../lib/design'
 
 /* ─── Design tokens ──────────────────────────────────────────────────────────── */
 const C = {
@@ -300,10 +301,7 @@ function AdminHeader({ user, onLogout }) {
       minHeight:'calc(56px + env(safe-area-inset-top))',
     }}>
       {/* Logo */}
-      <svg width="34" height="17" viewBox="0 0 56 28" style={{ flexShrink:0 }}>
-        <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" strokeWidth="3.5"/>
-        <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.8"/>
-      </svg>
+      <div style={{ flexShrink:0 }}><Logo size={34} /></div>
 
       {/* App name */}
       <span style={{ fontSize:16, fontWeight:600, color:C.text, letterSpacing:'-0.01em', flexShrink:0 }}>

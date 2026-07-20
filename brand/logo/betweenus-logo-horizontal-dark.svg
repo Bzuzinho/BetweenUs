@@ -1,0 +1,9 @@
+<svg viewBox="0 0 230 40" xmlns="http://www.w3.org/2000/svg">
+  <!-- Symbol -->
+  <g transform="translate(0,4) scale(1.1429)">
+    <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" stroke-width="3.5"/>
+    <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" stroke-width="2.5" opacity="0.75"/>
+  </g>
+  <!-- Wordmark: Manrope 700, dark text for light backgrounds -->
+  <text x="82" y="27" font-family="Manrope, sans-serif" font-weight="700" font-size="26" fill="#0A141A">BetweenUs</text>
+</svg>

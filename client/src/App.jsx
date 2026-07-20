@@ -23,15 +23,13 @@ import AdminPage from './pages/AdminPage'
 import OtpLoginPage from './pages/OtpLoginPage'
 import AppShell from './AppShell'
 import { resolvePostLoginRoute } from './lib/postLoginRoute'
+import { Logo } from './lib/design'
 
 const C = { bg:'#0A141A' }
 
 const LoadingScreen = () => (
   <div style={{ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center' }}>
-    <svg width="56" height="28" viewBox="0 0 56 28">
-      <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" strokeWidth="3.5"/>
-      <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.75"/>
-    </svg>
+    <Logo size={56} />
   </div>
 )
 
