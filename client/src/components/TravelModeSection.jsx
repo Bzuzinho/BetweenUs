@@ -1,15 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../lib/api'
 import LocationAutocomplete from './LocationAutocomplete'
+import { useI18n } from '../i18n/I18nContext'
 
-// Fase 3D — Travel Mode por país/cidade (sem georreferenciação), extraído
-// de CouplePage.jsx para ser reutilizável também por um perfil INDIVIDUAL
-// PREMIUM (ver PrivacySettingsPage.jsx) — a própria API (/travel/me,
-// POST /travel, .../approve, DELETE) já resolve sempre para o perfil
-// activo do utilizador (resolveMyProfileId no backend), seja ele
-// INDIVIDUAL ou COUPLE; o backend (hasEntitlement 'TRAVEL_MODE') já trata
-// as regras de quem pode usar — este componente nunca decide isso, só
-// mostra o que a API devolve ou recusa.
 const C = {
   bg:'#0A141A', surface:'#102129', elevated:'#172C36',
   border:'#1E3340', input:'#0F1E26',
@@ -35,23 +28,12 @@ const sectionTitle = {
   display:'flex', alignItems:'center', gap:8
 }
 
-// Fase 3D — datas formatadas em português, sem hora (nunca mostramos
-// localização exata, só o intervalo de dias).
-const formatTravelDate = (d) => new Date(d).toLocaleDateString('pt-PT', { day: 'numeric', month: 'long' })
-
-// `helperText` — única diferença de copy entre o uso em contexto de casal
-// (CouplePage, requer aprovação) e individual (PrivacySettingsPage, activa
-// de imediato); tudo o resto (textos de relevância, cooldown, etc.) é
-// idêntico porque vem do mesmo endpoint.
-export default function TravelModeSection({ helperText = 'Ativar viagem requer aprovação de todos os membros do perfil.' }) {
+export default function TravelModeSection({ helperText }) {
+  const { t, formatDate } = useI18n()
   const [travels, setTravels] = useState([])
   const [homeLocation, setHomeLocation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  // Sistema de localidades — destinationLocationId vem do catálogo
-  // GeoNames (nunca texto livre); customDestinationLocality é só
-  // apresentação. countryCode arranca em PT (único país importado até
-  // agora — ver docs/product/GEONAMES_IMPORT.md).
   const [form, setForm] = useState({
     countryCode:'PT', destinationLocationId:null, destinationLocationLabel:null,
     customDestinationLocality:'', startDate:'', endDate:'',
@@ -61,54 +43,84 @@ export default function TravelModeSection({ helperText = 'Ativar viagem requer a
 
   const load = useCallback(() => {
     api.get('/travel/me')
-      .then(r => {
-        setTravels(r.data.travelModes || [])
-        setHomeLocation(r.data.homeLocation || null)
+      .then(response => {
+        setTravels(response.data.travelModes || [])
+        setHomeLocation(response.data.homeLocation || null)
       })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
   useEffect(() => { load() }, [load])
 
-  const current = travels.find(t => t.status === 'WAITING_MEMBER_APPROVAL' || t.status === 'SCHEDULED')
+  const current = travels.find(item => item.status === 'WAITING_MEMBER_APPROVAL' || item.status === 'SCHEDULED')
+  const shortDate = value => formatDate(value, { day:'numeric', month:'long' })
 
   const propose = async () => {
     if (!form.destinationLocationId || !form.startDate || !form.endDate) return
-    setBusy(true); setError('')
+    setBusy(true)
+    setError('')
     try {
       await api.post('/travel', {
-        destinationLocationId: form.destinationLocationId,
-        customDestinationLocality: form.customDestinationLocality.trim() || undefined,
-        startDate: form.startDate, endDate: form.endDate,
+        destinationLocationId:form.destinationLocationId,
+        customDestinationLocality:form.customDestinationLocality.trim() || undefined,
+        startDate:form.startDate,
+        endDate:form.endDate,
       })
       setForm({ countryCode:'PT', destinationLocationId:null, destinationLocationLabel:null, customDestinationLocality:'', startDate:'', endDate:'' })
       setShowForm(false)
       load()
-    } catch (err) {
-      const code = err.response?.data?.code
-      setError(code === 'PREMIUM_REQUIRED' ? 'Travel Mode requer Between Plus.' : (err.response?.data?.error || 'Erro.'))
+    } catch (requestError) {
+      setError(requestError.response?.data?.code === 'PREMIUM_REQUIRED' ? t('travel.premiumRequired') : t('travel.genericError'))
+    } finally {
+      setBusy(false)
     }
-    finally { setBusy(false) }
   }
-  const approve = async (id) => {
+
+  const approve = async id => {
     setBusy(true)
-    try { await api.post(`/travel/${id}/approve`); load() }
-    catch (err) { setError(err.response?.data?.error || 'Erro.') }
-    finally { setBusy(false) }
+    setError('')
+    try {
+      await api.post(`/travel/${id}/approve`)
+      load()
+    } catch {
+      setError(t('travel.genericError'))
+    } finally {
+      setBusy(false)
+    }
   }
-  const cancel = async (id) => {
+
+  const cancel = async id => {
     setBusy(true)
-    try { await api.delete(`/travel/${id}`); load() }
-    finally { setBusy(false) }
+    setError('')
+    try {
+      await api.delete(`/travel/${id}`)
+      load()
+    } catch {
+      setError(t('travel.genericError'))
+    } finally {
+      setBusy(false)
+    }
   }
 
   if (loading) return null
 
+  const destination = current?.location?.displayLabel || current?.city
+  const statusText = current?.status === 'WAITING_MEMBER_APPROVAL'
+    ? `⏳ ${t('travel.waiting')}`
+    : current?.status === 'SCHEDULED' && current?.relevance === 'FUTURE'
+      ? `${t('travel.futurePrefix')} ${destination} ${t('travel.futureBetween')} ${shortDate(current.startDate)} — ${shortDate(current.endDate)}.`
+      : current?.status === 'SCHEDULED' && current?.relevance === 'ACTIVE'
+        ? `${t('travel.activePrefix')} ${destination} ${t('travel.activeUntil')} ${shortDate(current.endDate)}.`
+        : current?.status === 'SCHEDULED'
+          ? `${shortDate(current.startDate)} — ${shortDate(current.endDate)}`
+          : ''
+
   return (
     <div style={sectionStyle}>
-      <div style={sectionTitle}>✈️ Travel Mode</div>
+      <div style={sectionTitle}>✈️ {t('travel.title')}</div>
       <p style={{ color:C.muted, fontSize:12, lineHeight:1.5, marginBottom:14 }}>
-        {helperText}
+        {helperText || t('travel.defaultHelper')}
       </p>
 
       {error && (
@@ -118,43 +130,28 @@ export default function TravelModeSection({ helperText = 'Ativar viagem requer a
         </div>
       )}
 
-      {/* Sistema de localidades — displayLabel já resolve tanto perfis com
-          catálogo (nome da localidade) como legacy (city/country em texto
-          livre), nunca coordenadas (ver server's withoutCoordinates). */}
       {homeLocation?.displayLabel && (
         <div style={{ fontSize:12, color:C.muted, marginBottom:14 }}>
-          Localização habitual: {homeLocation.displayLabel}
+          {t('travel.homeLocation')}: {homeLocation.displayLabel}
         </div>
       )}
 
       {current && (
-        <div style={{ background:C.input, border:`1px solid ${C.border}`,
-          borderRadius:14, padding:14, marginBottom:14 }}>
-          <div style={{ fontSize:13, color:C.text, fontWeight:600, marginBottom:4 }}>
-            {current.location?.displayLabel || current.city}
-          </div>
-          <div style={{ fontSize:11, color:C.muted, marginBottom:10 }}>
-            {current.status === 'WAITING_MEMBER_APPROVAL' && '⏳ A aguardar aprovação'}
-            {current.status === 'SCHEDULED' && current.relevance === 'FUTURE' &&
-              `Vais estar em ${current.location?.displayLabel || current.city} entre ${formatTravelDate(current.startDate)} e ${formatTravelDate(current.endDate)}.`}
-            {current.status === 'SCHEDULED' && current.relevance === 'ACTIVE' &&
-              `Em Travel Mode em ${current.location?.displayLabel || current.city} até ${formatTravelDate(current.endDate)}.`}
-            {current.status === 'SCHEDULED' && !current.relevance &&
-              `${new Date(current.startDate).toLocaleDateString('pt-PT')} — ${new Date(current.endDate).toLocaleDateString('pt-PT')}`}
-          </div>
+        <div style={{ background:C.input, border:`1px solid ${C.border}`, borderRadius:14, padding:14, marginBottom:14 }}>
+          <div style={{ fontSize:13, color:C.text, fontWeight:600, marginBottom:4 }}>{destination}</div>
+          <div style={{ fontSize:11, color:C.muted, marginBottom:10 }}>{statusText}</div>
           <div style={{ display:'flex', gap:8 }}>
             {current.status === 'WAITING_MEMBER_APPROVAL' && (
               <button onClick={() => approve(current.id)} disabled={busy}
-                style={{ flex:1, background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
-                  border:'none', borderRadius:50, padding:10, fontSize:12,
-                  fontWeight:600, color:'#1A0A2E', cursor:'pointer' }}>
-                Aprovar
+                style={{ flex:1, background:C.primary, border:'none', borderRadius:50, padding:10, fontSize:12,
+                  fontWeight:600, color:'#1A0A2E', cursor:'pointer', opacity:busy ? 0.6 : 1 }}>
+                {t('travel.approve')}
               </button>
             )}
             <button onClick={() => cancel(current.id)} disabled={busy}
-              style={{ flex:1, background:'transparent', border:`1px solid ${C.border}`,
-                borderRadius:50, padding:10, fontSize:12, color:C.muted, cursor:'pointer' }}>
-              Cancelar
+              style={{ flex:1, background:'transparent', border:`1px solid ${C.border}`, borderRadius:50,
+                padding:10, fontSize:12, color:C.muted, cursor:'pointer', opacity:busy ? 0.6 : 1 }}>
+              {t('travel.cancel')}
             </button>
           </div>
         </div>
@@ -164,42 +161,38 @@ export default function TravelModeSection({ helperText = 'Ativar viagem requer a
         <button onClick={() => setShowForm(true)} style={{ width:'100%', background:C.input,
           border:`1px solid ${C.border}`, borderRadius:50, padding:12, fontSize:13,
           color:C.text2, cursor:'pointer' }}>
-          + Propor viagem
+          {t('travel.proposeTrip')}
         </button>
       )}
 
       {showForm && (
         <div>
-          {/* Sistema de localidades — mesmo componente do onboarding/
-              EditProfilePage: escolha obrigatória de um destino do
-              catálogo GeoNames, nunca texto livre sozinho. */}
           <LocationAutocomplete
             countryCode={form.countryCode}
-            onCountryChange={code => setForm(p => ({ ...p, countryCode: code }))}
+            onCountryChange={code => setForm(previous => ({ ...previous, countryCode:code }))}
             locationId={form.destinationLocationId}
             locationLabel={form.destinationLocationLabel}
-            onSelectLocation={loc => setForm(p => ({
-              ...p,
-              destinationLocationId: loc?.id || null,
-              destinationLocationLabel: loc?.label || null,
-              countryCode: loc?.countryCode || p.countryCode,
+            onSelectLocation={location => setForm(previous => ({
+              ...previous,
+              destinationLocationId:location?.id || null,
+              destinationLocationLabel:location?.label || null,
+              countryCode:location?.countryCode || previous.countryCode,
             }))}
             customLocality={form.customDestinationLocality}
-            onCustomLocalityChange={v => setForm(p => ({ ...p, customDestinationLocality: v }))}
-            label="Destino"
+            onCustomLocalityChange={value => setForm(previous => ({ ...previous, customDestinationLocality:value }))}
+            label={t('travel.destination')}
           />
           <input style={inputStyle} type="date" value={form.startDate}
-            onChange={e => setForm(p => ({ ...p, startDate: e.target.value }))} />
+            onChange={event => setForm(previous => ({ ...previous, startDate:event.target.value }))} />
           <input style={inputStyle} type="date" value={form.endDate}
-            onChange={e => setForm(p => ({ ...p, endDate: e.target.value }))} />
+            onChange={event => setForm(previous => ({ ...previous, endDate:event.target.value }))} />
           <div style={{ display:'flex', gap:10 }}>
             <button onClick={() => setShowForm(false)} style={{ flex:1, background:'transparent',
               border:`1px solid ${C.border}`, borderRadius:50, padding:12, fontSize:13,
-              color:C.muted, cursor:'pointer' }}>Cancelar</button>
+              color:C.muted, cursor:'pointer' }}>{t('travel.cancel')}</button>
             <button onClick={propose} disabled={busy} style={{ flex:2,
-              background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
-              border:'none', borderRadius:50, padding:12, fontSize:13,
-              fontWeight:600, color:'#1A0A2E', cursor:'pointer' }}>Propor</button>
+              background:C.primary, border:'none', borderRadius:50, padding:12, fontSize:13,
+              fontWeight:600, color:'#1A0A2E', cursor:'pointer', opacity:busy ? 0.6 : 1 }}>{t('travel.propose')}</button>
           </div>
         </div>
       )}
