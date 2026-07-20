@@ -35,6 +35,7 @@ const supplementalCatalogs = {
   photos: photosTranslations,
   referrals: referralsTranslations,
   profileForm: profileFormTranslations,
+  editProfile: profileFormTranslations,
 }
 
 function getSupplementalValue(language, key) {
