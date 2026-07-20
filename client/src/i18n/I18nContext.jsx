@@ -9,6 +9,7 @@ import { legalTranslations } from './legalTranslations'
 import { privacyTranslations } from './privacyTranslations'
 import { verificationTranslations } from './verificationTranslations'
 import { contactsTranslations } from './contactsTranslations'
+import { photosTranslations } from './photosTranslations'
 
 const STORAGE_KEY = 'betweenus.language'
 const DEFAULT_LANGUAGE = 'pt-PT'
@@ -29,6 +30,7 @@ const supplementalCatalogs = {
   privacySettings: privacyTranslations,
   verification: verificationTranslations,
   contactsBlock: contactsTranslations,
+  photos: photosTranslations,
 }
 
 function getSupplementalValue(language, key) {
