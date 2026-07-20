@@ -19,7 +19,7 @@ import PremiumPage from './pages/PremiumPage'
 import PrivacySettingsPage from './pages/PrivacySettingsPage'
 import BetaJoinPage from './pages/BetaJoinPage'
 import LegalPage from './pages/LegalPage'
-import AdminPage from './pages/AdminPage'
+import AdminPageRouter from './pages/AdminPageRouter'
 import OtpLoginPage from './pages/OtpLoginPage'
 import AppShell from './AppShell'
 import { resolvePostLoginRoute } from './lib/postLoginRoute'
@@ -38,15 +38,6 @@ const pendingCoupleInviteRoute = () => {
   return token ? `/couple-invite/${encodeURIComponent(token)}` : null
 }
 
-// BETA.2.5 — recoverable fallback for a route that ends up in a state
-// resolvePostLoginRoute/PrivateRoute genuinely cannot classify (should not
-// normally happen — this is a safety net, not the primary fix). The
-// primary fix is (a) lib/api.js now has a request timeout, so a hung
-// backend request rejects instead of leaving `loading` true forever, and
-// (b) a single resolvePostLoginRoute() definition instead of four
-// divergent copies. This component exists so that IF some future state
-// still slips through, the user sees an actionable screen — never a
-// spinner with no way out.
 function AuthErrorScreen({ onRetry }) {
   const { logout } = useAuth()
   return (
@@ -113,7 +104,6 @@ export default function App() {
       <Routes>
         <Route path="/" element={<RootRedirect />} />
 
-        {/* Public */}
         <Route path="/login"           element={<PublicRoute><LoginPage /></PublicRoute>} />
         <Route path="/register"        element={<PublicRoute><RegisterPage /></PublicRoute>} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -126,11 +116,9 @@ export default function App() {
         <Route path="/couple-invite/:token" element={<CoupleInvitePage />} />
         <Route path="/group-invite/:token" element={<GroupInvitePage />} />
 
-        {/* Admin */}
-        <Route path="/admin"      element={<AdminRoute><AdminPage /></AdminRoute>} />
-        <Route path="/admin/:tab" element={<AdminRoute><AdminPage /></AdminRoute>} />
+        <Route path="/admin"      element={<AdminRoute><AdminPageRouter /></AdminRoute>} />
+        <Route path="/admin/:tab" element={<AdminRoute><AdminPageRouter /></AdminRoute>} />
 
-        {/* Private */}
         <Route path="/account"           element={<PrivateRoute requireProfile={false}><AccountPage /></PrivateRoute>} />
         <Route path="/create-profile"    element={<PrivateRoute requireProfile={false}><CreateProfilePage /></PrivateRoute>} />
         <Route path="/edit-profile"      element={<PrivateRoute><EditProfilePage /></PrivateRoute>} />
@@ -143,7 +131,6 @@ export default function App() {
         <Route path="/premium"           element={<PrivateRoute><PremiumPage /></PrivateRoute>} />
         <Route path="/privacy-settings"  element={<PrivateRoute><PrivacySettingsPage /></PrivateRoute>} />
 
-        {/* App shell */}
         <Route path="/explore" element={<PrivateRoute><AppShell screen="explore" /></PrivateRoute>} />
         <Route path="/matches"  element={<PrivateRoute><AppShell screen="matches" /></PrivateRoute>} />
         <Route path="/profile"  element={<PrivateRoute><AppShell screen="profile" /></PrivateRoute>} />
