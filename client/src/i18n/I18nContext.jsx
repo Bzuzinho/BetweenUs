@@ -8,6 +8,7 @@ import { premiumTranslations } from './premiumTranslations'
 import { legalTranslations } from './legalTranslations'
 import { privacyTranslations } from './privacyTranslations'
 import { verificationTranslations } from './verificationTranslations'
+import { contactsTranslations } from './contactsTranslations'
 
 const STORAGE_KEY = 'betweenus.language'
 const DEFAULT_LANGUAGE = 'pt-PT'
@@ -27,6 +28,7 @@ const supplementalCatalogs = {
   legal: legalTranslations,
   privacySettings: privacyTranslations,
   verification: verificationTranslations,
+  contactsBlock: contactsTranslations,
 }
 
 function getSupplementalValue(language, key) {
