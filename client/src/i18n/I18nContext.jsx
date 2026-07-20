@@ -14,6 +14,7 @@ import { referralsTranslations } from './referralsTranslations'
 import { profileFormTranslations } from './profileFormTranslations'
 import { authRouteTranslations } from './authRouteTranslations'
 import { otpTranslations } from './otpTranslations'
+import { betaTranslations } from './betaTranslations'
 
 const STORAGE_KEY = 'betweenus.language'
 const DEFAULT_LANGUAGE = 'pt-PT'
@@ -40,6 +41,7 @@ const supplementalCatalogs = {
   editProfile: profileFormTranslations,
   authRoute: authRouteTranslations,
   otp: otpTranslations,
+  beta: betaTranslations,
 }
 
 function getSupplementalValue(language, key) {
