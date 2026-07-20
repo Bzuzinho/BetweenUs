@@ -15,11 +15,11 @@ const C = {
 }
 
 const NAV = [
-  { key:'explore', labelKey:'nav.explore', icon:'○',  path:'/explore' },
-  { key:'matches', labelKey:'nav.matches', icon:'◎',  path:'/matches' },
-  { key:'profile', labelKey:'nav.profile', icon:'◌',  path:'/profile' },
-  { key:'rooms',   labelKey:'nav.rooms',   icon:'◎',  path:'/rooms'   },
-  { key:'guide',   labelKey:'nav.guide',   icon:'◈',  path:'/guide'   },
+  { key:'explore', labelKey:'nav.explore', icon:'○', path:'/explore' },
+  { key:'matches', labelKey:'nav.matches', icon:'◎', path:'/matches' },
+  { key:'profile', labelKey:'nav.profile', icon:'◌', path:'/profile' },
+  { key:'rooms', labelKey:'nav.rooms', icon:'◎', path:'/rooms' },
+  { key:'guide', labelKey:'nav.guide', icon:'◈', path:'/guide' },
 ]
 
 export default function AppShell({ screen }) {
@@ -27,12 +27,12 @@ export default function AppShell({ screen }) {
   const { t } = useI18n()
 
   const renderScreen = () => {
-    switch(screen) {
+    switch (screen) {
       case 'profile': return <ProfilePage />
       case 'matches': return <MatchesListScreen />
-      case 'rooms':   return <RoomsLocalizedScreen />
-      case 'guide':   return <GuideScreen />
-      default:        return <ExploreScreen />
+      case 'rooms': return <RoomsLocalizedScreen />
+      case 'guide': return <GuideScreen />
+      default: return <ExploreScreen />
     }
   }
 
@@ -56,43 +56,27 @@ export default function AppShell({ screen }) {
         left:'50%', transform:'translateX(-50%)',
         width:'100%', maxWidth:480,
         background:'rgba(10,20,26,0.97)',
-        backdropFilter:'blur(20px)',
-        WebkitBackdropFilter:'blur(20px)',
+        backdropFilter:'blur(20px)', WebkitBackdropFilter:'blur(20px)',
         borderTop:`1px solid ${C.border}`,
         display:'flex', justifyContent:'space-around', alignItems:'flex-start',
-        paddingTop:10,
-        paddingBottom:'calc(10px + env(safe-area-inset-bottom))',
+        paddingTop:10, paddingBottom:'calc(10px + env(safe-area-inset-bottom))',
         zIndex:100,
       }}>
-        {NAV.map(n => {
-          const active = screen === n.key
+        {NAV.map(item => {
+          const active = screen === item.key
           return (
             <button
-              key={n.key}
-              onClick={() => navigate(n.path)}
-              aria-label={t(n.labelKey)}
+              key={item.key}
+              onClick={() => navigate(item.path)}
+              aria-label={t(item.labelKey)}
               style={{
                 display:'flex', flexDirection:'column', alignItems:'center', gap:4,
                 padding:'4px 16px', background:'none', border:'none', cursor:'pointer',
                 minWidth:48, minHeight:48,
               }}
             >
-              <span style={{
-                fontSize:20,
-                color: active ? C.primary : C.muted,
-                transition:'color 0.2s',
-              }}>
-                {n.icon}
-              </span>
-              <span style={{
-                fontSize:10,
-                fontWeight: active ? 500 : 400,
-                color: active ? C.primary : C.muted,
-                letterSpacing:0.3,
-                transition:'color 0.2s',
-              }}>
-                {t(n.labelKey)}
-              </span>
+              <span style={{ fontSize:20, color:active ? C.primary : C.muted, transition:'color 0.2s' }}>{item.icon}</span>
+              <span style={{ fontSize:10, fontWeight:active ? 500 : 400, color:active ? C.primary : C.muted, letterSpacing:0.3, transition:'color 0.2s' }}>{t(item.labelKey)}</span>
             </button>
           )
         })}
