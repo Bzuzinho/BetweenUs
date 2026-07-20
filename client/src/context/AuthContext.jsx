@@ -2,13 +2,21 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import api from '../lib/api'
 import { registerPush } from '../lib/push'
 import { reconnectSocketWithToken, disconnectSocket } from '../lib/socket'
+import { useI18n } from '../i18n/I18nContext'
 
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
+  const { setLanguage } = useI18n()
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const fetchedRef = useRef(false)
+
+  const applyUser = useCallback((nextUser) => {
+    setUser(nextUser)
+    if (nextUser?.preferredLanguage) setLanguage(nextUser.preferredLanguage)
+    return nextUser
+  }, [setLanguage])
 
   const fetchUser = useCallback(async () => {
     // Guard: only fetch once per mount to avoid refresh loops
@@ -20,8 +28,7 @@ export function AuthProvider({ children }) {
         return null
       }
       const res = await api.get('/auth/me')
-      setUser(res.data)
-      return res.data
+      return applyUser(res.data)
     } catch {
       // Token invalid or expired and refresh failed — clear state
       localStorage.removeItem('accessToken')
@@ -29,7 +36,7 @@ export function AuthProvider({ children }) {
       setUser(null)
       return null
     }
-  }, [])
+  }, [applyUser])
 
   useEffect(() => {
     if (fetchedRef.current) return
@@ -49,8 +56,7 @@ export function AuthProvider({ children }) {
     }
     // Fetch full user object (includes profile, subscription, adminRole)
     const me = await api.get('/auth/me')
-    setUser(me.data)
-    return me.data
+    return applyUser(me.data)
   }
 
   const register = async (data) => {
@@ -59,7 +65,7 @@ export function AuthProvider({ children }) {
       localStorage.setItem('accessToken', res.data.accessToken)
       if (res.data.refreshToken) localStorage.setItem('refreshToken', res.data.refreshToken)
       reconnectSocketWithToken()
-      setUser(res.data.user)
+      applyUser({ ...res.data.user, preferredLanguage: data.preferredLanguage })
     }
     return res.data
   }
