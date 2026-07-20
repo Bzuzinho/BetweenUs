@@ -3,7 +3,7 @@ import ProfilePage from './pages/ProfilePage'
 import ExploreScreen from './screens/ExploreScreen'
 import MatchesListScreen from './screens/MatchesListScreen'
 import GuideScreen from './screens/GuideScreen'
-import RoomsScreen from './screens/RoomsScreen'
+import RoomsLocalizedScreen from './screens/RoomsLocalizedScreen'
 import LegalReacceptanceBanner from './components/LegalReacceptanceBanner'
 import ProfileSwitcher from './components/ProfileSwitcher'
 import { Logo } from './lib/design'
@@ -30,7 +30,7 @@ export default function AppShell({ screen }) {
     switch(screen) {
       case 'profile': return <ProfilePage />
       case 'matches': return <MatchesListScreen />
-      case 'rooms':   return <RoomsScreen />
+      case 'rooms':   return <RoomsLocalizedScreen />
       case 'guide':   return <GuideScreen />
       default:        return <ExploreScreen />
     }
