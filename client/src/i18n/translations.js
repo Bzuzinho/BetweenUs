@@ -12,7 +12,7 @@ export const translations = {
       save: 'Guardar', saving: 'A guardar…', continue: 'Continuar', back: 'Voltar', loading: 'A carregar…',
       language: 'Idioma', portuguese: 'Português', english: 'Inglês', french: 'Francês',
       individualProfile: 'Perfil individual', coupleProfile: 'Perfil de casal', groupProfile: 'Perfil de grupo',
-      active: 'Ativo', user: 'Utilizador', profile: 'Perfil', logout: 'Sair',
+      active: 'Ativo', user: 'Utilizador', profile: 'Perfil', logout: 'Sair', all: 'Todos',
     },
     nav: { explore: 'Explorar', matches: 'Matches', profile: 'Perfil', rooms: 'Salas', guide: 'Guia' },
     login: {
@@ -40,13 +40,32 @@ export const translations = {
       appLanguage: 'Idioma da aplicação', languageHelp: 'Esta preferência aplica-se à aplicação em todos os dispositivos após iniciares sessão.',
     },
     profileSwitcher: { useAs: 'Usar a aplicação como', change: 'Mudar de perfil' },
+    guide: {
+      title: 'Between Guide', subtitle: 'Conteúdo, eventos e comunidades para ligações adultas privadas e seguras.',
+      sections: { guide: 'Guia', events: 'Eventos', circles: 'Circles' },
+      categories: {
+        CONSENT: 'Consentimento', COUPLES: 'Casais', OPEN_RELATIONSHIPS: 'Relações abertas', POLYAMORY: 'Poliamor',
+        PRIVACY: 'Privacidade', SAFETY: 'Segurança', PROFILES: 'Perfil', FIRST_MEETINGS: 'Primeiros encontros',
+        PRIVATE_INTERESTS: 'Interesses privados',
+      },
+      readingTime: 'min de leitura', preparing: 'Este artigo está a ser preparado. O Between Guide cresce com a comunidade — cada artigo é revisto pela nossa equipa antes de ser publicado.',
+      footer: 'Between Guide — conteúdo educativo para adultos',
+      fallback: [
+        ['PRIVACY','◌','Privacidade digital básica','Protege a tua identidade online. Passos simples.'],
+        ['CONSENT','◈','Consentimento em ligações adultas','O consentimento é contínuo. Como reconhecê-lo.'],
+        ['COUPLES','◎','Como definir limites em casal','Antes de explorar juntos, alinhem expectativas.'],
+        ['PRIVATE_INTERESTS','○','Como falar sobre interesses privados','Abordar fetiches com respeito e abertura.'],
+        ['FIRST_MEETINGS','⊙','Segurança no primeiro encontro','Cuidados práticos para encontros presenciais.'],
+        ['COUPLES','◎','A terceira pessoa não é um acessório','Como respeitar e incluir uma terceira pessoa.'],
+      ],
+    },
   },
   en: {
     common: {
       save: 'Save', saving: 'Saving…', continue: 'Continue', back: 'Back', loading: 'Loading…',
       language: 'Language', portuguese: 'Portuguese', english: 'English', french: 'French',
       individualProfile: 'Individual profile', coupleProfile: 'Couple profile', groupProfile: 'Group profile',
-      active: 'Active', user: 'User', profile: 'Profile', logout: 'Log out',
+      active: 'Active', user: 'User', profile: 'Profile', logout: 'Log out', all: 'All',
     },
     nav: { explore: 'Explore', matches: 'Matches', profile: 'Profile', rooms: 'Rooms', guide: 'Guide' },
     login: {
@@ -74,13 +93,32 @@ export const translations = {
       appLanguage: 'Application language', languageHelp: 'This preference is applied to the application on every device after you log in.',
     },
     profileSwitcher: { useAs: 'Use the application as', change: 'Change profile' },
+    guide: {
+      title: 'Between Guide', subtitle: 'Content, events and communities for private and safer adult connections.',
+      sections: { guide: 'Guide', events: 'Events', circles: 'Circles' },
+      categories: {
+        CONSENT: 'Consent', COUPLES: 'Couples', OPEN_RELATIONSHIPS: 'Open relationships', POLYAMORY: 'Polyamory',
+        PRIVACY: 'Privacy', SAFETY: 'Safety', PROFILES: 'Profiles', FIRST_MEETINGS: 'First meetings',
+        PRIVATE_INTERESTS: 'Private interests',
+      },
+      readingTime: 'min read', preparing: 'This article is being prepared. Between Guide grows with the community — every article is reviewed by our team before publication.',
+      footer: 'Between Guide — educational content for adults',
+      fallback: [
+        ['PRIVACY','◌','Digital privacy basics','Protect your identity online with simple practical steps.'],
+        ['CONSENT','◈','Consent in adult connections','Consent is continuous. Learn how to recognise it.'],
+        ['COUPLES','◎','Setting boundaries as a couple','Align expectations before exploring together.'],
+        ['PRIVATE_INTERESTS','○','Talking about private interests','Discuss fetishes with respect and openness.'],
+        ['FIRST_MEETINGS','⊙','Safety on a first meeting','Practical precautions for meeting in person.'],
+        ['COUPLES','◎','A third person is not an accessory','How to respect and include a third person.'],
+      ],
+    },
   },
   fr: {
     common: {
       save: 'Enregistrer', saving: 'Enregistrement…', continue: 'Continuer', back: 'Retour', loading: 'Chargement…',
       language: 'Langue', portuguese: 'Portugais', english: 'Anglais', french: 'Français',
       individualProfile: 'Profil individuel', coupleProfile: 'Profil de couple', groupProfile: 'Profil de groupe',
-      active: 'Actif', user: 'Utilisateur', profile: 'Profil', logout: 'Se déconnecter',
+      active: 'Actif', user: 'Utilisateur', profile: 'Profil', logout: 'Se déconnecter', all: 'Tous',
     },
     nav: { explore: 'Explorer', matches: 'Matchs', profile: 'Profil', rooms: 'Salons', guide: 'Guide' },
     login: {
@@ -108,5 +146,24 @@ export const translations = {
       appLanguage: 'Langue de l’application', languageHelp: 'Cette préférence s’applique à l’application sur tous vos appareils après connexion.',
     },
     profileSwitcher: { useAs: 'Utiliser l’application en tant que', change: 'Changer de profil' },
+    guide: {
+      title: 'Between Guide', subtitle: 'Contenus, événements et communautés pour des rencontres adultes privées et plus sûres.',
+      sections: { guide: 'Guide', events: 'Événements', circles: 'Cercles' },
+      categories: {
+        CONSENT: 'Consentement', COUPLES: 'Couples', OPEN_RELATIONSHIPS: 'Relations ouvertes', POLYAMORY: 'Polyamour',
+        PRIVACY: 'Confidentialité', SAFETY: 'Sécurité', PROFILES: 'Profils', FIRST_MEETINGS: 'Premières rencontres',
+        PRIVATE_INTERESTS: 'Intérêts privés',
+      },
+      readingTime: 'min de lecture', preparing: 'Cet article est en préparation. Between Guide grandit avec la communauté — chaque article est relu par notre équipe avant publication.',
+      footer: 'Between Guide — contenu éducatif pour adultes',
+      fallback: [
+        ['PRIVACY','◌','Bases de la confidentialité numérique','Protégez votre identité en ligne avec des étapes simples.'],
+        ['CONSENT','◈','Le consentement dans les rencontres adultes','Le consentement est continu. Apprenez à le reconnaître.'],
+        ['COUPLES','◎','Définir des limites en couple','Alignez vos attentes avant d’explorer ensemble.'],
+        ['PRIVATE_INTERESTS','○','Parler des intérêts privés','Aborder les fétiches avec respect et ouverture.'],
+        ['FIRST_MEETINGS','⊙','Sécurité lors d’une première rencontre','Précautions pratiques pour une rencontre en personne.'],
+        ['COUPLES','◎','Une troisième personne n’est pas un accessoire','Comment respecter et inclure une troisième personne.'],
+      ],
+    },
   },
 }
