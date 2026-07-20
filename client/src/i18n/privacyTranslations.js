@@ -7,7 +7,7 @@ export const privacyTranslations = {
     notifications:'Notificações', mode:'Modo', discreet:'Discreto', normal:'Normal', notificationHelp:'Discreto: notificações sem nome nem conteúdo',
     travelHelp:'Ativa temporariamente a tua localização de destino para aparecer no discovery desse local, sem alterar a tua localização habitual.',
     contacts:'Contactos', blockContacts:'Bloquear contactos do telemóvel', blockContactsHelp:'Oculta-te de pessoas que tens na agenda',
-    dataAccount:'Dados e conta', exportData:'Exportar os meus dados', exportDataHelp:'Download RGPD dos teus dados', deleteAccount:'Eliminar conta', deleteAccountHelp:'Remove todos os teus dados permanentemente',
+    dataAccount:'Dados e conta', exportData:'Exportar os meus dados', exportDataHelp:'Download RGPD dos teus dados', deleteAccount:'Eliminar conta', deleteAccountHelp:'Remove todos os teus dados permanentemente', deleteUnavailable:'A eliminação automática da conta ainda não está disponível. Contacta o suporte para iniciar o pedido.',
     plusHelp:'Desbloqueia o modo invisível, Travel Mode e controlo avançado de privacidade.', premium:'Premium'
   }},
   en: { privacySettings: {
@@ -18,7 +18,7 @@ export const privacyTranslations = {
     notifications:'Notifications', mode:'Mode', discreet:'Discreet', normal:'Normal', notificationHelp:'Discreet: notifications without names or content',
     travelHelp:'Temporarily set a destination so you appear in discovery there without changing your usual location.',
     contacts:'Contacts', blockContacts:'Block phone contacts', blockContactsHelp:'Hide your profile from people in your address book',
-    dataAccount:'Data and account', exportData:'Export my data', exportDataHelp:'Download a GDPR copy of your data', deleteAccount:'Delete account', deleteAccountHelp:'Permanently remove all your data',
+    dataAccount:'Data and account', exportData:'Export my data', exportDataHelp:'Download a GDPR copy of your data', deleteAccount:'Delete account', deleteAccountHelp:'Permanently remove all your data', deleteUnavailable:'Automatic account deletion is not available yet. Contact support to start the request.',
     plusHelp:'Unlock invisible mode, Travel Mode and advanced privacy controls.', premium:'Premium'
   }},
   fr: { privacySettings: {
@@ -29,7 +29,7 @@ export const privacyTranslations = {
     notifications:'Notifications', mode:'Mode', discreet:'Discret', normal:'Normal', notificationHelp:'Discret : notifications sans nom ni contenu',
     travelHelp:'Définissez temporairement une destination pour apparaître dans la découverte locale sans modifier votre localisation habituelle.',
     contacts:'Contacts', blockContacts:'Bloquer les contacts du téléphone', blockContactsHelp:'Masquez votre profil aux personnes de votre carnet d’adresses',
-    dataAccount:'Données et compte', exportData:'Exporter mes données', exportDataHelp:'Télécharger une copie RGPD de vos données', deleteAccount:'Supprimer le compte', deleteAccountHelp:'Supprime définitivement toutes vos données',
+    dataAccount:'Données et compte', exportData:'Exporter mes données', exportDataHelp:'Télécharger une copie RGPD de vos données', deleteAccount:'Supprimer le compte', deleteAccountHelp:'Supprime définitivement toutes vos données', deleteUnavailable:'La suppression automatique du compte n’est pas encore disponible. Contactez le support pour lancer la demande.',
     plusHelp:'Débloquez le mode invisible, Travel Mode et les contrôles avancés de confidentialité.', premium:'Premium'
   }}
 }
