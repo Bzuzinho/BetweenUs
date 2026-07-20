@@ -1,4 +1,4 @@
-import { Router, Response } from 'express'
+import { Router, Response, NextFunction } from 'express'
 import { randomBytes } from 'crypto'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
@@ -47,9 +47,6 @@ async function sendBetaInviteEmail(email: string, inviteUrl: string) {
   }
 }
 
-// Operational dashboard: commercial totals keep excluding test accounts,
-// while moderation queues intentionally include every pending item, matching
-// the notification bell and the actual work that admins must process.
 router.get('/dashboard', requireAdmin(), async (req: AuthRequest, res: Response) => {
   try {
     const today = new Date(); today.setHours(0, 0, 0, 0)
@@ -116,9 +113,6 @@ router.get('/dashboard', requireAdmin(), async (req: AuthRequest, res: Response)
   }
 })
 
-// Existing BetaTab already renders the invites array. Pending landing-page
-// applications are exposed as synthetic inactive entries with code PEDIDO.
-// Clicking “Activar” approves the request, creates the real invite and sends it.
 router.get('/beta/invites', requireAdmin('beta'), async (_req: AuthRequest, res: Response) => {
   const [invites, applications] = await Promise.all([
     prisma.betaInvite.findMany({
@@ -153,8 +147,8 @@ router.get('/beta/invites', requireAdmin('beta'), async (_req: AuthRequest, res:
   })
 })
 
-router.put('/beta/invites/:id/toggle', requireAdmin('beta'), async (req: AuthRequest, res: Response) => {
-  if (!req.params.id.startsWith('application:')) return res.locals.next?.()
+router.put('/beta/invites/:id/toggle', requireAdmin('beta'), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.params.id.startsWith('application:')) return next()
 
   const applicationId = req.params.id.slice('application:'.length)
   try {
@@ -198,8 +192,8 @@ router.put('/beta/invites/:id/toggle', requireAdmin('beta'), async (req: AuthReq
   }
 })
 
-router.delete('/beta/invites/:id', requireAdmin('beta'), async (req: AuthRequest, res: Response) => {
-  if (!req.params.id.startsWith('application:')) return res.locals.next?.()
+router.delete('/beta/invites/:id', requireAdmin('beta'), async (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.params.id.startsWith('application:')) return next()
 
   const applicationId = req.params.id.slice('application:'.length)
   const changed = await prisma.$executeRaw`
