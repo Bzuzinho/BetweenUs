@@ -37,3 +37,4 @@ jobs:
           git add -A
           git commit -m "feat: manage beta applications and align admin queues [skip ci]"
           git push origin main
+      # trigger revision 2
