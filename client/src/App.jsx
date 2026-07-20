@@ -24,6 +24,7 @@ import OtpLoginPage from './pages/OtpLoginPage'
 import AppShell from './AppShell'
 import { resolvePostLoginRoute } from './lib/postLoginRoute'
 import { Logo } from './lib/design'
+import { useI18n } from './i18n/I18nContext'
 
 const C = { bg:'#0A141A' }
 
@@ -40,15 +41,22 @@ const pendingCoupleInviteRoute = () => {
 
 function AuthErrorScreen({ onRetry }) {
   const { logout } = useAuth()
+  const { t } = useI18n()
+
+  const handleLogout = async () => {
+    await logout()
+    window.location.href = '/login'
+  }
+
   return (
     <div style={{ minHeight:'100vh', background:C.bg, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:24, textAlign:'center', gap:14 }}>
-      <div style={{ color:'#F5F7FA', fontSize:16, fontWeight:600, maxWidth:320 }}>Não conseguimos concluir a entrada na tua conta.</div>
-      <div style={{ color:'#7E8FA3', fontSize:13, maxWidth:320 }}>Isto pode ser temporário. Tenta novamente ou termina sessão.</div>
+      <div style={{ color:'#F5F7FA', fontSize:16, fontWeight:600, maxWidth:320 }}>{t('authRoute.title')}</div>
+      <div style={{ color:'#7E8FA3', fontSize:13, maxWidth:320 }}>{t('authRoute.description')}</div>
       <div style={{ display:'flex', gap:10, marginTop:6 }}>
-        <button onClick={onRetry} style={{ background:'#B8A7FF', border:'none', borderRadius:10, padding:'10px 18px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>Tentar novamente</button>
-        <button onClick={() => logout().then(() => window.location.href = '/login')} style={{ background:'none', border:'1px solid #1E3340', borderRadius:10, padding:'10px 18px', color:'#AAB6C2', fontSize:13 }}>Terminar sessão</button>
+        <button onClick={onRetry} style={{ background:'#B8A7FF', border:'none', borderRadius:10, padding:'10px 18px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>{t('authRoute.retry')}</button>
+        <button onClick={handleLogout} style={{ background:'none', border:'1px solid #1E3340', borderRadius:10, padding:'10px 18px', color:'#AAB6C2', fontSize:13, cursor:'pointer' }}>{t('authRoute.logout')}</button>
       </div>
-      <div style={{ color:'#4A6B7A', fontSize:11, marginTop:4 }}>Se o problema persistir, contacta o suporte com esta referência: AUTH_ROUTE_UNRESOLVED</div>
+      <div style={{ color:'#4A6B7A', fontSize:11, marginTop:4 }}>{t('authRoute.support')}</div>
     </div>
   )
 }
