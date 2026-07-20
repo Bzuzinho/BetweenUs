@@ -3,6 +3,7 @@ import { SUPPORTED_LANGUAGES, translations } from './translations'
 import { exploreTranslations } from './exploreTranslations'
 import { accountTranslations } from './accountTranslations'
 import { passwordTranslations } from './passwordTranslations'
+import { emailTranslations } from './emailTranslations'
 
 const STORAGE_KEY = 'betweenus.language'
 const DEFAULT_LANGUAGE = 'pt-PT'
@@ -17,6 +18,7 @@ const supplementalCatalogs = {
   common: accountTranslations,
   forgot: passwordTranslations,
   reset: passwordTranslations,
+  emailVerify: emailTranslations,
 }
 
 function getSupplementalValue(language, key) {
