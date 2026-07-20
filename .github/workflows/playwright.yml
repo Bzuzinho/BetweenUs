@@ -13,8 +13,14 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: lts/*
-    - name: Install dependencies
+        cache: npm
+        cache-dependency-path: |
+          package-lock.json
+          client/package-lock.json
+    - name: Install test dependencies
       run: npm ci
+    - name: Install client dependencies
+      run: npm ci --prefix client
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
     - name: Run Playwright tests
