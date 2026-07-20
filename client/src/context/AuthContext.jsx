@@ -1,6 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import api from '../lib/api'
-import { registerPush } from '../lib/push'
 import { reconnectSocketWithToken, disconnectSocket } from '../lib/socket'
 import { useI18n } from '../i18n/I18nContext'
 
@@ -12,25 +11,30 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const fetchedRef = useRef(false)
 
-  const applyUser = useCallback((nextUser) => {
-    setUser(nextUser)
-    if (nextUser?.preferredLanguage) setLanguage(nextUser.preferredLanguage)
-    return nextUser
+  const applyUser = useCallback(async nextUser => {
+    let resolvedUser = nextUser
+    try {
+      const languageResponse = await api.get('/push/language')
+      const preferredLanguage = languageResponse.data?.preferredLanguage || 'pt-PT'
+      setLanguage(preferredLanguage)
+      resolvedUser = { ...nextUser, preferredLanguage }
+    } catch {
+      if (nextUser?.preferredLanguage) setLanguage(nextUser.preferredLanguage)
+    }
+    setUser(resolvedUser)
+    return resolvedUser
   }, [setLanguage])
 
   const fetchUser = useCallback(async () => {
-    // Guard: only fetch once per mount to avoid refresh loops
     try {
       const token = localStorage.getItem('accessToken')
-      // No token at all — skip the API call, go straight to unauthenticated
       if (!token) {
         setUser(null)
         return null
       }
-      const res = await api.get('/auth/me')
-      return applyUser(res.data)
+      const response = await api.get('/auth/me')
+      return applyUser(response.data)
     } catch {
-      // Token invalid or expired and refresh failed — clear state
       localStorage.removeItem('accessToken')
       localStorage.removeItem('refreshToken')
       setUser(null)
@@ -45,29 +49,28 @@ export function AuthProvider({ children }) {
   }, [fetchUser])
 
   const login = async (email, password) => {
-    const res = await api.post('/auth/login', { email, password })
-    if (res.data.accessToken) {
-      localStorage.setItem('accessToken', res.data.accessToken)
-      localStorage.setItem('refreshToken', res.data.refreshToken)
-      // Security follow-up — a fresh login always means a fresh, valid
-      // token; make sure the socket (possibly still holding a pre-login
-      // or stale token from a previous failed session) reconnects with it.
+    const response = await api.post('/auth/login', { email, password })
+    if (response.data.accessToken) {
+      localStorage.setItem('accessToken', response.data.accessToken)
+      localStorage.setItem('refreshToken', response.data.refreshToken)
       reconnectSocketWithToken()
     }
-    // Fetch full user object (includes profile, subscription, adminRole)
     const me = await api.get('/auth/me')
     return applyUser(me.data)
   }
 
-  const register = async (data) => {
-    const res = await api.post('/auth/register', data)
-    if (res.data.accessToken) {
-      localStorage.setItem('accessToken', res.data.accessToken)
-      if (res.data.refreshToken) localStorage.setItem('refreshToken', res.data.refreshToken)
+  const register = async data => {
+    const response = await api.post('/auth/register', data)
+    if (response.data.accessToken) {
+      localStorage.setItem('accessToken', response.data.accessToken)
+      if (response.data.refreshToken) localStorage.setItem('refreshToken', response.data.refreshToken)
       reconnectSocketWithToken()
-      applyUser({ ...res.data.user, preferredLanguage: data.preferredLanguage })
+      if (data.preferredLanguage) {
+        await api.put('/push/language', { preferredLanguage:data.preferredLanguage }).catch(() => {})
+      }
+      await applyUser({ ...response.data.user, preferredLanguage:data.preferredLanguage })
     }
-    return res.data
+    return response.data
   }
 
   const refreshUser = async () => fetchUser()
