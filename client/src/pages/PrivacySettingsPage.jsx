@@ -73,13 +73,9 @@ export default function PrivacySettingsPage() {
       </>)}
 
       {section(t('privacySettings.photos'), <Row label={t('privacySettings.photoRequests')} desc={t('privacySettings.photoRequestsHelp')} value={settings.allowPhotoRequests} onChange={v => save({ allowPhotoRequests:v })}/>)}
-
       {section(t('privacySettings.notifications'), <Row label={`${t('privacySettings.mode')}: ${settings.notificationMode==='DISCREET'?t('privacySettings.discreet'):t('privacySettings.normal')}`} desc={t('privacySettings.notificationHelp')} value={settings.notificationMode==='DISCREET'} onChange={v => save({ notificationMode:v?'DISCREET':'NORMAL' })}/>)}
-
       <TravelModeSection helperText={t('privacySettings.travelHelp')}/>
-
       {section(t('privacySettings.contacts'), <Row label={t('privacySettings.blockContacts')} desc={t('privacySettings.blockContactsHelp')} arrow onClick={() => navigate('/contacts/block')}/>)}
-
       {section(t('privacySettings.dataAccount'), <>
         <Row label={t('privacySettings.exportData')} desc={t('privacySettings.exportDataHelp')} arrow onClick={() => window.open('/api/auth/export', '_blank')}/>
         <Row label={t('privacySettings.deleteAccount')} desc={t('privacySettings.deleteAccountHelp')} arrow onClick={() => { setMsg(''); setError(t('privacySettings.deleteUnavailable')); window.scrollTo({ top:0, behavior:'smooth' }) }}/>
