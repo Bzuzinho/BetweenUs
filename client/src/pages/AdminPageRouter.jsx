@@ -19,9 +19,8 @@ export default function AdminPageRouter() {
           node.setAttribute('data-admin-affiliations-link', 'true')
         }
         if (label === 'Afiliados') {
-          const parent = node.parentElement
-          if (parent) parent.style.display = 'none'
-          else node.style.display = 'none'
+          node.style.display = 'none'
+          node.setAttribute('aria-hidden', 'true')
         }
       })
     }
