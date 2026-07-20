@@ -91,13 +91,32 @@ export const ROW = {
   borderBottom: '1px solid #1E3340',
 }
 
-// Logo SVG component helper
+// Logo SVG component helper — the two-ring symbol is the single official
+// BetweenUs mark. Source of truth: brand/logo/betweenus-symbol.svg. Every
+// screen that needs branding should import Logo/LogoHorizontal from here
+// rather than inlining the circles again, so the mark can never drift.
 export const Logo = ({ size = 32 }) => (
   <svg width={size} height={size / 2} viewBox="0 0 56 28" style={{ display: 'block' }}>
     <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" strokeWidth="3.5"/>
     <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.75"/>
   </svg>
 )
+
+// Horizontal lockup: symbol + "BetweenUs" wordmark, Manrope 700.
+// variant="light" -> light text, for dark backgrounds (default, matches app bg).
+// variant="dark"  -> dark text, for light backgrounds.
+export const LogoHorizontal = ({ height = 32, variant = 'light' }) => {
+  const textColor = variant === 'dark' ? '#0A141A' : '#F5F7FA'
+  return (
+    <svg height={height} viewBox="0 0 230 40" style={{ display: 'block' }}>
+      <g transform="translate(0,4) scale(1.1429)">
+        <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" strokeWidth="3.5"/>
+        <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" strokeWidth="2.5" opacity="0.75"/>
+      </g>
+      <text x="82" y="27" fontFamily="Manrope, sans-serif" fontWeight="700" fontSize="26" fill={textColor}>BetweenUs</text>
+    </svg>
+  )
+}
 
 export const PageHeader = ({ title, onBack, action }) => (
   <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
