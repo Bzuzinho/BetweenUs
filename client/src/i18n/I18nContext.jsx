@@ -21,6 +21,7 @@ import { groupTranslations } from './groupTranslations'
 import { locationTranslations } from './locationTranslations'
 import { coupleTranslations } from './coupleTranslations'
 import { matchesTranslations } from './matchesTranslations'
+import { roomsTranslations } from './roomsTranslations'
 
 const STORAGE_KEY = 'betweenus.language'
 const DEFAULT_LANGUAGE = 'pt-PT'
@@ -54,6 +55,7 @@ const supplementalCatalogs = {
   location: locationTranslations,
   couple: coupleTranslations,
   matches: matchesTranslations,
+  rooms: roomsTranslations,
 }
 
 function getSupplementalValue(language, key) {
