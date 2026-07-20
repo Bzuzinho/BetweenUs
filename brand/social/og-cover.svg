@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#B8A7FF" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#08080C" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0A141A"/>
+      <stop offset="100%" stop-color="#08080C"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="960" cy="140" r="380" fill="url(#glow)"/>
+
+  <!-- Symbol -->
+  <g transform="translate(90,86) scale(2.4)">
+    <circle cx="18" cy="14" r="13" fill="none" stroke="#4A6B7A" stroke-width="3.5"/>
+    <circle cx="34" cy="14" r="13" fill="none" stroke="#B8A7FF" stroke-width="2.5" opacity="0.75"/>
+  </g>
+
+  <text x="92" y="210" fill="#F5F7FA" font-family="Manrope, Arial, sans-serif" font-size="44" font-weight="700">BetweenUs</text>
+
+  <text x="90" y="320" fill="#F5F7FA" font-family="Manrope, Arial, sans-serif" font-size="60" font-weight="700">Meaningful connections</text>
+  <text x="90" y="392" fill="#B8A7FF" font-family="Manrope, Arial, sans-serif" font-size="60" font-weight="700">begin with trust.</text>
+
+  <text x="92" y="470" fill="#AAB6C2" font-family="Inter, Arial, sans-serif" font-size="26">Private. Consent-led. Compatibility-first.</text>
+</svg>

@@ -6,6 +6,7 @@ import GuideScreen from './screens/GuideScreen'
 import RoomsScreen from './screens/RoomsScreen'
 import LegalReacceptanceBanner from './components/LegalReacceptanceBanner'
 import ProfileSwitcher from './components/ProfileSwitcher'
+import { Logo } from './lib/design'
 
 const C = {
   bg:'#0A141A', surface:'#102129', border:'#1E3340',
@@ -41,7 +42,8 @@ export default function AppShell({ screen }) {
     }}>
       <div style={{ paddingBottom:'calc(68px + env(safe-area-inset-bottom))', paddingTop:'env(safe-area-inset-top)' }}>
         <LegalReacceptanceBanner />
-        <div style={{ padding:'10px 16px 0' }}>
+        <div style={{ padding:'10px 16px 0', display:'flex', alignItems:'center', justifyContent:'space-between', gap:12 }}>
+          <Logo size={28} />
           <ProfileSwitcher />
         </div>
         {renderScreen()}
