@@ -26,6 +26,7 @@ regexes = [
   '''whsec_\.\.\.''',                            # STRIPE_WEBHOOK_SECRET placeholder
   '''price_\.\.\.''',                            # STRIPE_PRICE_* placeholders
   '''test-(jwt|refresh|contact-hash)-secret-not-used-in-production''', # .env.test — never used outside CI/local test runs
+  '''ci-(jwt-secret-not-production|refresh-secret-not-production|contact-hash-secret)''', # GitHub Actions synthetic test-only values
   '''dev-(secret|refresh-secret)-change-in-production''', # utils/jwt.ts dev fallback (fails hard in prod, never a real value)
   '''dev-only-insecure-fallback-do-not-use-in-prod''',    # contactHashService.ts dev fallback
   '''postgres:postgres@localhost''',             # standard local/CI Postgres default, not a real credential
