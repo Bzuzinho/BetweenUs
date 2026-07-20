@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { SUPPORTED_LANGUAGES, translations } from './translations'
 import { exploreTranslations } from './exploreTranslations'
 import { accountTranslations } from './accountTranslations'
+import { passwordTranslations } from './passwordTranslations'
 
 const STORAGE_KEY = 'betweenus.language'
 const DEFAULT_LANGUAGE = 'pt-PT'
@@ -14,6 +15,8 @@ const supplementalCatalogs = {
   explore: exploreTranslations,
   account: accountTranslations,
   common: accountTranslations,
+  forgot: passwordTranslations,
+  reset: passwordTranslations,
 }
 
 function getSupplementalValue(language, key) {
