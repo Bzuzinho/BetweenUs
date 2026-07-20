@@ -82,7 +82,7 @@ export default function PrivacySettingsPage() {
 
       {section(t('privacySettings.dataAccount'), <>
         <Row label={t('privacySettings.exportData')} desc={t('privacySettings.exportDataHelp')} arrow onClick={() => window.open('/api/auth/export', '_blank')}/>
-        <Row label={t('privacySettings.deleteAccount')} desc={t('privacySettings.deleteAccountHelp')} arrow onClick={() => navigate('/delete-account')}/>
+        <Row label={t('privacySettings.deleteAccount')} desc={t('privacySettings.deleteAccountHelp')} arrow onClick={() => { setMsg(''); setError(t('privacySettings.deleteUnavailable')); window.scrollTo({ top:0, behavior:'smooth' }) }}/>
       </>)}
 
       {!isPremium && <button onClick={() => navigate('/premium')} style={{ width:'100%', marginTop:2, background:'rgba(184,167,255,.08)', border:'1px solid rgba(184,167,255,.25)', borderRadius:14, padding:16, cursor:'pointer', textAlign:'center' }}><div style={{ fontSize:14, color:C.primary, fontWeight:600, marginBottom:4 }}>✦ Between Plus</div><div style={{ fontSize:12, color:C.muted }}>{t('privacySettings.plusHelp')}</div></button>}
