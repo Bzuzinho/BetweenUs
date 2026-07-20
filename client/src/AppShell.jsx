@@ -46,7 +46,9 @@ export default function AppShell({ screen }) {
           <Logo size={28} />
           <ProfileSwitcher />
         </div>
-        {renderScreen()}
+        <div style={{ marginTop:'calc(0px - env(safe-area-inset-top))' }}>
+          {renderScreen()}
+        </div>
       </div>
 
       {/* Bottom nav */}
