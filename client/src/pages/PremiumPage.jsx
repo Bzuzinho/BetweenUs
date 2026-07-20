@@ -106,7 +106,7 @@ export default function PremiumPage() {
             <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:20 }}>
               {features.map((feature, index) => <div key={index} style={{ fontSize:13, color:C.text2, display:'flex', gap:8 }}><span style={{ color:C.success }}>✓</span>{feature}</div>)}
             </div>
-            <button onClick={() => handleCheckout(planId)} disabled={checkingOut===planId} style={{ width:'100%', background:C.primary, border:'none', borderRadius:50, padding:15, fontSize:15, fontWeight:700, color:'#0A141A', opacity:checkingOut===planId?.7:1 }}>
+            <button onClick={() => handleCheckout(planId)} disabled={checkingOut===planId} style={{ width:'100%', background:C.primary, border:'none', borderRadius:50, padding:15, fontSize:15, fontWeight:700, color:'#0A141A', opacity:checkingOut===planId ? 0.7 : 1 }}>
               {checkingOut===planId ? t('premium.processing') : `${t('premium.subscribe')} ${planName(planId)} — ${meta.price}${t('premium.month')}`}
             </button>
           </div>
