@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
+import { useI18n } from '../i18n/I18nContext'
 
 const C = {
   bg:'#0A141A', surface:'#102129', border:'#1E3340',
@@ -17,6 +18,7 @@ const button = {
 export default function CoupleInvitePage() {
   const { token } = useParams()
   const { user, loading, refreshUser } = useAuth()
+  const { t } = useI18n()
   const navigate = useNavigate()
   const [status, setStatus] = useState('ready')
   const [message, setMessage] = useState('')
@@ -36,19 +38,19 @@ export default function CoupleInvitePage() {
     setStatus('loading')
     setMessage('')
     try {
-      const response = await api.post(`/couples/join/${token}`)
+      await api.post(`/couples/join/${token}`)
       sessionStorage.removeItem('pendingCoupleInvite')
       await refreshUser()
       setStatus('success')
-      setMessage(response.data.message || 'Perfil de casal ativado com sucesso.')
-    } catch (err) {
-      const code = err.response?.data?.code
+      setMessage(t('coupleInvite.successMessage'))
+    } catch (error) {
+      const code = error.response?.data?.code
       if (code === 'INDIVIDUAL_PROFILE_REQUIRED') {
         navigate(`/create-profile?coupleInvite=${encodeURIComponent(token)}`, { replace:true })
         return
       }
       setStatus('error')
-      setMessage(err.response?.data?.error || 'Não foi possível aceitar este convite.')
+      setMessage(t('coupleInvite.acceptError'))
     }
   }
 
@@ -57,49 +59,43 @@ export default function CoupleInvitePage() {
     navigate(user ? '/explore' : '/login', { replace:true })
   }
 
-  if (loading) return <InviteShell><p style={{color:C.muted}}>A validar o convite…</p></InviteShell>
+  if (loading) return <InviteShell><p style={{color:C.muted}}>{t('coupleInvite.validating')}</p></InviteShell>
 
   if (!user) {
     return (
       <InviteShell>
         <div style={{fontSize:46, marginBottom:14}}>💑</div>
-        <h1 style={{color:C.text, fontSize:25, margin:'0 0 10px'}}>Recebeste um convite de casal</h1>
-        <p style={{color:C.text2, fontSize:14, lineHeight:1.65, margin:'0 0 22px'}}>
-          Para proteger a identidade de ambos, entra na tua conta ou cria primeiro uma conta individual com o email para o qual recebeste o convite.
-        </p>
+        <h1 style={{color:C.text, fontSize:25, margin:'0 0 10px'}}>{t('coupleInvite.titleGuest')}</h1>
+        <p style={{color:C.text2, fontSize:14, lineHeight:1.65, margin:'0 0 22px'}}>{t('coupleInvite.guestHelp')}</p>
         <div style={{display:'grid', gap:10}}>
-          <Link to="/login" style={{...button, background:C.primary, color:'#160C25'}}>Entrar na minha conta</Link>
-          <Link to="/register" style={{...button, background:'transparent', color:C.text, border:`1px solid ${C.border}`}}>Criar conta individual</Link>
+          <Link to="/login" style={{...button, background:C.primary, color:'#160C25'}}>{t('coupleInvite.login')}</Link>
+          <Link to="/register" style={{...button, background:'transparent', color:C.text, border:`1px solid ${C.border}`}}>{t('coupleInvite.register')}</Link>
         </div>
       </InviteShell>
     )
   }
 
-  if (!user.profile) return <InviteShell><p style={{color:C.muted}}>A encaminhar para a criação do teu perfil individual…</p></InviteShell>
+  if (!user.profile) return <InviteShell><p style={{color:C.muted}}>{t('coupleInvite.redirectingProfile')}</p></InviteShell>
 
   return (
     <InviteShell>
       <div style={{fontSize:48, marginBottom:14}}>{status === 'success' ? '✅' : status === 'error' ? '⚠️' : '💑'}</div>
       <h1 style={{color:C.text, fontSize:25, margin:'0 0 10px'}}>
-        {status === 'success' ? 'Perfil de casal ativado' : 'Confirmar associação ao perfil de casal'}
+        {status === 'success' ? t('coupleInvite.activatedTitle') : t('coupleInvite.confirmTitle')}
       </h1>
       {status === 'ready' && <>
-        <p style={{color:C.text2, fontSize:14, lineHeight:1.65}}>
-          O perfil de casal já foi criado pelo teu parceiro. Ao aceitares, o teu perfil individual continua separado e passas também a ser membro deste perfil partilhado.
-        </p>
-        <p style={{color:C.muted, fontSize:12, lineHeight:1.6, marginBottom:22}}>
-          A aceitação só é permitida à conta individual associada ao endereço de email convidado.
-        </p>
+        <p style={{color:C.text2, fontSize:14, lineHeight:1.65}}>{t('coupleInvite.readyHelp')}</p>
+        <p style={{color:C.muted, fontSize:12, lineHeight:1.6, marginBottom:22}}>{t('coupleInvite.invitedEmailOnly')}</p>
         <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
-          <button onClick={decline} style={{...button, background:'transparent', color:C.text2, border:`1px solid ${C.border}`}}>Agora não</button>
-          <button onClick={accept} style={{...button, background:C.primary, color:'#160C25'}}>Aceitar convite</button>
+          <button onClick={decline} style={{...button, background:'transparent', color:C.text2, border:`1px solid ${C.border}`}}>{t('coupleInvite.later')}</button>
+          <button onClick={accept} style={{...button, background:C.primary, color:'#160C25'}}>{t('coupleInvite.accept')}</button>
         </div>
       </>}
-      {status === 'loading' && <p style={{color:C.muted}}>A confirmar a tua associação…</p>}
+      {status === 'loading' && <p style={{color:C.muted}}>{t('coupleInvite.confirming')}</p>}
       {(status === 'success' || status === 'error') && <>
         <p style={{color:status === 'success' ? C.success : C.danger, fontSize:14, lineHeight:1.6}}>{message}</p>
         <button onClick={() => navigate(status === 'success' ? '/couple' : '/explore')} style={{...button, width:'100%', background:C.primary, color:'#160C25', marginTop:12}}>
-          {status === 'success' ? 'Abrir perfil de casal' : 'Voltar à aplicação'}
+          {status === 'success' ? t('coupleInvite.openCouple') : t('coupleInvite.backApp')}
         </button>
       </>}
     </InviteShell>
