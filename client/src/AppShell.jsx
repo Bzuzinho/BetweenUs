@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import ProfilePage from './pages/ProfilePage'
 import ExploreScreen from './screens/ExploreScreen'
-import MatchesScreen from './screens/MatchesScreen'
+import MatchesListScreen from './screens/MatchesListScreen'
 import GuideScreen from './screens/GuideScreen'
 import RoomsScreen from './screens/RoomsScreen'
 import LegalReacceptanceBanner from './components/LegalReacceptanceBanner'
@@ -29,7 +29,7 @@ export default function AppShell({ screen }) {
   const renderScreen = () => {
     switch(screen) {
       case 'profile': return <ProfilePage />
-      case 'matches': return <MatchesScreen />
+      case 'matches': return <MatchesListScreen />
       case 'rooms':   return <RoomsScreen />
       case 'guide':   return <GuideScreen />
       default:        return <ExploreScreen />
@@ -51,7 +51,6 @@ export default function AppShell({ screen }) {
         {renderScreen()}
       </div>
 
-      {/* Bottom nav */}
       <nav style={{
         position:'fixed', bottom:0,
         left:'50%', transform:'translateX(-50%)',
