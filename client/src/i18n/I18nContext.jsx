@@ -6,6 +6,7 @@ import { passwordTranslations } from './passwordTranslations'
 import { emailTranslations } from './emailTranslations'
 import { premiumTranslations } from './premiumTranslations'
 import { legalTranslations } from './legalTranslations'
+import { privacyTranslations } from './privacyTranslations'
 
 const STORAGE_KEY = 'betweenus.language'
 const DEFAULT_LANGUAGE = 'pt-PT'
@@ -23,6 +24,7 @@ const supplementalCatalogs = {
   emailVerify: emailTranslations,
   premium: premiumTranslations,
   legal: legalTranslations,
+  privacySettings: privacyTranslations,
 }
 
 function getSupplementalValue(language, key) {
