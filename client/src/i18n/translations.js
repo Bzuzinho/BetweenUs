@@ -40,7 +40,7 @@ export const translations = {
       appLanguage: 'Idioma da aplicação', languageHelp: 'Esta preferência aplica-se à aplicação em todos os dispositivos após iniciares sessão.',
     },
     profileSwitcher: { useAs: 'Usar a aplicação como', change: 'Mudar de perfil' },
-    notifications: { title:'Notificações', empty:'Sem notificações', accept:'Aceitar', reject:'Recusar', bellLabel:'Abrir notificações' },
+    notifications: { title: 'Notificações', empty: 'Sem notificações', accept: 'Aceitar', reject: 'Recusar', bellLabel: 'Abrir notificações' },
     guide: {
       title: 'Between Guide', subtitle: 'Conteúdo, eventos e comunidades para ligações adultas privadas e seguras.',
       sections: { guide: 'Guia', events: 'Eventos', circles: 'Circles' },
@@ -90,7 +90,7 @@ export const translations = {
       appLanguage: 'Application language', languageHelp: 'This preference is applied to the application on every device after you log in.',
     },
     profileSwitcher: { useAs: 'Use the application as', change: 'Change profile' },
-    notifications: { title:'Notifications', empty:'No notifications', accept:'Accept', reject:'Decline', bellLabel:'Open notifications' },
+    notifications: { title: 'Notifications', empty: 'No notifications', accept: 'Accept', reject: 'Decline', bellLabel: 'Open notifications' },
     guide: {
       title: 'Between Guide', subtitle: 'Content, events and communities for private and safer adult connections.',
       sections: { guide: 'Guide', events: 'Events', circles: 'Circles' },
@@ -140,7 +140,7 @@ export const translations = {
       appLanguage: 'Langue de l’application', languageHelp: 'Cette préférence s’applique à l’application sur tous vos appareils après connexion.',
     },
     profileSwitcher: { useAs: 'Utiliser l’application en tant que', change: 'Changer de profil' },
-    notifications: { title:'Notifications', empty:'Aucune notification', accept:'Accepter', reject:'Refuser', bellLabel:'Ouvrir les notifications' },
+    notifications: { title: 'Notifications', empty: 'Aucune notification', accept: 'Accepter', reject: 'Refuser', bellLabel: 'Ouvrir les notifications' },
     guide: {
       title: 'Between Guide', subtitle: 'Contenus, événements et communautés pour des rencontres adultes privées et plus sûres.',
       sections: { guide: 'Guide', events: 'Événements', circles: 'Cercles' },
