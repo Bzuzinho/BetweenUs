@@ -4,14 +4,14 @@ import { createTestUser, prisma } from './helpers'
 
 const ensureLanguageColumn = async () => {
   await prisma.$executeRawUnsafe(`
-    ALTER TABLE "User"
+    ALTER TABLE "users"
     ADD COLUMN IF NOT EXISTS "preferredLanguage" TEXT NOT NULL DEFAULT 'pt-PT'
   `)
 }
 
 const readLanguage = async (userId: string) => {
   const rows = await prisma.$queryRaw<Array<{ preferredLanguage: string }>>`
-    SELECT "preferredLanguage" FROM "User" WHERE id = ${userId} LIMIT 1
+    SELECT "preferredLanguage" FROM "users" WHERE id = ${userId} LIMIT 1
   `
   return rows[0]?.preferredLanguage
 }
