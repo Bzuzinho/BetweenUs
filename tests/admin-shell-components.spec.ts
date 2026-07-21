@@ -133,3 +133,17 @@ test('dashboard translations cover every metric and state', () => {
     }
   }
 })
+
+test('photo moderation translations cover loading outcomes and actions', () => {
+  for (const language of languages) {
+    const photos = adminTranslations[language].admin.photos
+    expect(photos.empty).toBeTruthy()
+    expect(photos.loadError).toBeTruthy()
+    expect(photos.approve).toBeTruthy()
+    expect(photos.reject).toBeTruthy()
+    expect(photos.unknownProfile).toBeTruthy()
+
+    expect(photos.approve).not.toBe('approve')
+    expect(photos.reject).not.toBe('reject')
+  }
+})
