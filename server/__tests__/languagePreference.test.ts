@@ -38,7 +38,7 @@ describe('Account language preference', () => {
     expect(await readLanguage(user.id)).toBe('fr')
   })
 
-  it('rejects unsupported languages without changing the stored preference', async () => {
+  it('rejects unsupported languages with a semantic error code', async () => {
     const user = await createTestUser({ email: 'language-invalid@test.com' })
     await ensureLanguageColumn()
 
@@ -48,6 +48,11 @@ describe('Account language preference', () => {
       .send({ preferredLanguage: 'de' })
 
     expect(update.status).toBe(400)
+    expect(update.body).toEqual({
+      code: 'UNSUPPORTED_LANGUAGE',
+      error: 'Idioma não suportado.',
+      supportedLanguages: ['pt-PT', 'en', 'fr'],
+    })
     expect(await readLanguage(user.id)).toBe('pt-PT')
   })
 })

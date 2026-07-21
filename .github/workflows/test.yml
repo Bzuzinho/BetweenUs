@@ -128,7 +128,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          npm test -- --runInBand __tests__/auth.test.ts __tests__/languagePreference.test.ts 2>&1 | tee scoped-backend-tests.log
+          npm test -- --runInBand __tests__/auth.test.ts __tests__/languagePreference.test.ts __tests__/catalogSemanticErrors.test.ts 2>&1 | tee scoped-backend-tests.log
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betweenus_test
           REDIS_URL: redis://localhost:6379/1

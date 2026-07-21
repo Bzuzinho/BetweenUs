@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import LocationAutocomplete from '../components/LocationAutocomplete'
 import { useI18n } from '../i18n/I18nContext'
+import { catalogLabel, intentionLabel } from '../i18n/catalogTranslations'
 
 const C = {
   bg:'#0A141A', surface:'#102129', elevated:'#172C36', border:'#1E3340', input:'#0F1E26',
@@ -123,22 +124,22 @@ export default function EditProfilePage() {
         <select style={INPUT} value={form.locationVisibility} onChange={event => set('locationVisibility', event.target.value)}>{LOCATION_VISIBILITY_VALUES.map(value => <option key={value} value={value}>{t(`editProfile.locationOptions.${value}`)}</option>)}</select>
         <div style={{ fontSize:11, color:C.muted, marginTop:-6, marginBottom:12 }}>{t('editProfile.locationHelp')}</div>
         <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>{t('editProfile.gender')}</label>
-        <select style={INPUT} value={form.gender} onChange={event => set('gender', event.target.value)}><option value="">{t('editProfile.preferNotSay')}</option>{catalogGenders.map(item => <option key={item.id} value={item.slug}>{item.label}</option>)}</select>
+        <select style={INPUT} value={form.gender} onChange={event => set('gender', event.target.value)}><option value="">{t('editProfile.preferNotSay')}</option>{catalogGenders.map(item => <option key={item.id} value={item.slug}>{catalogLabel(t, 'genders', item.slug, item.label)}</option>)}</select>
         <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>{t('editProfile.orientation')}</label>
-        <select style={INPUT} value={form.orientation} onChange={event => set('orientation', event.target.value)}><option value="">{t('editProfile.preferNotSay')}</option>{catalogOrientations.map(item => <option key={item.id} value={item.slug}>{item.label}</option>)}</select>
+        <select style={INPUT} value={form.orientation} onChange={event => set('orientation', event.target.value)}><option value="">{t('editProfile.preferNotSay')}</option>{catalogOrientations.map(item => <option key={item.id} value={item.slug}>{catalogLabel(t, 'orientations', item.slug, item.label)}</option>)}</select>
         <label style={{ fontSize:13, color:C.text2, display:'block', marginBottom:4 }}>{t('editProfile.relationship')}</label>
         <select style={INPUT} value={form.relationshipStatus} onChange={event => set('relationshipStatus', event.target.value)}>{RELATIONSHIP_VALUES.map(value => <option key={value} value={value}>{t(`profileForm.relationships.${value}`)}</option>)}</select>
       </section>
 
       <section style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:20, marginBottom:14 }}>
         <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'.06em', marginBottom:12 }}>{t('editProfile.intentions')}</div>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>{catalogIntentions.map(item => { const selected=intentionSlugs.includes(item.slug); return <button key={item.id} type="button" onClick={() => toggleIntention(item.slug)} style={{ background:selected?C.primaryDim:C.elevated, border:`1.5px solid ${selected?C.primary:C.border}`, borderRadius:12, padding:'11px 10px', cursor:'pointer', color:selected?C.primary:C.text2, minHeight:44 }}>{item.name}</button> })}</div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>{catalogIntentions.map(item => { const selected=intentionSlugs.includes(item.slug); return <button key={item.id} type="button" onClick={() => toggleIntention(item.slug)} style={{ background:selected?C.primaryDim:C.elevated, border:`1.5px solid ${selected?C.primary:C.border}`, borderRadius:12, padding:'11px 10px', cursor:'pointer', color:selected?C.primary:C.text2, minHeight:44 }}>{intentionLabel(t, item)}</button> })}</div>
       </section>
 
       <section style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:20, marginBottom:14 }}>
         <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'.06em', marginBottom:4 }}>{t('editProfile.limits')}</div>
         <p style={{ color:C.muted, fontSize:12, lineHeight:1.5, marginBottom:14 }}>{t('editProfile.limitsHelp')}</p>
-        {Object.entries(catalogBoundaries.reduce((groups, boundary) => { (groups[boundary.category] ||= []).push(boundary); return groups }, {})).map(([category, items]) => <div key={category} style={{ marginBottom:14 }}><div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', marginBottom:6 }}>{category.replace(/_/g,' ')}</div>{items.map(boundary => <div key={boundary.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, padding:'8px 0', borderBottom:`1px solid ${C.border}` }}><span style={{ fontSize:13, color:C.text }}>{boundary.name}</span><div style={{ display:'flex', gap:6 }}>{['NO','MAYBE','YES'].map(preference => { const active=boundaryPrefs[boundary.id]===preference; const key=preference==='YES'?'yes':preference==='MAYBE'?'maybe':'no'; return <button key={preference} type="button" onClick={() => setBoundaryPref(boundary.id, preference)} style={{ background:active?C.primaryDim:'transparent', border:`1px solid ${active?C.primary:C.border}`, borderRadius:8, padding:'4px 10px', fontSize:11, color:active?C.primary:C.muted }}>{t(`editProfile.${key}`)}</button> })}</div></div>)}</div>)}
+        {Object.entries(catalogBoundaries.reduce((groups, boundary) => { (groups[boundary.category] ||= []).push(boundary); return groups }, {})).map(([category, items]) => <div key={category} style={{ marginBottom:14 }}><div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', marginBottom:6 }}>{catalogLabel(t, 'boundaryCategories', category, category.replace(/_/g,' '))}</div>{items.map(boundary => <div key={boundary.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, padding:'8px 0', borderBottom:`1px solid ${C.border}` }}><span style={{ fontSize:13, color:C.text }}>{catalogLabel(t, 'boundaries', boundary.slug, boundary.name)}</span><div style={{ display:'flex', gap:6 }}>{['NO','MAYBE','YES'].map(preference => { const active=boundaryPrefs[boundary.id]===preference; const key=preference==='YES'?'yes':preference==='MAYBE'?'maybe':'no'; return <button key={preference} type="button" onClick={() => setBoundaryPref(boundary.id, preference)} style={{ background:active?C.primaryDim:'transparent', border:`1px solid ${active?C.primary:C.border}`, borderRadius:8, padding:'4px 10px', fontSize:11, color:active?C.primary:C.muted }}>{t(`editProfile.${key}`)}</button> })}</div></div>)}</div>)}
       </section>
 
       <section style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:20, marginBottom:24 }}>
