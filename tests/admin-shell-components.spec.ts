@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { ADMIN_TABS } from '../client/src/components/admin/AdminTabBar.jsx'
-import { REPORT_STATUSES, reportTierForPriority } from '../client/src/components/admin/AdminReportsQueue.jsx'
+import { REPORT_STATUSES, reportTierForPriority } from '../client/src/components/admin/adminReportContracts.js'
 import { adminTranslations } from '../client/src/i18n/adminTranslations.js'
 
 const languages = ['pt-PT', 'en', 'fr'] as const
