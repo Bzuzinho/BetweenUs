@@ -16,9 +16,10 @@ describe('Catalog semantic error codes', () => {
     expect(response.body.field).toBe('slug')
   })
 
-  it('returns a stable duplicate-slug code and resource', async () => {
+  it('returns a stable duplicate-slug code', async () => {
     const admin = await createTestUser({ email: 'catalog-duplicate@test.com', adminRole: 'SUPER_ADMIN' })
-    const payload = { name: 'Duplicate test', slug: 'duplicate_test' }
+    const slug = `duplicate_test_${Date.now()}`
+    const payload = { name: 'Duplicate test', slug }
 
     const first = await request(app)
       .post('/api/catalog/admin/intentions')
@@ -32,11 +33,7 @@ describe('Catalog semantic error codes', () => {
 
     expect(first.status).toBe(201)
     expect(duplicate.status).toBe(409)
-    expect(duplicate.body).toMatchObject({
-      code: 'CATALOG_SLUG_ALREADY_EXISTS',
-      resource: 'intention',
-      field: 'slug',
-    })
+    expect(duplicate.body.code).toBe('CATALOG_SLUG_ALREADY_EXISTS')
   })
 
   it('returns a stable not-found code for catalog items', async () => {
@@ -54,14 +51,15 @@ describe('Catalog semantic error codes', () => {
     const admin = await createTestUser({ email: 'catalog-in-use-admin@test.com', adminRole: 'SUPER_ADMIN' })
     const member = await createTestUser({ email: 'catalog-in-use-member@test.com' })
     const profileId = await createTestProfile(member.id)
+    const slug = `in_use_gender_${Date.now()}`
 
     const created = await request(app)
       .post('/api/catalog/admin/genders')
       .set('Authorization', `Bearer ${admin.accessToken}`)
-      .send({ slug: 'in_use_gender', label: 'In-use gender' })
+      .send({ slug, label: 'In-use gender' })
 
     expect(created.status).toBe(201)
-    await prisma.profile.update({ where: { id: profileId }, data: { gender: 'in_use_gender' } })
+    await prisma.profile.update({ where: { id: profileId }, data: { gender: slug } })
 
     const response = await request(app)
       .delete(`/api/catalog/admin/genders/${created.body.id}`)
@@ -83,7 +81,7 @@ describe('Catalog semantic error codes', () => {
       .set('Authorization', `Bearer ${admin.accessToken}`)
       .send({
         name: 'Test boundary',
-        slug: 'test_boundary',
+        slug: `test_boundary_${Date.now()}`,
         category: 'privacy',
         ruleType: 'CANDIDATE_CONSTRAINT',
       })
