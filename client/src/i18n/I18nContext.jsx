@@ -114,7 +114,7 @@ export function I18nProvider({ children }) {
   }, [language])
 
   const value = useMemo(
-    () => ({ language, setLanguage, t, formatDate, formatNumber }),
+    () => ({ language, locale: language, setLanguage, t, formatDate, formatNumber }),
     [language, setLanguage, t, formatDate, formatNumber]
   )
 
