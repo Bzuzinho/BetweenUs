@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { ADMIN_PROFILE_DETAIL_STATUSES } from '../client/src/components/admin/AdminUserProfilePanel.jsx'
+import { ADMIN_PROFILE_DETAIL_STATUSES } from '../client/src/components/admin/adminUserProfileContracts.js'
 import { adminUserPanelsTranslations } from '../client/src/i18n/adminUserPanelsTranslations.js'
 
 const languages = ['pt-PT', 'en', 'fr'] as const
