@@ -10,6 +10,13 @@ const readLanguage = async (userId: string) => {
 }
 
 describe('Account language preference', () => {
+  beforeAll(async () => {
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "User"
+      ADD COLUMN IF NOT EXISTS "preferredLanguage" TEXT NOT NULL DEFAULT 'pt-PT'
+    `)
+  })
+
   it('returns Portuguese by default and persists a supported language', async () => {
     const user = await createTestUser({ email: 'language-preference@test.com' })
 
