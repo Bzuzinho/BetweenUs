@@ -39,7 +39,7 @@ function AdminSelectedUser({ colors, userId, currentAdminRole, onBack }) {
     info:<AdminUserAccountDetail colors={C} userId={userId} currentAdminRole={currentAdminRole} onBack={onBack} onDeleted={onBack} />,
     profile:<AdminUserProfilePanel colors={C} profile={data.profile} onSaved={load} />,
     couple:data.coupleContext ? <AdminCoupleContextPanel colors={C} context={data.coupleContext} profileId={data.coupleContext.profileId} /> : null,
-    subscription:<AdminUserSubscriptionPanel colors={C} user={data} />,
+    subscription:<AdminUserSubscriptionPanel colors={C} subscription={data.subscription} financials={data.financials} isTestAccount={data.isTestAccount} />,
     referrals:<AdminUserReferralsPanel colors={C} referral={data.referral} />,
     verification:<AdminUserVerificationPanel colors={C} userId={userId} verification={data.verification} ageVerifiedAt={data.ageVerifiedAt} onChanged={load} />,
     privacy:<AdminUserPrivacyPanel colors={C} privacySettings={data.profile?.privacySettings} />,
