@@ -32,7 +32,12 @@ This branch continues the work merged through PR #19.
   - `BOUNDARY_CONSTRAINT_NOT_ALLOWED`;
   - `PROFILE_TYPE_UNKNOWN`;
   - resource-specific load/create/update failure codes.
+- Consolidated gender and orientation CRUD behind the same tested route factory without changing URLs or payloads.
 - Added scoped tests for catalogue validation, missing items, boundary constraints and structural profile types.
+
+## Next block
+
+Internationalise the administration shell first: navigation tabs, notification bell, service status, account menu, shared confirmation modal and shared loading/error states. Feature-specific admin tabs will follow separately.
 
 ## Compatibility rule
 
