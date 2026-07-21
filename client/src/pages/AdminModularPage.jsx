@@ -14,6 +14,7 @@ import AdminUsersModule from '../components/admin/AdminUsersModule'
 import AdminVerificationsQueue from '../components/admin/AdminVerificationsQueue'
 import AdminConversations from '../components/admin/AdminConversations'
 import AdminAudit from '../components/admin/AdminAudit'
+import AdminSettingsPage from '../components/admin/AdminSettingsPage'
 
 export const ADMIN_COLORS = {
   bg:'#0A141A', surface:'#102129', elevated:'#172C36', border:'#1E3340', input:'#0F1E26',
@@ -30,7 +31,7 @@ export const ADMIN_ROLE_TABS = {
   CONTENT_REVIEWER:['dashboard','photos','profiles'],
 }
 
-export const MODULAR_ADMIN_TABS = ['dashboard','reports','photos','profiles','users','verifications','conversations','audit']
+export const MODULAR_ADMIN_TABS = ['dashboard','reports','photos','profiles','users','verifications','conversations','audit','configuracoes']
 
 export default function AdminModularPage() {
   const C = ADMIN_COLORS
@@ -64,6 +65,7 @@ export default function AdminModularPage() {
     if (tab === 'verifications') return <AdminVerificationsQueue colors={C} />
     if (tab === 'conversations') return <AdminConversations colors={C} />
     if (tab === 'audit') return <AdminAudit colors={C} />
+    if (tab === 'configuracoes') return <AdminSettingsPage colors={C} />
     return null
   }
 
