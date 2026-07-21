@@ -30,11 +30,7 @@ export default function AdminUserAccountDetail({ colors, userId, currentAdminRol
       .then(([userResponse, eligibilityResponse]) => {
         setData(userResponse.data)
         setEligibility(eligibilityResponse.data.eligibility)
-        setForm({
-          email: userResponse.data.email || '',
-          accountName: userResponse.data.accountName || '',
-          nif: userResponse.data.nif || '',
-        })
+        setForm({ email:userResponse.data.email || '', accountName:userResponse.data.accountName || '', nif:userResponse.data.nif || '' })
       })
       .catch(responseError => setError(responseError.response?.data?.error || t('admin.users.detail.loadError')))
       .finally(() => setLoading(false))
@@ -46,9 +42,7 @@ export default function AdminUserAccountDetail({ colors, userId, currentAdminRol
   const actions = useMemo(() => availableAdminUserActions(data?.status), [data?.status])
 
   const run = async operation => {
-    setBusy(true)
-    setError('')
-    setMessage('')
+    setBusy(true); setError(''); setMessage('')
     try { await operation() } finally { setBusy(false) }
   }
 
@@ -56,9 +50,7 @@ export default function AdminUserAccountDetail({ colors, userId, currentAdminRol
     const payload = { email:form.email, accountName:form.accountName, reason, internalNote }
     if (canSeeNif) payload.nif = form.nif
     await api.put(`/admin/users/${userId}`, payload)
-    setModal(null)
-    setMessage(t('admin.users.detail.updated'))
-    load()
+    setModal(null); setMessage(t('admin.users.detail.updated')); load()
   }).catch(responseError => setError(responseError.response?.data?.error || t('admin.users.detail.actionError')))
 
   const changeStatus = (status, reason) => run(async () => {
@@ -70,9 +62,7 @@ export default function AdminUserAccountDetail({ colors, userId, currentAdminRol
 
   const deleteUser = (reason, internalNote) => run(async () => {
     await api.delete(`/admin/users/${userId}`, { data:{ reason, internalNote } })
-    setModal(null)
-    onDeleted?.()
-    onBack?.()
+    setModal(null); onDeleted?.(); onBack?.()
   }).catch(responseError => setError(responseError.response?.data?.error || t('admin.users.detail.actionError')))
 
   const resetPassword = () => run(async () => {
@@ -108,15 +98,7 @@ export default function AdminUserAccountDetail({ colors, userId, currentAdminRol
           {data.adminRole && <span style={{ color:C.primary }}> · {data.adminRole}</span>}
           {data.riskScore > 0 && <span style={{ color:C.danger }}> · {t('admin.users.risk').replace('{score}', data.riskScore)}</span>}
         </div>
-        {eligibility && (
-          <div style={{ display:'flex', flexWrap:'wrap', gap:5, marginTop:8 }}>
-            {['canAppearInDiscovery','canLike','canMatch','canChat'].map(key => (
-              <span key={key} style={{ fontSize:10, padding:'2px 8px', borderRadius:6, background:eligibility[key] ? C.successDim : C.dangerDim, color:eligibility[key] ? C.success : C.danger, border:`1px solid ${eligibility[key] ? C.success : C.danger}` }}>
-                {eligibility[key] ? '✓' : '✕'} {t(`admin.users.detail.eligibility.${key}`)}
-              </span>
-            ))}
-          </div>
-        )}
+        {eligibility && <div style={{ display:'flex', flexWrap:'wrap', gap:5, marginTop:8 }}>{['canAppearInDiscovery','canLike','canMatch','canChat'].map(key => <span key={key} style={{ fontSize:10, padding:'2px 8px', borderRadius:6, background:eligibility[key] ? C.successDim : C.dangerDim, color:eligibility[key] ? C.success : C.danger, border:`1px solid ${eligibility[key] ? C.success : C.danger}` }}>{eligibility[key] ? '✓' : '✕'} {t(`admin.users.detail.eligibility.${key}`)}</span>)}</div>}
         {eligibility?.reasons?.length > 0 && <div style={{ fontSize:10, color:C.muted, marginTop:6 }}>{t('admin.users.detail.eligibilityReason')}: {eligibility.reasons.join(', ')}</div>}
       </div>
 
@@ -133,26 +115,14 @@ export default function AdminUserAccountDetail({ colors, userId, currentAdminRol
       {error && <div role="alert" style={{ background:C.dangerDim, border:`1px solid rgba(248,113,113,0.25)`, borderRadius:10, padding:'10px 14px', marginBottom:12, color:C.danger, fontSize:13 }}>{error}</div>}
 
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16 }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
-          <span style={{ fontSize:14, fontWeight:500, color:C.text2 }}>{t('admin.users.detail.account')}</span>
-          <button type="button" onClick={() => setModal('save')} style={{ background:C.primary, border:'none', borderRadius:8, padding:'6px 14px', color:'#0A141A', fontSize:12, fontWeight:600, cursor:'pointer' }}>{t('admin.users.detail.save')}</button>
-        </div>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}><span style={{ fontSize:14, fontWeight:500, color:C.text2 }}>{t('admin.users.detail.account')}</span><button type="button" onClick={() => setModal('save')} style={{ background:C.primary, border:'none', borderRadius:8, padding:'6px 14px', color:'#0A141A', fontSize:12, fontWeight:600, cursor:'pointer' }}>{t('admin.users.detail.save')}</button></div>
         <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>{t('admin.users.detail.email')}</label>
         <input value={form.email} onChange={event => setForm(previous => ({...previous, email:event.target.value}))} style={{ width:'100%', minHeight:44, boxSizing:'border-box', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:12, padding:'10px 12px', color:C.text, marginBottom:10 }} />
         <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>{t('admin.users.detail.accountName')}</label>
         <input value={form.accountName} onChange={event => setForm(previous => ({...previous, accountName:event.target.value}))} style={{ width:'100%', minHeight:44, boxSizing:'border-box', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:12, padding:'10px 12px', color:C.text, marginBottom:10 }} />
-        {canSeeNif ? (
-          <>
-            <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>{t('admin.users.detail.nif')}</label>
-            <input value={form.nif} onChange={event => setForm(previous => ({...previous, nif:event.target.value}))} style={{ width:'100%', minHeight:44, boxSizing:'border-box', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:12, padding:'10px 12px', color:C.text, marginBottom:10 }} />
-          </>
-        ) : <div style={{ fontSize:11, color:C.muted, marginBottom:10 }}>{t('admin.users.detail.nifRestricted')}</div>}
-        <div style={{ fontSize:12, color:C.muted, lineHeight:1.8 }}>
-          <div>{t('admin.users.detail.emailVerified')}: {data.emailVerifiedAt ? formatDate(data.emailVerifiedAt) : t('admin.users.detail.no')}</div>
-          {data.dateOfBirth && <div>{t('admin.users.detail.dateOfBirth')}: {formatDate(data.dateOfBirth)}</div>}
-          <div>{t('admin.users.detail.createdAt')}: {formatDate(data.createdAt)}</div>
-        </div>
-        <AdminRoleManager colors={C} userId={userId} currentRole={data.adminRole} currentAdminRole={currentAdminRole} onChanged={load} />
+        {canSeeNif ? <><label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>{t('admin.users.detail.nif')}</label><input value={form.nif} onChange={event => setForm(previous => ({...previous, nif:event.target.value}))} style={{ width:'100%', minHeight:44, boxSizing:'border-box', background:C.input, border:`1.5px solid ${C.border}`, borderRadius:12, padding:'10px 12px', color:C.text, marginBottom:10 }} /></> : <div style={{ fontSize:11, color:C.muted, marginBottom:10 }}>{t('admin.users.detail.nifRestricted')}</div>}
+        <div style={{ fontSize:12, color:C.muted, lineHeight:1.8 }}><div>{t('admin.users.detail.emailVerified')}: {data.emailVerifiedAt ? formatDate(data.emailVerifiedAt) : t('admin.users.detail.no')}</div>{data.dateOfBirth && <div>{t('admin.users.detail.dateOfBirth')}: {formatDate(data.dateOfBirth)}</div>}<div>{t('admin.users.detail.createdAt')}: {formatDate(data.createdAt)}</div></div>
+        <AdminRoleManager colors={C} userId={userId} currentRole={data.adminRole} viewerRole={currentAdminRole} onChanged={load} />
       </div>
     </section>
   )
