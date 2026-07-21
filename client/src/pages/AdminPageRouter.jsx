@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import AdminPage from './AdminPage'
+import AdminModularPage, { MODULAR_ADMIN_TABS } from './AdminModularPage'
 import AffiliationsAdminPage from './AffiliationsAdminPage'
 
 export default function AdminPageRouter() {
@@ -8,7 +9,7 @@ export default function AdminPageRouter() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    if (tab === 'affiliations' || tab === 'beta') return
+    if (tab === 'affiliations' || tab === 'beta' || MODULAR_ADMIN_TABS.includes(tab)) return
 
     const normalizeAdminNavigation = () => {
       const candidates = document.querySelectorAll('button, a, [role="button"]')
@@ -46,5 +47,6 @@ export default function AdminPageRouter() {
 
   if (tab === 'beta') return <Navigate to="/admin/affiliations" replace />
   if (tab === 'affiliations') return <AffiliationsAdminPage />
+  if (MODULAR_ADMIN_TABS.includes(tab || 'dashboard')) return <AdminModularPage />
   return <AdminPage />
 }
