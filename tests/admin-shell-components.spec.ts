@@ -12,6 +12,18 @@ const queueKeys = [
   'photosPending',
 ]
 
+const dashboardMetricKeys = [
+  'users',
+  'today',
+  'highRisk',
+  'pendingProfiles',
+  'reports',
+  'pendingPhotos',
+  'pendingVerifications',
+  'premium',
+  'suspended',
+]
+
 test('every extracted admin tab has a localized label and description', () => {
   const keys = ADMIN_TABS.map(tab => tab.key)
   expect(new Set(keys).size).toBe(keys.length)
@@ -106,5 +118,18 @@ test('common async states are localized in every supported language', () => {
     expect(common.retry).not.toBe('retry')
     expect(common.unavailable).not.toBe('unavailable')
     expect(common.error).not.toBe('error')
+  }
+})
+
+test('dashboard translations cover every metric and state', () => {
+  for (const language of languages) {
+    const dashboard = adminTranslations[language].admin.dashboard
+    expect(dashboard.loadError).toBeTruthy()
+    expect(dashboard.unavailable).toBeTruthy()
+
+    for (const key of dashboardMetricKeys) {
+      expect(dashboard.metrics[key]).toBeTruthy()
+      expect(dashboard.metrics[key]).not.toBe(key)
+    }
   }
 })
