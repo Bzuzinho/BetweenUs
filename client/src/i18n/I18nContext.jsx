@@ -24,6 +24,15 @@ import { matchesTranslations } from './matchesTranslations'
 import { roomsTranslations } from './roomsTranslations'
 import { catalogTranslations } from './catalogTranslations'
 import { adminTranslations } from './adminTranslations'
+import { adminUserDetailTranslations } from './adminUserDetailTranslations'
+import { adminUserPanelsTranslations } from './adminUserPanelsTranslations'
+import { adminUserSensitiveTranslations } from './adminUserSensitiveTranslations'
+import { adminCoupleContextTranslations } from './adminCoupleContextTranslations'
+import { adminUserReferralsTranslations } from './adminUserReferralsTranslations'
+import { adminUserNavigationTranslations } from './adminUserNavigationTranslations'
+import { adminOperationsTranslations } from './adminOperationsTranslations'
+import { adminUserCreationTranslations } from './adminUserCreationTranslations'
+import { adminSettingsTranslations } from './adminSettingsTranslations'
 
 const STORAGE_KEY = 'betweenus.language'
 const DEFAULT_LANGUAGE = 'pt-PT'
@@ -31,6 +40,24 @@ const I18nContext = createContext(null)
 
 const resolveLanguage = value => SUPPORTED_LANGUAGES.includes(value) ? value : DEFAULT_LANGUAGE
 const getNestedValue = (object, path) => path.split('.').reduce((value, key) => value?.[key], object)
+
+const mergedAdminTranslations = Object.fromEntries(SUPPORTED_LANGUAGES.map(language => [language, {
+  admin: {
+    ...adminTranslations[language].admin,
+    ...adminUserPanelsTranslations[language].admin,
+    ...adminUserSensitiveTranslations[language].admin,
+    ...adminCoupleContextTranslations[language].admin,
+    ...adminUserReferralsTranslations[language].admin,
+    ...adminUserNavigationTranslations[language].admin,
+    ...adminOperationsTranslations[language].admin,
+    ...adminUserCreationTranslations[language].admin,
+    ...adminSettingsTranslations[language].admin,
+    users: {
+      ...adminTranslations[language].admin.users,
+      detail: adminUserDetailTranslations[language].admin.users.detail,
+    },
+  },
+}]))
 
 const supplementalCatalogs = {
   explore: exploreTranslations,
@@ -59,7 +86,7 @@ const supplementalCatalogs = {
   matches: matchesTranslations,
   rooms: roomsTranslations,
   catalog: catalogTranslations,
-  admin: adminTranslations,
+  admin: mergedAdminTranslations,
 }
 
 function getSupplementalValue(language, key) {
@@ -103,7 +130,7 @@ export function I18nProvider({ children }) {
   }, [language])
 
   const value = useMemo(
-    () => ({ language, setLanguage, t, formatDate, formatNumber }),
+    () => ({ language, locale: language, setLanguage, t, formatDate, formatNumber }),
     [language, setLanguage, t, formatDate, formatNumber]
   )
 

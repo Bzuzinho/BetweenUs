@@ -1,0 +1,8 @@
+export const ADMIN_PROFILE_DETAIL_STATUSES = [
+  'DRAFT',
+  'PENDING_REVIEW',
+  'APPROVED',
+  'REJECTED',
+  'HIDDEN',
+  'SUSPENDED',
+]

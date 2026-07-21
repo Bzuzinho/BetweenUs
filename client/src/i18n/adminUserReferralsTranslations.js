@@ -1,0 +1,5 @@
+export const adminUserReferralsTranslations = {
+  'pt-PT': { admin:{ userReferrals:{ title:'Convites e afiliados', empty:'Sem atividade de afiliados.', invitedBy:'Convidado por', subscribed:'já subscreveu', notSubscribed:'ainda não subscreveu', invitedCount:'Convidou {count} pessoa(s)', status:{ REGISTERED:'Registado', SUBSCRIBED:'Subscreveu', CREDITED:'Creditado' } } } },
+  en: { admin:{ userReferrals:{ title:'Invitations and referrals', empty:'No referral activity.', invitedBy:'Invited by', subscribed:'already subscribed', notSubscribed:'not subscribed yet', invitedCount:'Invited {count} people', status:{ REGISTERED:'Registered', SUBSCRIBED:'Subscribed', CREDITED:'Credited' } } } },
+  fr: { admin:{ userReferrals:{ title:'Invitations et parrainages', empty:'Aucune activité de parrainage.', invitedBy:'Invité par', subscribed:'déjà abonné', notSubscribed:'pas encore abonné', invitedCount:'A invité {count} personne(s)', status:{ REGISTERED:'Inscrit', SUBSCRIBED:'Abonné', CREDITED:'Crédité' } } } },
+}
