@@ -7,13 +7,6 @@ on:
     branches: [main]
 
 jobs:
-  # Security follow-up — secret scanning. Separate, fast job (no DB/Redis
-  # services needed) so a leaked-secret finding blocks the PR/merge
-  # independently of whether the test suite itself passes. Scans full git
-  # history via fetch-depth: 0 (gitleaks needs the real history to check
-  # commits, not just the working tree) — this is exactly the gap that let
-  # the JWT_SECRET/JWT_REFRESH_SECRET exposure in commit 487b622 go
-  # unnoticed until a manual audit (Sprint 11.5) caught it.
   secret-scan:
     name: Secret scanning (gitleaks)
     runs-on: ubuntu-latest
@@ -23,7 +16,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run gitleaks
+      - name: Run gitleaks on pull request commits
+        if: github.event_name == 'pull_request'
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_LOG_OPTS: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+
+      - name: Run gitleaks on main history
+        if: github.event_name == 'push'
         uses: gitleaks/gitleaks-action@v2
         env:
           GITLEAKS_CONFIG: .gitleaks.toml
@@ -72,9 +73,6 @@ jobs:
         working-directory: server
         run: npm ci
 
-      # 11.5.4 — Prisma schema validity, checked before generate so a
-      # malformed schema fails fast with a schema-specific error instead of
-      # a confusing generate/type-check failure downstream.
       - name: Validate Prisma schema
         working-directory: server
         run: npx prisma validate
@@ -93,18 +91,25 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betweenus_test
 
-      # 11.5.4 — backend TypeScript baseline. Runs against the REAL
-      # generated Prisma Client (unlike a sandbox with no network access to
-      # Prisma's engine binaries, where the client falls back to an
-      # unresolved `any` stub and produces unrelated implicit-any noise) —
-      # this is the authoritative "0 errors" check for the project.
       - name: Backend typecheck (tsc --noEmit)
         working-directory: server
         run: npm run typecheck
 
       - name: Run backend tests
         working-directory: server
-        run: npm test
+        shell: bash
+        run: |
+          set +e
+          npm test > backend-test.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Backend test failure summary"
+            tail -n 250 backend-test.log
+            echo "::endgroup::"
+          else
+            tail -n 40 backend-test.log
+          fi
+          exit "$status"
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betweenus_test
           REDIS_URL: redis://localhost:6379/1
@@ -116,9 +121,14 @@ jobs:
           CLIENT_URL: http://localhost:3000
           ADMIN_EMAILS: admin@test.com
 
-      # 11.5.4 — client has no TypeScript/test suite (plain JS/JSX + Vite);
-      # `vite build` is the meaningful "does this compile" signal for it,
-      # equivalent in spirit to the backend typecheck step above.
+      - name: Upload backend test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-log
+          path: server/backend-test.log
+          retention-days: 7
+
       - name: Install frontend dependencies
         working-directory: client
         run: npm ci
