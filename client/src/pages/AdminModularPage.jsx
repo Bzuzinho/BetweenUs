@@ -10,6 +10,7 @@ import AdminReportDetail from '../components/admin/AdminReportDetail'
 import AdminPhotos from '../components/admin/AdminPhotos'
 import AdminProfilesQueue from '../components/admin/AdminProfilesQueue'
 import AdminProfileDetail from '../components/admin/AdminProfileDetail'
+import AdminUsersModule from '../components/admin/AdminUsersModule'
 import AdminVerificationsQueue from '../components/admin/AdminVerificationsQueue'
 import AdminConversations from '../components/admin/AdminConversations'
 import AdminAudit from '../components/admin/AdminAudit'
@@ -29,7 +30,7 @@ export const ADMIN_ROLE_TABS = {
   CONTENT_REVIEWER:['dashboard','photos','profiles'],
 }
 
-export const MODULAR_ADMIN_TABS = ['dashboard','reports','photos','profiles','verifications','conversations','audit']
+export const MODULAR_ADMIN_TABS = ['dashboard','reports','photos','profiles','users','verifications','conversations','audit']
 
 export default function AdminModularPage() {
   const C = ADMIN_COLORS
@@ -59,6 +60,7 @@ export default function AdminModularPage() {
     if (tab === 'profiles') return selectedProfile
       ? <AdminProfileDetail colors={C} profile={selectedProfile} onBack={() => setSelectedProfile(null)} onResolved={() => setSelectedProfile(null)} />
       : <AdminProfilesQueue colors={C} onSelectProfile={setSelectedProfile} />
+    if (tab === 'users') return <AdminUsersModule colors={C} currentAdminRole={user?.adminRole} />
     if (tab === 'verifications') return <AdminVerificationsQueue colors={C} />
     if (tab === 'conversations') return <AdminConversations colors={C} />
     if (tab === 'audit') return <AdminAudit colors={C} />
