@@ -4,6 +4,14 @@ import { adminTranslations } from '../client/src/i18n/adminTranslations.js'
 
 const languages = ['pt-PT', 'en', 'fr'] as const
 
+const queueKeys = [
+  'verificationsPending',
+  'profilesPendingReview',
+  'reportsPending',
+  'reportsCritical',
+  'photosPending',
+]
+
 test('every extracted admin tab has a localized label and description', () => {
   const keys = ADMIN_TABS.map(tab => tab.key)
   expect(new Set(keys).size).toBe(keys.length)
@@ -40,5 +48,34 @@ test('localized reason modal strings exist in every language', () => {
     expect(modal.internalNote).toBeTruthy()
     expect(modal.cancel).toBeTruthy()
     expect(modal.confirm).toBeTruthy()
+  }
+})
+
+test('notification shell translations cover all work queues and actions', () => {
+  for (const language of languages) {
+    const notifications = adminTranslations[language].admin.notifications
+    expect(notifications.title).toBeTruthy()
+    expect(notifications.clearAll).toBeTruthy()
+    expect(notifications.empty).toBeTruthy()
+    expect(notifications.delete).toBeTruthy()
+    expect(notifications.criticalCount).toContain('{count}')
+
+    for (const key of queueKeys) {
+      expect(notifications.queue[key]).toBeTruthy()
+      expect(notifications.queue[key]).not.toBe(key)
+    }
+  }
+})
+
+test('service status translations cover moderator and support states', () => {
+  for (const language of languages) {
+    const service = adminTranslations[language].admin.service
+    expect(service.active).toBeTruthy()
+    expect(service.inactive).toBeTruthy()
+    expect(service.activeDescription).toBeTruthy()
+    expect(service.startModerator).toBeTruthy()
+    expect(service.startSupport).toBeTruthy()
+    expect(service.start).toBeTruthy()
+    expect(service.stop).toBeTruthy()
   }
 })
