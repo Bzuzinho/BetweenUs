@@ -16,7 +16,7 @@ router.get('/vapid-key', (_req, res) => {
 router.get('/language', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const rows = await prisma.$queryRaw<Array<{ preferredLanguage: string }>>`
-      SELECT "preferredLanguage" FROM "User" WHERE id = ${req.userId!} LIMIT 1
+      SELECT "preferredLanguage" FROM "users" WHERE id = ${req.userId!} LIMIT 1
     `
     res.json({ preferredLanguage: rows[0]?.preferredLanguage || 'pt-PT' })
   } catch (err: any) {
@@ -32,7 +32,7 @@ router.put('/language', requireAuth, async (req: AuthRequest, res: Response) => 
       return res.status(400).json({ error: 'Idioma não suportado.' })
     }
     await prisma.$executeRaw`
-      UPDATE "User"
+      UPDATE "users"
       SET "preferredLanguage" = ${preferredLanguage}, "updatedAt" = NOW()
       WHERE id = ${req.userId!}
     `
