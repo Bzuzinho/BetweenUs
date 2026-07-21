@@ -16,8 +16,9 @@ for (const item of cases) {
 
     await expect(page).toHaveTitle('Between Us')
     await expect(page.locator('html')).toHaveAttribute('lang', item.htmlLang)
-    await expect(page.getByRole('heading', { name: item.heading })).toBeVisible()
-    await expect(page.getByText('Between Us', { exact: true })).toBeVisible()
+    await expect(page.locator('h2')).toHaveText(item.heading)
+    await expect(page.locator('input[type="email"]')).toBeVisible()
+    await expect(page.locator('input[type="password"]')).toBeVisible()
   })
 }
 
@@ -29,5 +30,5 @@ test('falls back to Portuguese for an unsupported stored language', async ({ pag
   await page.goto('/login')
 
   await expect(page.locator('html')).toHaveAttribute('lang', 'pt-PT')
-  await expect(page.getByRole('heading', { name: 'Entrar' })).toBeVisible()
+  await expect(page.locator('h2')).toHaveText('Entrar')
 })
