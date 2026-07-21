@@ -120,21 +120,8 @@ jobs:
 
       - name: Apply preferred language migration
         working-directory: server
-        shell: bash
         run: |
-          node <<'NODE'
-          const { PrismaClient } = require('@prisma/client')
-          const prisma = new PrismaClient()
-          async function main() {
-            await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "preferredLanguage" TEXT NOT NULL DEFAULT \'pt-PT\'')
-            await prisma.$executeRawUnsafe(`DO $$ BEGIN
-              IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'User_preferredLanguage_check') THEN
-                ALTER TABLE "User" ADD CONSTRAINT "User_preferredLanguage_check" CHECK ("preferredLanguage" IN ('pt-PT', 'en', 'fr'));
-              END IF;
-            END $$;`)
-          }
-          main().finally(() => prisma.$disconnect())
-          NODE
+          node -e "const { PrismaClient } = require('@prisma/client'); const p = new PrismaClient(); p.\$executeRawUnsafe(\`ALTER TABLE \\\"User\\\" ADD COLUMN IF NOT EXISTS \\\"preferredLanguage\\\" TEXT NOT NULL DEFAULT 'pt-PT' CHECK (\\\"preferredLanguage\\\" IN ('pt-PT','en','fr'))\`).then(() => p.\$disconnect()).catch(async error => { console.error(error); await p.\$disconnect(); process.exit(1) })"
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betweenus_test
 
