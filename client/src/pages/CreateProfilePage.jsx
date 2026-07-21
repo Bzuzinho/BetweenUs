@@ -3,52 +3,31 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 import LocationAutocomplete from '../components/LocationAutocomplete'
+import { useI18n } from '../i18n/I18nContext'
 
 const C = {
   bg:'#0A141A', card:'#102129', input:'#0F1E26', plum:'#1E3340',
-  accent:'#B8A7FF', rose:'#9B8EE0', lavLight:'#AAB6C2',
-  white:'#F5F7FA', muted:'#7E8FA3', green:'#4ADE80'
+  accent:'#B8A7FF', rose:'#9B8EE0', lavLight:'#AAB6C2', white:'#F5F7FA', muted:'#7E8FA3'
 }
 
-const RELATIONSHIP_STATUSES = [
-  { value:'SINGLE',          label:'Solteiro/a' },
-  { value:'COMMITTED',       label:'Comprometido/a' },
-  { value:'MARRIED',         label:'Casado/a' },
-  { value:'OPEN',            label:'Relação aberta' },
-  { value:'POLYAMOROUS',     label:'Poliamoroso/a' },
-  { value:'COUPLE_CURIOUS',  label:'Casal curioso' },
-  { value:'COUPLE_LIBERAL',  label:'Casal liberal' },
-  { value:'OTHER',           label:'Outro' },
-]
+const RELATIONSHIP_VALUES = ['SINGLE','COMMITTED','MARRIED','OPEN','POLYAMOROUS','COUPLE_CURIOUS','COUPLE_LIBERAL','OTHER']
+const DISCRETION_VALUES = ['MAXIMUM','SELECTIVE','OPEN']
 
-const DISCRETION = [
-  { value:'MAXIMUM',   label:'Máxima privacidade',    desc:'Perfil oculto, fotos desfocadas' },
-  { value:'SELECTIVE', label:'Visibilidade seletiva', desc:'Apareço apenas a perfis compatíveis' },
-  { value:'OPEN',      label:'Perfil aberto',         desc:'Visível para todos na plataforma' },
-]
-
-const inp = {
-  width:'100%', background:C.input, border:`1.5px solid ${C.plum}`,
-  borderRadius:14, padding:'13px 16px', color:C.white, fontSize:15,
-  fontFamily:'Inter,sans-serif', boxSizing:'border-box', marginBottom:12,
-  WebkitAppearance:'none', outline:'none',
+const inputStyle = {
+  width:'100%', background:C.input, border:`1.5px solid ${C.plum}`, borderRadius:14,
+  padding:'13px 16px', color:C.white, fontSize:15, fontFamily:'Inter,sans-serif',
+  boxSizing:'border-box', marginBottom:12, WebkitAppearance:'none', outline:'none'
 }
 
 export default function CreateProfilePage() {
   const navigate = useNavigate()
   const { refreshUser } = useAuth()
+  const { t } = useI18n()
   const [step, setStep] = useState(1)
   const [form, setForm] = useState({
-    displayName: '', bio: '', gender: '', orientation: '',
-    relationshipStatus: 'SINGLE',
-    discretionLevel: 'SELECTIVE',
-    // Sistema de localidades — countryCode/homeLocationId/homeLocationLabel/
-    // customLocality substituem os antigos campos de texto livre city/
-    // country no onboarding. PT como país de partida porque é o único
-    // país importado até agora (ver docs/product/GEONAMES_IMPORT.md) — o
-    // utilizador pode trocar antes de pesquisar.
-    countryCode: 'PT', homeLocationId: null, homeLocationLabel: null, customLocality: '',
-    intentions: []  // array of slugs (strings) — converted to objects before sending
+    displayName:'', bio:'', gender:'', orientation:'', relationshipStatus:'SINGLE',
+    discretionLevel:'SELECTIVE', countryCode:'PT', homeLocationId:null,
+    homeLocationLabel:null, customLocality:'', intentions:[]
   })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -56,11 +35,7 @@ export default function CreateProfilePage() {
   const [catalogBoundaries, setCatalogBoundaries] = useState([])
   const [catalogGenders, setCatalogGenders] = useState([])
   const [catalogOrientations, setCatalogOrientations] = useState([])
-  const [boundaryPrefs, setBoundaryPrefs] = useState({}) // boundaryId -> YES|MAYBE|NO
-  // 4.10 — save/resume: true once the initial draft-load request has
-  // returned (whether or not a draft existed), so the save effect below
-  // never fires before it, which would otherwise overwrite a real draft
-  // with the initial empty form during the brief loading window.
+  const [boundaryPrefs, setBoundaryPrefs] = useState({})
   const [draftLoaded, setDraftLoaded] = useState(false)
 
   useEffect(() => {
@@ -69,363 +44,103 @@ export default function CreateProfilePage() {
     api.get('/catalog/genders').then(r => setCatalogGenders(r.data.genders || [])).catch(() => {})
     api.get('/catalog/orientations').then(r => setCatalogOrientations(r.data.orientations || [])).catch(() => {})
     api.get('/profiles/onboarding/progress').then(r => {
-      const p = r.data.progress
-      if (p?.data) {
-        if (p.data.form) setForm(prev => ({ ...prev, ...p.data.form }))
-        if (p.data.boundaryPrefs) setBoundaryPrefs(p.data.boundaryPrefs)
-        if (p.step) setStep(p.step)
+      const progress = r.data.progress
+      if (progress?.data) {
+        if (progress.data.form) setForm(previous => ({ ...previous, ...progress.data.form }))
+        if (progress.data.boundaryPrefs) setBoundaryPrefs(progress.data.boundaryPrefs)
+        if (progress.step) setStep(progress.step)
       }
     }).catch(() => {}).finally(() => setDraftLoaded(true))
   }, [])
 
-  // 4.10 — persist step+form+boundaryPrefs on every step change (not on
-  // every keystroke — this only depends on `step`) so closing the tab
-  // mid-wizard doesn't lose progress. Best-effort: a failed save shouldn't
-  // block the wizard itself.
   useEffect(() => {
     if (!draftLoaded) return
-    api.put('/profiles/onboarding/progress', { step, data: { form, boundaryPrefs } }).catch(() => {})
+    api.put('/profiles/onboarding/progress', { step, data:{ form, boundaryPrefs } }).catch(() => {})
   }, [step, draftLoaded])
 
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
-  const setBoundaryPref = (boundaryId, pref) => setBoundaryPrefs(p => ({ ...p, [boundaryId]: pref }))
-
-  const toggleIntention = (slug) => setForm(p => ({
-    ...p,
-    intentions: p.intentions.includes(slug)
-      ? p.intentions.filter(i => i !== slug)
-      : [...p.intentions, slug]
+  const set = (key, value) => setForm(previous => ({ ...previous, [key]:value }))
+  const setBoundaryPref = (boundaryId, preference) => setBoundaryPrefs(previous => ({ ...previous, [boundaryId]:preference }))
+  const toggleIntention = slug => setForm(previous => ({
+    ...previous,
+    intentions: previous.intentions.includes(slug)
+      ? previous.intentions.filter(item => item !== slug)
+      : [...previous.intentions, slug]
   }))
 
-  const handleSubmit = async () => {
-    if (!form.displayName.trim()) return setError('O nome visível é obrigatório.')
-    if (form.intentions.length === 0) return setError('Seleciona pelo menos uma intenção.')
-
+  const submit = async () => {
+    if (!form.displayName.trim()) return setError(t('profileForm.displayNameRequired'))
+    if (!form.intentions.length) return setError(t('profileForm.intentionRequired'))
     setLoading(true)
     setError('')
-
     try {
-      // Convert slug strings → objects that the backend expects
-      const payload = {
-        displayName:        form.displayName.trim(),
-        bio:                form.bio.trim() || undefined,
-        gender:             form.gender || undefined,
-        orientation:        form.orientation || undefined,
-        relationshipStatus: form.relationshipStatus,
-        // Sistema de localidades — homeLocationId vem do catálogo (nunca
-        // texto livre); customLocality é só apresentação. Ambos opcionais
-        // no onboarding (podes criar perfil sem localização e adicionar
-        // depois em EditProfilePage), mas nunca um homeLocationId
-        // inventado a partir de texto — LocationAutocomplete só o define
-        // quando uma opção real da pesquisa é escolhida.
-        homeLocationId:     form.homeLocationId || undefined,
-        customLocality:     form.customLocality.trim() || undefined,
-        discretionLevel:    form.discretionLevel,
-        intentions:         form.intentions.map(slug => ({ slug, preference: 'YES' })),
-      }
-
-      await api.post('/profiles', payload)
-
-      // Sprint 2.5.8: Limits Map — optional, non-blocking. A profile without
-      // boundaries filled in is still a valid profile (matches current backend
-      // behaviour), so a failure here must never stop onboarding from finishing.
-      const boundaryEntries = Object.entries(boundaryPrefs)
-      if (boundaryEntries.length > 0) {
+      await api.post('/profiles', {
+        displayName:form.displayName.trim(), bio:form.bio.trim() || undefined,
+        gender:form.gender || undefined, orientation:form.orientation || undefined,
+        relationshipStatus:form.relationshipStatus,
+        homeLocationId:form.homeLocationId || undefined,
+        customLocality:form.customLocality.trim() || undefined,
+        discretionLevel:form.discretionLevel,
+        intentions:form.intentions.map(slug => ({ slug, preference:'YES' }))
+      })
+      const boundaries = Object.entries(boundaryPrefs)
+      if (boundaries.length) {
         await api.put('/profiles/me/boundaries', {
-          boundaries: boundaryEntries.map(([boundaryId, preference]) => ({ boundaryId, preference }))
+          boundaries:boundaries.map(([boundaryId, preference]) => ({ boundaryId, preference }))
         }).catch(() => {})
       }
-
       await refreshUser()
-      navigate('/explore', { replace: true })
-    } catch (err) {
-      const msg = err.response?.data?.error || 'Erro ao criar perfil. Tenta novamente.'
-      setError(msg)
+      navigate('/explore', { replace:true })
+    } catch {
+      setError(t('profileForm.createError'))
     } finally {
       setLoading(false)
     }
   }
 
-  const btnPrimary = {
-    background: `linear-gradient(135deg,${C.accent},${C.rose})`,
-    border: 'none', borderRadius: 50, padding: '14px', fontSize: 15,
-    fontWeight: 700, color: '#1A0A2E', cursor: 'pointer',
-    fontFamily: 'Inter,sans-serif', minHeight: 50,
-  }
-  const btnSecondary = {
-    background: 'none', border: `1px solid ${C.plum}`, borderRadius: 50,
-    padding: '14px', color: C.muted, cursor: 'pointer',
-    fontFamily: 'Inter,sans-serif', minHeight: 50,
-  }
+  const primary = { background:`linear-gradient(135deg,${C.accent},${C.rose})`, border:'none', borderRadius:50, padding:14, fontSize:15, fontWeight:700, color:'#1A0A2E', cursor:'pointer', minHeight:50 }
+  const secondary = { background:'none', border:`1px solid ${C.plum}`, borderRadius:50, padding:14, color:C.muted, cursor:'pointer', minHeight:50 }
 
-  return (
-    <div style={{
-      minHeight: '100vh', minHeight: '-webkit-fill-available',
-      background: C.bg,
-      padding: 'calc(48px + env(safe-area-inset-top)) 20px calc(40px + env(safe-area-inset-bottom))',
-    }}>
-      <div style={{ maxWidth: 420, margin: '0 auto' }}>
+  return <div style={{ minHeight:'100vh', background:C.bg, padding:'calc(48px + env(safe-area-inset-top)) 20px calc(40px + env(safe-area-inset-bottom))' }}>
+    <div style={{ maxWidth:420, margin:'0 auto' }}>
+      <div style={{ textAlign:'center', marginBottom:28 }}>
+        <h1 style={{ fontSize:26, fontStyle:'italic', color:C.accent, margin:'0 0 6px' }}>{t('profileForm.title')}</h1>
+        <p style={{ color:C.muted, fontSize:13 }}>{t('profileForm.step')} {step} {t('profileForm.of')} 4</p>
+      </div>
+      <div style={{ display:'flex', gap:6, marginBottom:24 }}>{[1,2,3,4].map(value => <div key={value} style={{ flex:1, height:3, borderRadius:2, background:step>=value?C.accent:C.plum }}/>)}</div>
+      {error && <div style={{ background:'rgba(248,113,113,.1)', border:'1px solid rgba(248,113,113,.3)', borderRadius:12, padding:'12px 16px', marginBottom:16, color:'#F87171', fontSize:14 }}>{error}</div>}
+      <div style={{ background:C.card, border:`1px solid ${C.plum}`, borderRadius:24, padding:24 }}>
+        {step===1 && <>
+          <h2 style={{ color:C.white, fontSize:20, marginTop:0 }}>{t('profileForm.who')}</h2>
+          <input style={inputStyle} placeholder={t('profileForm.displayName')} value={form.displayName} onChange={event => set('displayName', event.target.value)}/>
+          <textarea style={{ ...inputStyle, minHeight:80, resize:'none' }} placeholder={t('profileForm.bio')} value={form.bio} onChange={event => set('bio', event.target.value)}/>
+          <select style={inputStyle} value={form.relationshipStatus} onChange={event => set('relationshipStatus', event.target.value)}>{RELATIONSHIP_VALUES.map(value => <option key={value} value={value}>{t(`profileForm.relationships.${value}`)}</option>)}</select>
+          <select style={inputStyle} value={form.gender} onChange={event => set('gender', event.target.value)}><option value="">{t('profileForm.gender')}</option>{catalogGenders.map(item => <option key={item.id} value={item.slug}>{item.label}</option>)}</select>
+          <select style={inputStyle} value={form.orientation} onChange={event => set('orientation', event.target.value)}><option value="">{t('profileForm.orientation')}</option>{catalogOrientations.map(item => <option key={item.id} value={item.slug}>{item.label}</option>)}</select>
+          <LocationAutocomplete countryCode={form.countryCode} onCountryChange={code => set('countryCode', code)} locationId={form.homeLocationId} locationLabel={form.homeLocationLabel} onSelectLocation={location => setForm(previous => ({ ...previous, homeLocationId:location?.id || null, homeLocationLabel:location?.label || null, countryCode:location?.countryCode || previous.countryCode }))} customLocality={form.customLocality} onCustomLocalityChange={value => set('customLocality', value)} label={t('profileForm.homeLocation')} required={false}/>
+          <button style={{ ...primary, width:'100%' }} onClick={() => { if (!form.displayName.trim()) return setError(t('profileForm.displayNameRequired')); setError(''); setStep(2) }}>{t('profileForm.continue')}</button>
+        </>}
 
-        {/* Title */}
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <h1 style={{
-            fontFamily: "'Playfair Display',serif", fontSize: 26, fontStyle: 'italic',
-            background: `linear-gradient(135deg,${C.accent},${C.rose})`,
-            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', margin: '0 0 6px',
-          }}>
-            Criar o teu perfil
-          </h1>
-          <p style={{ color: C.muted, fontSize: 13 }}>Passo {step} de 4</p>
-        </div>
+        {step===2 && <>
+          <h2 style={{ color:C.white, fontSize:20, margin:'0 0 6px' }}>{t('profileForm.lookingFor')}</h2>
+          <p style={{ color:C.muted, fontSize:13, marginBottom:18 }}>{t('profileForm.multiSelect')}</p>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:24 }}>{catalogIntentions.map(item => { const selected=form.intentions.includes(item.slug); return <button key={item.id} type="button" onClick={() => toggleIntention(item.slug)} style={{ background:selected?C.accent:C.input, border:`1px solid ${selected?C.accent:C.plum}`, borderRadius:14, padding:12, color:selected?'#0A141A':C.lavLight }}>{item.name}</button> })}</div>
+          <div style={{ display:'flex', gap:10 }}><button style={{ ...secondary, flex:1 }} onClick={() => { setError(''); setStep(1) }}>{t('profileForm.back')}</button><button style={{ ...primary, flex:2 }} onClick={() => { if (!form.intentions.length) return setError(t('profileForm.intentionRequired')); setError(''); setStep(3) }}>{t('profileForm.continue')}</button></div>
+        </>}
 
-        {/* Progress bar */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 24 }}>
-          {[1, 2, 3].map(i => (
-            <div key={i} style={{
-              flex: 1, height: 3, borderRadius: 2, transition: 'all 0.3s',
-              background: step >= i
-                ? `linear-gradient(90deg,${C.accent},${C.rose})`
-                : C.plum,
-            }} />
-          ))}
-        </div>
+        {step===3 && <>
+          <h2 style={{ color:C.white, fontSize:20, margin:'0 0 6px' }}>{t('profileForm.discretionTitle')}</h2>
+          <p style={{ color:C.muted, fontSize:13, marginBottom:18 }}>{t('profileForm.discretionHelp')}</p>
+          <div style={{ display:'flex', flexDirection:'column', gap:10, marginBottom:24 }}>{DISCRETION_VALUES.map(value => { const selected=form.discretionLevel===value; return <button key={value} type="button" onClick={() => set('discretionLevel', value)} style={{ background:selected?C.accent:C.input, border:`1px solid ${selected?C.accent:C.plum}`, borderRadius:14, padding:'14px 16px', textAlign:'left', color:selected?'#0A141A':C.white }}><div style={{ fontWeight:600 }}>{t(`profileForm.discretion.${value}.label`)}</div><div style={{ fontSize:13, opacity:.8 }}>{t(`profileForm.discretion.${value}.desc`)}</div></button> })}</div>
+          <div style={{ display:'flex', gap:10 }}><button style={{ ...secondary, flex:1 }} onClick={() => setStep(2)}>{t('profileForm.back')}</button><button style={{ ...primary, flex:2 }} onClick={() => setStep(4)}>{t('profileForm.continue')}</button></div>
+        </>}
 
-        {/* Error */}
-        {error && (
-          <div style={{
-            background: 'rgba(224,92,122,0.1)', border: '1px solid rgba(224,92,122,0.3)',
-            borderRadius: 12, padding: '12px 16px', marginBottom: 16,
-            color: '#F87171', fontSize: 14, lineHeight: 1.5,
-          }}>
-            {error}
-          </div>
-        )}
-
-        {/* Card */}
-        <div style={{ background: C.card, border: `1px solid ${C.plum}`, borderRadius: 24, padding: 24 }}>
-
-          {/* ── Step 1: Who are you ── */}
-          {step === 1 && (
-            <>
-              <h2 style={{ color: C.white, fontFamily: "'Playfair Display',serif", fontSize: 20, marginBottom: 20, marginTop: 0 }}>
-                Quem és?
-              </h2>
-
-              <input style={inp} placeholder="Nome visível ou pseudónimo *"
-                value={form.displayName}
-                onChange={e => set('displayName', e.target.value)} />
-
-              <textarea style={{ ...inp, minHeight: 80, resize: 'none' }}
-                placeholder="Bio curta (opcional)"
-                value={form.bio}
-                onChange={e => set('bio', e.target.value)} />
-
-              <select style={{ ...inp, cursor: 'pointer' }}
-                value={form.relationshipStatus}
-                onChange={e => set('relationshipStatus', e.target.value)}>
-                {RELATIONSHIP_STATUSES.map(s => (
-                  <option key={s.value} value={s.value}
-                    style={{ background: C.card }}>{s.label}</option>
-                ))}
-              </select>
-
-              <select style={{ ...inp, cursor: 'pointer' }}
-                value={form.gender}
-                onChange={e => set('gender', e.target.value)}>
-                <option value="" style={{ background: C.card }}>Género (opcional)</option>
-                {catalogGenders.map(g => (
-                  <option key={g.id} value={g.slug} style={{ background: C.card }}>{g.label}</option>
-                ))}
-              </select>
-
-              {/* 4.4: orientation previously had no input at all — state
-                  existed but was always sent empty. */}
-              <select style={{ ...inp, cursor: 'pointer' }}
-                value={form.orientation}
-                onChange={e => set('orientation', e.target.value)}>
-                <option value="" style={{ background: C.card }}>Orientação (opcional)</option>
-                {catalogOrientations.map(o => (
-                  <option key={o.id} value={o.slug} style={{ background: C.card }}>{o.label}</option>
-                ))}
-              </select>
-
-              {/* Sistema de localidades — nunca GPS, nunca geocoding em
-                  runtime: escolha de uma localidade do catálogo GeoNames
-                  (ver LocationAutocomplete.jsx). Opcional aqui — quem
-                  preferir pode preencher mais tarde em EditProfilePage. */}
-              <LocationAutocomplete
-                countryCode={form.countryCode}
-                onCountryChange={code => set('countryCode', code)}
-                locationId={form.homeLocationId}
-                locationLabel={form.homeLocationLabel}
-                onSelectLocation={loc => setForm(p => ({
-                  ...p,
-                  homeLocationId: loc?.id || null,
-                  homeLocationLabel: loc?.label || null,
-                  countryCode: loc?.countryCode || p.countryCode,
-                }))}
-                customLocality={form.customLocality}
-                onCustomLocalityChange={v => set('customLocality', v)}
-                label="Localização habitual"
-                required={false}
-              />
-
-              <button
-                style={{ ...btnPrimary, width: '100%' }}
-                onClick={() => {
-                  if (!form.displayName.trim()) return setError('Nome visível obrigatório.')
-                  setError('')
-                  setStep(2)
-                }}>
-                Continuar →
-              </button>
-            </>
-          )}
-
-          {/* ── Step 2: Intentions ── */}
-          {step === 2 && (
-            <>
-              <h2 style={{ color: C.white, fontFamily: "'Playfair Display',serif", fontSize: 20, marginBottom: 6, marginTop: 0 }}>
-                O que procuras?
-              </h2>
-              <p style={{ color: C.muted, fontSize: 13, marginBottom: 18, lineHeight: 1.5 }}>
-                Podes selecionar mais do que um.
-              </p>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 24 }}>
-                {catalogIntentions.map(i => {
-                  const selected = form.intentions.includes(i.slug)
-                  return (
-                    <div key={i.id} onClick={() => toggleIntention(i.slug)} style={{
-                      background: selected ? 'rgba(201,149,107,0.15)' : C.input,
-                      border: `1.5px solid ${selected ? C.accent : C.plum}`,
-                      borderRadius: 14, padding: '13px 10px',
-                      cursor: 'pointer', textAlign: 'center',
-                      fontSize: 13, lineHeight: 1.3, transition: 'all 0.15s',
-                      color: selected ? C.accent : C.lavLight,
-                      minHeight: 48, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      {i.name}
-                    </div>
-                  )
-                })}
-              </div>
-
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button style={{ ...btnSecondary, flex: 1 }} onClick={() => { setError(''); setStep(1) }}>
-                  ← Voltar
-                </button>
-                <button
-                  style={{ ...btnPrimary, flex: 2 }}
-                  onClick={() => {
-                    if (!form.intentions.length) return setError('Seleciona pelo menos uma intenção.')
-                    setError('')
-                    setStep(3)
-                  }}>
-                  Continuar →
-                </button>
-              </div>
-            </>
-          )}
-
-          {/* ── Step 3: Discretion ── */}
-          {step === 3 && (
-            <>
-              <h2 style={{ color: C.white, fontFamily: "'Playfair Display',serif", fontSize: 20, marginBottom: 6, marginTop: 0 }}>
-                Nível de discrição
-              </h2>
-              <p style={{ color: C.muted, fontSize: 13, marginBottom: 18, lineHeight: 1.5 }}>
-                Controla quem pode ver o teu perfil.
-              </p>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
-                {DISCRETION.map(d => {
-                  const selected = form.discretionLevel === d.value
-                  return (
-                    <div key={d.value} onClick={() => set('discretionLevel', d.value)} style={{
-                      background: selected ? 'rgba(201,149,107,0.12)' : C.input,
-                      border: `1.5px solid ${selected ? C.accent : C.plum}`,
-                      borderRadius: 14, padding: '14px 16px',
-                      cursor: 'pointer', transition: 'all 0.15s',
-                    }}>
-                      <div style={{ color: selected ? C.accent : C.white, fontWeight: 600, fontSize: 14, marginBottom: 3 }}>
-                        {d.label}
-                      </div>
-                      <div style={{ color: C.muted, fontSize: 13 }}>{d.desc}</div>
-                    </div>
-                  )
-                })}
-              </div>
-
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button style={{ ...btnSecondary, flex: 1 }} onClick={() => { setError(''); setStep(2) }}>
-                  ← Voltar
-                </button>
-                <button style={{ ...btnPrimary, flex: 2 }} onClick={() => setStep(4)}>
-                  Continuar →
-                </button>
-              </div>
-            </>
-          )}
-
-          {/* ── Step 4: Limits Map (Mapa de Limites) — optional ── */}
-          {step === 4 && (
-            <>
-              <h2 style={{ color: C.white, fontFamily: "'Playfair Display',serif", fontSize: 20, marginBottom: 6, marginTop: 0 }}>
-                Mapa de Limites
-              </h2>
-              <p style={{ color: C.muted, fontSize: 13, marginBottom: 18, lineHeight: 1.5 }}>
-                Opcional — podes definir ou ajustar isto mais tarde no teu perfil.
-                Sim / Talvez / Não para cada tópico.
-              </p>
-
-              <div style={{ marginBottom: 24, maxHeight: 360, overflowY: 'auto' }}>
-                {Object.entries(
-                  catalogBoundaries.reduce((acc, b) => { (acc[b.category] = acc[b.category] || []).push(b); return acc }, {})
-                ).map(([category, items]) => (
-                  <div key={category} style={{ marginBottom: 14 }}>
-                    <div style={{ fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
-                      {category.replace(/_/g, ' ')}
-                    </div>
-                    {items.map(b => (
-                      <div key={b.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${C.plum}` }}>
-                        <span style={{ fontSize: 13, color: C.white }}>{b.name}</span>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          {['NO', 'MAYBE', 'YES'].map(pref => {
-                            const active = boundaryPrefs[b.id] === pref
-                            const label = pref === 'YES' ? 'Sim' : pref === 'MAYBE' ? 'Talvez' : 'Não'
-                            return (
-                              <button key={pref} onClick={() => setBoundaryPref(b.id, pref)} style={{
-                                background: active ? 'rgba(184,167,255,0.15)' : 'transparent',
-                                border: `1px solid ${active ? C.accent : C.plum}`,
-                                borderRadius: 8, padding: '4px 10px', fontSize: 11,
-                                color: active ? C.accent : C.muted, cursor: 'pointer',
-                              }}>{label}</button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button style={{ ...btnSecondary, flex: 1 }} onClick={() => { setError(''); setStep(3) }}>
-                  ← Voltar
-                </button>
-                <button
-                  style={{ ...btnPrimary, flex: 2, opacity: loading ? 0.7 : 1, cursor: loading ? 'not-allowed' : 'pointer' }}
-                  onClick={handleSubmit}
-                  disabled={loading}>
-                  {loading ? 'A criar...' : 'Criar perfil ✓'}
-                </button>
-              </div>
-            </>
-          )}
-
-        </div>
+        {step===4 && <>
+          <h2 style={{ color:C.white, fontSize:20, margin:'0 0 6px' }}>{t('profileForm.limitsTitle')}</h2>
+          <p style={{ color:C.muted, fontSize:13, marginBottom:18, lineHeight:1.5 }}>{t('profileForm.limitsHelp')}</p>
+          <div style={{ marginBottom:24, maxHeight:360, overflowY:'auto' }}>{Object.entries(catalogBoundaries.reduce((groups, boundary) => { (groups[boundary.category] ||= []).push(boundary); return groups }, {})).map(([category, items]) => <div key={category} style={{ marginBottom:14 }}><div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', marginBottom:6 }}>{category.replace(/_/g, ' ')}</div>{items.map(boundary => <div key={boundary.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, padding:'8px 0', borderBottom:`1px solid ${C.plum}` }}><span style={{ fontSize:13, color:C.white }}>{boundary.name}</span><div style={{ display:'flex', gap:5 }}>{['NO','MAYBE','YES'].map(preference => <button key={preference} type="button" onClick={() => setBoundaryPref(boundary.id, preference)} style={{ background:boundaryPrefs[boundary.id]===preference?C.accent:'transparent', border:`1px solid ${C.plum}`, borderRadius:8, padding:'4px 8px', color:boundaryPrefs[boundary.id]===preference?'#0A141A':C.muted }}>{t(`profileForm.${preference==='YES'?'yes':preference==='MAYBE'?'maybe':'no'}`)}</button>)}</div></div>)}</div>)}</div>
+          <div style={{ display:'flex', gap:10 }}><button style={{ ...secondary, flex:1 }} onClick={() => setStep(3)}>{t('profileForm.back')}</button><button style={{ ...primary, flex:2, opacity:loading ? 0.7 : 1, cursor:loading ? 'not-allowed' : 'pointer' }} onClick={submit} disabled={loading}>{loading?t('profileForm.creating'):t('profileForm.create')}</button></div>
+        </>}
       </div>
     </div>
-  )
+  </div>
 }

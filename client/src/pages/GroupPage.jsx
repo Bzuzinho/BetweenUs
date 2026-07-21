@@ -2,53 +2,44 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
+import { useI18n } from '../i18n/I18nContext'
 
 const C = {
-  bg:'#0A141A', bgCard:'#102129', bgInput:'#0F1E26',
-  border:'#1E3340', primary:'#B8A7FF', primaryDim:'rgba(184,167,255,0.12)',
-  text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3', success:'#4ADE80',
+  bg:'#0A141A', bgCard:'#102129', bgInput:'#0F1E26', border:'#1E3340',
+  primary:'#B8A7FF', primaryDim:'rgba(184,167,255,0.12)', text:'#F5F7FA',
+  text2:'#AAB6C2', muted:'#7E8FA3', success:'#4ADE80', danger:'#F87171',
 }
 
-// Página de aceitar convite via URL
 export function GroupInvitePage() {
   const { token } = useParams()
   const { user } = useAuth()
+  const { t } = useI18n()
   const navigate = useNavigate()
   const [status, setStatus] = useState('loading')
-  const [msg, setMsg] = useState('')
+  const [message, setMessage] = useState('')
 
   useEffect(() => {
     if (!user) { navigate('/login'); return }
     api.post(`/groups/join/${token}`)
-      .then(res => { setStatus('success'); setMsg(res.data.message) })
-      .catch(err => { setStatus('error'); setMsg(err.response?.data?.error || 'Erro ao aceitar convite.') })
-  }, [token, user])
+      .then(() => { setStatus('success'); setMessage(t('group.joinSuccess')) })
+      .catch(() => { setStatus('error'); setMessage(t('group.joinError')) })
+  }, [token, user, navigate, t])
 
-  return (
-    <div style={{ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
-      <div style={{ maxWidth:360, width:'100%', textAlign:'center' }}>
-        <div style={{ fontSize:60, marginBottom:24 }}>
-          {status === 'loading' ? '⏳' : status === 'success' ? '👥' : '❌'}
-        </div>
-        <h2 style={{ fontFamily:"'Playfair Display',serif", fontSize:24, color:C.text, marginBottom:12 }}>
-          {status === 'loading' ? 'A processar...' : status === 'success' ? 'Bem-vindo/a ao grupo!' : 'Erro no convite'}
-        </h2>
-        <p style={{ color:C.muted, fontSize:14, lineHeight:1.6, marginBottom:28 }}>{msg}</p>
-        {status !== 'loading' && (
-          <button onClick={() => navigate('/explore')} style={{
-            background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
-            border:'none', borderRadius:50, padding:'14px 32px', fontSize:15,
-            fontWeight:600, color:'#1A0A2E', cursor:'pointer' }}>
-            Ir para a app →
-          </button>
-        )}
-      </div>
+  return <div style={{ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+    <div style={{ maxWidth:360, width:'100%', textAlign:'center' }}>
+      <div style={{ fontSize:60, marginBottom:24 }}>{status === 'loading' ? '⏳' : status === 'success' ? '👥' : '❌'}</div>
+      <h2 style={{ fontSize:24, color:C.text, marginBottom:12 }}>
+        {status === 'loading' ? t('group.processing') : status === 'success' ? t('group.joined') : t('group.inviteErrorTitle')}
+      </h2>
+      <p style={{ color:C.muted, fontSize:14, lineHeight:1.6, marginBottom:28 }}>{message}</p>
+      {status !== 'loading' && <button onClick={() => navigate('/explore')} style={{ background:C.primary, border:'none', borderRadius:50, padding:'14px 32px', fontSize:15, fontWeight:600, color:'#1A0A2E', cursor:'pointer' }}>{t('group.goApp')}</button>}
     </div>
-  )
+  </div>
 }
 
 export default function GroupPage() {
   const navigate = useNavigate()
+  const { t, formatNumber } = useI18n()
   const [profile, setProfile] = useState(null)
   const [members, setMembers] = useState([])
   const [loading, setLoading] = useState(true)
@@ -62,169 +53,103 @@ export default function GroupPage() {
 
   const load = () => {
     api.get('/groups/me')
-      .then(res => { setProfile(res.data.profile); setMembers(res.data.members || []); setStep('manage') })
+      .then(response => { setProfile(response.data.profile); setMembers(response.data.members || []); setStep('manage') })
       .catch(() => setStep('create'))
       .finally(() => setLoading(false))
   }
 
   useEffect(load, [])
 
-  const updateInviteField = (i, value) => {
-    setInviteEmails(prev => prev.map((v, idx) => idx === i ? value : v))
-  }
-  const addInviteField = () => setInviteEmails(prev => [...prev, ''])
+  const updateInviteField = (index, value) => setInviteEmails(previous => previous.map((item, itemIndex) => itemIndex === index ? value : item))
+  const addInviteField = () => setInviteEmails(previous => [...previous, ''])
 
-  const handleCreate = async () => {
+  const create = async () => {
     setSaving(true); setError('')
     try {
-      const res = await api.post('/groups', {
-        sharedDescription,
-        inviteEmails: inviteEmails.map(e => e.trim()).filter(Boolean)
-      })
-      setInvites(res.data.invites || [])
+      const response = await api.post('/groups', { sharedDescription, inviteEmails:inviteEmails.map(email => email.trim()).filter(Boolean) })
+      setInvites(response.data.invites || [])
       load()
-    } catch (err) {
-      setError(err.response?.data?.error || 'Erro ao criar perfil de grupo.')
+    } catch {
+      setError(t('group.createError'))
     } finally { setSaving(false) }
   }
 
-  const handleAddInvite = async () => {
+  const invite = async () => {
     if (!newInviteEmail.trim()) return
-    setSaving(true)
+    setSaving(true); setError('')
     try {
-      const res = await api.post('/groups/invite', { email: newInviteEmail.trim() })
-      setInvites(prev => [...prev, { email: newInviteEmail.trim(), inviteUrl: res.data.inviteUrl }])
+      const response = await api.post('/groups/invite', { email:newInviteEmail.trim() })
+      setInvites(previous => [...previous, { email:newInviteEmail.trim(), inviteUrl:response.data.inviteUrl }])
       setNewInviteEmail('')
       load()
-    } catch (err) {
-      setError(err.response?.data?.error || 'Erro ao convidar.')
+    } catch {
+      setError(t('group.inviteError'))
     } finally { setSaving(false) }
   }
 
   const removeMember = async id => {
-    await api.delete(`/groups/members/${id}`).catch(() => {})
-    load()
+    setError('')
+    try { await api.delete(`/groups/members/${id}`); load() }
+    catch { setError(t('group.inviteError')) }
   }
 
-  const copy = url => navigator.clipboard.writeText(url)
+  const copy = async url => {
+    try { await navigator.clipboard.writeText(url) }
+    catch { setError(t('group.copyError')) }
+  }
 
-  if (loading) return (
-    <div style={{ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center' }}>
-      <div style={{ color:C.primary, fontFamily:"'Playfair Display',serif", fontSize:20, fontStyle:'italic' }}>A carregar...</div>
-    </div>
-  )
+  if (loading) return <div style={{ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center' }}><div style={{ color:C.primary, fontSize:20 }}>{t('group.loading')}</div></div>
 
-  return (
-    <div style={{ minHeight:'100vh', background:C.bg, padding:'60px 20px 40px' }}>
-      <div style={{ maxWidth:420, margin:'0 auto' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:28 }}>
-          <button onClick={() => navigate('/profile')} style={{ background:'none', border:'none', color:C.text2, fontSize:20, cursor:'pointer' }}>←</button>
-          <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:24, fontWeight:700, color:C.text }}>Perfil de Grupo</h1>
+  const card = { background:C.bgCard, border:`1px solid ${C.border}`, borderRadius:20, padding:20, marginBottom:16 }
+  const input = { width:'100%', background:C.bgInput, border:`1.5px solid ${C.border}`, borderRadius:14, padding:'13px 16px', color:C.text, fontSize:14, boxSizing:'border-box' }
+
+  return <div style={{ minHeight:'100vh', background:C.bg, padding:'60px 20px 40px' }}>
+    <div style={{ maxWidth:420, margin:'0 auto' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:28 }}>
+        <button aria-label="back" onClick={() => navigate('/profile')} style={{ background:'none', border:'none', color:C.text2, fontSize:20, cursor:'pointer' }}>←</button>
+        <h1 style={{ fontSize:24, fontWeight:700, color:C.text }}>{t('group.title')}</h1>
+      </div>
+
+      {error && <div style={{ color:C.danger, fontSize:13, marginBottom:12 }}>{error}</div>}
+
+      {step === 'create' && <div style={{ ...card, borderRadius:24, padding:24 }}>
+        <div style={{ fontSize:48, textAlign:'center', marginBottom:16 }}>👥</div>
+        <h2 style={{ fontSize:20, color:C.text, marginBottom:8, textAlign:'center' }}>{t('group.createTitle')}</h2>
+        <p style={{ color:C.muted, fontSize:13, textAlign:'center', marginBottom:24, lineHeight:1.5 }}>{t('group.createHelp')}</p>
+        <textarea placeholder={t('group.description')} value={sharedDescription} onChange={event => setSharedDescription(event.target.value)} style={{ ...input, minHeight:80, marginBottom:16, resize:'vertical' }} />
+        <div style={{ fontSize:12, color:C.text2, fontWeight:600, marginBottom:8 }}>{t('group.inviteByEmail')}</div>
+        {inviteEmails.map((email, index) => <input key={index} type="email" placeholder="email@example.com" value={email} onChange={event => updateInviteField(index, event.target.value)} style={{ ...input, marginBottom:8 }} />)}
+        <button onClick={addInviteField} style={{ background:'none', border:'none', color:C.primary, fontSize:13, cursor:'pointer', marginBottom:16, padding:0 }}>{t('group.addPerson')}</button>
+        <button onClick={create} disabled={saving} style={{ width:'100%', background:C.primary, border:'none', borderRadius:50, padding:14, fontSize:15, fontWeight:600, color:'#1A0A2E', cursor:'pointer', opacity:saving ? 0.7 : 1 }}>{saving ? t('group.creating') : t('group.create')}</button>
+      </div>}
+
+      {step === 'manage' && <>
+        <div style={{ ...card, textAlign:'center' }}>
+          <div style={{ fontSize:48, marginBottom:12 }}>👥</div>
+          <div style={{ fontSize:14, color:C.text, fontWeight:600, marginBottom:4 }}>{formatNumber(members.filter(member => member.status === 'ACCEPTED').length)} {t('group.activeMembers')}</div>
+          {profile?.sharedDescription && <p style={{ color:C.muted, fontSize:13, lineHeight:1.5, marginTop:8 }}>{profile.sharedDescription}</p>}
         </div>
 
-        {step === 'create' && (
-          <div style={{ background:C.bgCard, border:`1px solid ${C.border}`, borderRadius:24, padding:24 }}>
-            <div style={{ fontSize:48, textAlign:'center', marginBottom:16 }}>👥</div>
-            <h2 style={{ fontFamily:"'Playfair Display',serif", fontSize:20, color:C.text, marginBottom:8, textAlign:'center' }}>
-              Criar perfil de grupo
-            </h2>
-            <p style={{ color:C.muted, fontSize:13, textAlign:'center', marginBottom:24, lineHeight:1.5 }}>
-              Trio, poliamor ou grupo personalizado. Convida quem quiseres — cada pessoa entra com o seu próprio email.
-            </p>
+        <div style={card}>
+          <div style={{ fontSize:13, color:C.text2, fontWeight:600, marginBottom:12 }}>{t('group.members')}</div>
+          {members.map(member => <div key={member.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 0', borderBottom:`1px solid ${C.border}` }}>
+            <div>
+              <div style={{ fontSize:13, color:C.text }}>{member.user?.email || member.invitedEmail} {member.isCreator && `· ${t('group.creator')}`}</div>
+              <div style={{ fontSize:11, color:member.status === 'ACCEPTED' ? C.success : C.muted }}>{member.status === 'ACCEPTED' ? `✓ ${t('group.active')}` : t('group.waiting')}</div>
+            </div>
+            {!member.isCreator && <button onClick={() => removeMember(member.id)} style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:8, padding:'4px 10px', color:C.muted, fontSize:11, cursor:'pointer' }}>{t('group.remove')}</button>}
+          </div>)}
 
-            <textarea placeholder="Descrição partilhada do grupo (opcional)" value={sharedDescription}
-              onChange={e => setSharedDescription(e.target.value)}
-              style={{ width:'100%', minHeight:80, background:C.bgInput, border:`1.5px solid ${C.border}`,
-                borderRadius:14, padding:'13px 16px', color:C.text, fontSize:14, marginBottom:16,
-                fontFamily:'Inter,sans-serif', boxSizing:'border-box', resize:'vertical' }} />
-
-            <div style={{ fontSize:12, color:C.text2, fontWeight:600, marginBottom:8 }}>Convidar por email</div>
-            {inviteEmails.map((email, i) => (
-              <input key={i} type="email" placeholder="email@exemplo.com" value={email}
-                onChange={e => updateInviteField(i, e.target.value)}
-                style={{ width:'100%', background:C.bgInput, border:`1.5px solid ${C.border}`,
-                  borderRadius:14, padding:'13px 16px', color:C.text, fontSize:14, marginBottom:8,
-                  fontFamily:'Inter,sans-serif', boxSizing:'border-box' }} />
-            ))}
-            <button onClick={addInviteField} style={{ background:'none', border:'none', color:C.primary,
-              fontSize:13, cursor:'pointer', marginBottom:16, padding:0 }}>+ Adicionar outra pessoa</button>
-
-            {error && <div style={{ color:'#F87171', fontSize:13, marginBottom:12 }}>{error}</div>}
-
-            <button onClick={handleCreate} disabled={saving} style={{ width:'100%',
-              background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
-              border:'none', borderRadius:50, padding:14, fontSize:15, fontWeight:600,
-              color:'#1A0A2E', cursor:'pointer', fontFamily:'Inter,sans-serif' }}>
-              {saving ? 'A criar...' : 'Criar perfil de grupo'}
-            </button>
+          <div style={{ display:'flex', gap:8, marginTop:14 }}>
+            <input type="email" placeholder={t('group.inviteMore')} value={newInviteEmail} onChange={event => setNewInviteEmail(event.target.value)} style={{ ...input, flex:1, padding:'10px 14px' }} />
+            <button onClick={invite} disabled={saving} style={{ background:C.primaryDim, border:`1px solid ${C.primary}`, borderRadius:12, padding:'0 16px', color:C.primary, fontSize:13, cursor:'pointer' }}>{t('group.invite')}</button>
           </div>
-        )}
 
-        {step === 'manage' && (
-          <>
-            <div style={{ background:C.bgCard, border:`1px solid ${C.border}`, borderRadius:20, padding:20, marginBottom:16, textAlign:'center' }}>
-              <div style={{ fontSize:48, marginBottom:12 }}>👥</div>
-              <div style={{ fontSize:14, color:C.text, fontWeight:600, marginBottom:4 }}>
-                {members.filter(m => m.status === 'ACCEPTED').length} membro(s) ativo(s)
-              </div>
-              {profile?.sharedDescription && (
-                <p style={{ color:C.muted, fontSize:13, lineHeight:1.5, marginTop:8 }}>{profile.sharedDescription}</p>
-              )}
-            </div>
+          {invites.length > 0 && <div style={{ marginTop:14 }}>{invites.map((item, index) => <button key={index} onClick={() => copy(item.inviteUrl)} style={{ width:'100%', textAlign:'left', background:C.bgInput, border:'none', borderRadius:10, padding:'8px 12px', fontSize:11, color:C.muted, marginBottom:6, cursor:'pointer', wordBreak:'break-all' }}>📋 {item.email}: {item.inviteUrl}</button>)}</div>}
+        </div>
 
-            <div style={{ background:C.bgCard, border:`1px solid ${C.border}`, borderRadius:20, padding:20, marginBottom:16 }}>
-              <div style={{ fontSize:13, color:C.text2, fontWeight:600, marginBottom:12 }}>Membros</div>
-              {members.map(m => (
-                <div key={m.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
-                  padding:'10px 0', borderBottom:`1px solid ${C.border}` }}>
-                  <div>
-                    <div style={{ fontSize:13, color:C.text }}>
-                      {m.user?.email || m.invitedEmail} {m.isCreator && '· criador/a'}
-                    </div>
-                    <div style={{ fontSize:11, color: m.status === 'ACCEPTED' ? C.success : C.muted }}>
-                      {m.status === 'ACCEPTED' ? '✓ Ativo' : 'A aguardar aceitação'}
-                    </div>
-                  </div>
-                  {!m.isCreator && (
-                    <button onClick={() => removeMember(m.id)} style={{ background:'none',
-                      border:`1px solid ${C.border}`, borderRadius:8, padding:'4px 10px',
-                      color:C.muted, fontSize:11, cursor:'pointer' }}>Remover</button>
-                  )}
-                </div>
-              ))}
-
-              <div style={{ display:'flex', gap:8, marginTop:14 }}>
-                <input type="email" placeholder="Convidar mais alguém" value={newInviteEmail}
-                  onChange={e => setNewInviteEmail(e.target.value)}
-                  style={{ flex:1, background:C.bgInput, border:`1.5px solid ${C.border}`,
-                    borderRadius:12, padding:'10px 14px', color:C.text, fontSize:13 }} />
-                <button onClick={handleAddInvite} disabled={saving} style={{
-                  background:C.primaryDim, border:`1px solid ${C.primary}`, borderRadius:12,
-                  padding:'0 16px', color:C.primary, fontSize:13, cursor:'pointer' }}>Convidar</button>
-              </div>
-
-              {invites.length > 0 && (
-                <div style={{ marginTop:14 }}>
-                  {invites.map((inv, i) => (
-                    <div key={i} onClick={() => copy(inv.inviteUrl)} style={{
-                      background:C.bgInput, borderRadius:10, padding:'8px 12px',
-                      fontSize:11, color:C.muted, marginBottom:6, cursor:'pointer', wordBreak:'break-all' }}>
-                      📋 {inv.email}: {inv.inviteUrl}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <button onClick={() => navigate('/explore')} style={{ width:'100%',
-              background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
-              border:'none', borderRadius:50, padding:14, fontSize:15, fontWeight:600,
-              color:'#1A0A2E', cursor:'pointer', fontFamily:'Inter,sans-serif' }}>
-              Explorar como grupo →
-            </button>
-          </>
-        )}
-      </div>
+        <button onClick={() => navigate('/explore')} style={{ width:'100%', background:C.primary, border:'none', borderRadius:50, padding:14, fontSize:15, fontWeight:600, color:'#1A0A2E', cursor:'pointer' }}>{t('group.explore')}</button>
+      </>}
     </div>
-  )
+  </div>
 }

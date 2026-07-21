@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { resolvePostLoginRoute } from '../lib/postLoginRoute'
 import { Logo } from '../lib/design'
+import { useI18n } from '../i18n/I18nContext'
 
 const C = {
   bg:'#0A141A', surface:'#102129', border:'#1E3340', input:'#0F1E26',
@@ -12,6 +13,7 @@ const C = {
 
 export default function LoginPage() {
   const { login } = useAuth()
+  const { t } = useI18n()
   const navigate = useNavigate()
   const [form, setForm] = useState({ email:'', password:'' })
   const [error, setError] = useState('')
@@ -25,7 +27,7 @@ export default function LoginPage() {
   }, [])
 
   const handleSubmit = async () => {
-    if (!form.email || !form.password) return setError('Preenche todos os campos.')
+    if (!form.email || !form.password) return setError(t('login.required'))
     setLoading(true); setError('')
     try {
       const me = await login(form.email, form.password)
@@ -38,12 +40,12 @@ export default function LoginPage() {
     } catch (err) {
       const code = err.response?.data?.code
       const msg  = err.response?.data?.error
-      if (code === 'ACCOUNT_SUSPENDED') return setError('Conta temporariamente suspensa.')
-      if (code === 'ACCOUNT_BANNED')    return setError('Esta conta foi suspensa permanentemente.')
+      if (code === 'ACCOUNT_SUSPENDED') return setError(t('login.suspended'))
+      if (code === 'ACCOUNT_BANNED')    return setError(t('login.banned'))
       if (msg && msg !== 'Token inválido.' && msg !== 'Não autenticado.') {
         setError(msg)
       } else {
-        setError('Email ou password incorretos.')
+        setError(t('login.invalid'))
       }
     } finally {
       setLoading(false)
@@ -65,12 +67,12 @@ export default function LoginPage() {
             <Logo size={56} />
           </div>
           <div style={{ fontSize:28, fontWeight:500, color:C.text, letterSpacing:'-0.01em' }}>Between Us</div>
-          <div style={{ fontSize:14, color:C.muted, marginTop:6 }}>Adult connections. Private by design.</div>
+          <div style={{ fontSize:14, color:C.muted, marginTop:6 }}>{t('login.tagline')}</div>
         </div>
 
         {/* Form card */}
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:32 }}>
-          <h2 style={{ color:C.text, fontSize:20, fontWeight:500, marginBottom:24, marginTop:0 }}>Entrar</h2>
+          <h2 style={{ color:C.text, fontSize:20, fontWeight:500, marginBottom:24, marginTop:0 }}>{t('login.title')}</h2>
 
           {error && (
             <div style={{
@@ -83,7 +85,7 @@ export default function LoginPage() {
           )}
 
           <input
-            type="email" placeholder="Email" autoComplete="email"
+            type="email" placeholder={t('login.email')} autoComplete="email"
             value={form.email} onChange={e => setForm(p => ({...p, email:e.target.value}))}
             onKeyDown={e => e.key==='Enter' && handleSubmit()}
             style={{
@@ -93,7 +95,7 @@ export default function LoginPage() {
             }}
           />
           <input
-            type="password" placeholder="Password" autoComplete="current-password"
+            type="password" placeholder={t('login.password')} autoComplete="current-password"
             value={form.password} onChange={e => setForm(p => ({...p, password:e.target.value}))}
             onKeyDown={e => e.key==='Enter' && handleSubmit()}
             style={{
@@ -105,7 +107,7 @@ export default function LoginPage() {
 
           <div style={{ textAlign:'right', marginBottom:24 }}>
             <Link to="/forgot-password" style={{ color:C.muted, fontSize:13, textDecoration:'none' }}>
-              Esqueceste a password?
+              {t('login.forgot')}
             </Link>
           </div>
 
@@ -118,16 +120,16 @@ export default function LoginPage() {
               opacity:loading?0.7:1, minHeight:52,
             }}
           >
-            {loading ? 'A entrar…' : 'Entrar'}
+            {loading ? t('login.submitting') : t('login.submit')}
           </button>
         </div>
 
         <p style={{ textAlign:'center', color:C.muted, fontSize:14, marginTop:24 }}>
-          Não tens conta?{' '}
-          <Link to="/register" style={{ color:C.primary, textDecoration:'none', fontWeight:500 }}>Criar conta</Link>
+          {t('login.noAccount')}{' '}
+          <Link to="/register" style={{ color:C.primary, textDecoration:'none', fontWeight:500 }}>{t('login.createAccount')}</Link>
         </p>
         <p style={{ textAlign:'center', color:C.muted, fontSize:12, marginTop:12, lineHeight:1.6 }}>
-          Ao entrar, confirmas que tens 18 ou mais anos.
+          {t('login.adultConfirmation')}
         </p>
       </div>
     </div>

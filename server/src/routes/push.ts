@@ -4,10 +4,43 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { VAPID_PUBLIC_KEY } from '../lib/webpush'
 
 const router = Router()
+const SUPPORTED_LANGUAGES = new Set(['pt-PT', 'en', 'fr'])
 
 // GET /api/push/vapid-key — public VAPID key for frontend
 router.get('/vapid-key', (_req, res) => {
   res.json({ publicKey: VAPID_PUBLIC_KEY })
+})
+
+// Language preference lives at account level. It is grouped in this already
+// mounted authenticated router to keep the change isolated from auth flows.
+router.get('/language', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ preferredLanguage: string }>>`
+      SELECT "preferredLanguage" FROM "users" WHERE id = ${req.userId!} LIMIT 1
+    `
+    res.json({ preferredLanguage: rows[0]?.preferredLanguage || 'pt-PT' })
+  } catch (err: any) {
+    console.error('[LANGUAGE GET]', err.message)
+    res.status(500).json({ error: 'Erro ao carregar o idioma.' })
+  }
+})
+
+router.put('/language', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const preferredLanguage = String(req.body?.preferredLanguage || '')
+    if (!SUPPORTED_LANGUAGES.has(preferredLanguage)) {
+      return res.status(400).json({ error: 'Idioma não suportado.' })
+    }
+    await prisma.$executeRaw`
+      UPDATE "users"
+      SET "preferredLanguage" = ${preferredLanguage}, "updatedAt" = NOW()
+      WHERE id = ${req.userId!}
+    `
+    res.json({ ok: true, preferredLanguage })
+  } catch (err: any) {
+    console.error('[LANGUAGE PUT]', err.message)
+    res.status(500).json({ error: 'Erro ao guardar o idioma.' })
+  }
 })
 
 // POST /api/push/subscribe — save push subscription

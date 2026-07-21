@@ -1,246 +1,121 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../lib/api'
+import { useI18n } from '../i18n/I18nContext'
 
 const C = {
-  bg:'#0A141A', surface:'#102129', elevated:'#172C36',
-  border:'#1E3340', input:'#0F1E26',
+  bg:'#0A141A', surface:'#102129', border:'#1E3340',
   primary:'#B8A7FF', primaryDim:'rgba(184,167,255,0.12)',
-  text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3',
-  success:'#4ADE80', successDim:'rgba(74,222,128,0.1)',
-  warning:'#FBBF24', danger:'#F87171', dangerDim:'rgba(248,113,113,0.1)',
+  text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3', success:'#4ADE80',
 }
 
-const PLANS = [
-  {
-    id: 'PREMIUM',
-    name: 'Between Premium',
-    price: '€4,99',
-    period: '/mês',
-    icon: '✦',
-    color: C.primary,
-    badge: null,
-    features: [
-      '👁 Modo Invisível — navega sem seres visto',
-      '✈️ Travel Mode — explora antes de chegar',
-      '🔗 Ligar-te a perfis independentemente do Between Score',
-      '👤 Ver o perfil completo de quem te enviou um pedido de ligação',
-      '🔒 Bloqueio de contactos',
-      '📷 Soft Reveal avançado',
-      '🔍 Filtros premium',
-      '✅ Verificação de perfil',
-    ]
-  },
-  {
-    id: 'COUPLE_PREMIUM',
-    name: 'Between Casal',
-    price: '€9,99',
-    period: '/mês',
-    icon: '💑',
-    color: C.text2,
-    badge: 'Dois perfis, um preço',
-    features: [
-      '✨ Tudo do Premium para os dois',
-      '🤝 Double Consent Match completo',
-      '📋 Modo Acordo avançado',
-      '🏠 Sala Privada partilhada',
-      '💑 Vincular dois perfis como casal',
-      '💳 Um pagamento cobre ambos os parceiros',
-    ]
-  }
-]
+const PLAN_META = {
+  PREMIUM: { price:'€4,99', icon:'✦', color:C.primary },
+  COUPLE_PREMIUM: { price:'€9,99', icon:'💑', color:C.text2 },
+}
 
 export default function PremiumPage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
+  const { t, formatDate } = useI18n()
   const [sub, setSub] = useState(null)
   const [planInfo, setPlanInfo] = useState(null)
   const [loading, setLoading] = useState(true)
   const [checkingOut, setCheckingOut] = useState(null)
   const [msg, setMsg] = useState('')
+  const [successMsg, setSuccessMsg] = useState(false)
 
   useEffect(() => {
     Promise.all([
       api.get('/subscriptions/me').then(r => setSub(r.data)).catch(() => {}),
-      // Elegibilidade PREMIUM vs COUPLE_PREMIUM é sempre calculada no
-      // backend (secção 15/16) — nunca deduzida aqui a partir de dados
-      // locais.
       api.get('/subscriptions/plans').then(r => setPlanInfo(r.data)).catch(() => {}),
     ]).finally(() => setLoading(false))
 
-    if (params.get('success')) setMsg('✅ Subscrição ativada! Bem-vindo/a ao Premium.')
-    if (params.get('cancelled')) setMsg('Pagamento cancelado. Podes tentar novamente.')
-  }, [])
+    if (params.get('success')) { setMsg(t('premium.success')); setSuccessMsg(true) }
+    if (params.get('cancelled')) { setMsg(t('premium.cancelled')); setSuccessMsg(false) }
+  }, [params, t])
 
-  // Só mostra um plano se o backend disser que é elegível. Sem dados ainda
-  // (planInfo null) assume-se elegível para não bloquear a primeira
-  // renderização — o botão de checkout volta a validar no backend de
-  // qualquer forma.
-  const isEligible = (planId) => planInfo?.eligibility ? !!planInfo.eligibility[planId]?.allowed : true
-  const ineligibleReason = (planId) => planInfo?.eligibility?.[planId]?.reason || null
-  const visiblePlans = PLANS.filter(p => isEligible(p.id))
+  const isEligible = planId => planInfo?.eligibility ? !!planInfo.eligibility[planId]?.allowed : true
+  const ineligibleReason = planId => planInfo?.eligibility?.[planId]?.reason || null
+  const visiblePlanIds = Object.keys(PLAN_META).filter(isEligible)
   const coupleContextButNotActive = planInfo?.activeContext?.type === 'INDIVIDUAL' && ineligibleReason('COUPLE_PREMIUM') === 'COUPLE_PROFILE_REQUIRED'
 
-  const handleCheckout = async (planId) => {
+  const handleCheckout = async planId => {
     setCheckingOut(planId)
+    setMsg('')
     try {
-      const res = await api.post('/subscriptions/checkout', { plan: planId })
+      const res = await api.post('/subscriptions/checkout', { plan:planId })
       if (res.data.checkoutUrl) {
-        // Stripe checkout — redirect
         window.location.href = res.data.checkoutUrl
       } else {
-        // Dev mode — direct upgrade
         const subRes = await api.get('/subscriptions/me')
         setSub(subRes.data)
-        setMsg('✅ Premium ativado! (modo de teste)')
+        setMsg(t('premium.testActivated'))
+        setSuccessMsg(true)
       }
-    } catch (err) {
-      setMsg(err.response?.data?.error || 'Erro ao iniciar pagamento.')
-    } finally { setCheckingOut(null) }
+    } catch {
+      setMsg(t('premium.checkoutError'))
+      setSuccessMsg(false)
+    } finally {
+      setCheckingOut(null)
+    }
   }
 
   const handlePortal = async () => {
     try {
       const res = await api.post('/subscriptions/portal')
       window.location.href = res.data.url
-    } catch (err) {
-      setMsg(err.response?.data?.error || 'Portal não disponível.')
+    } catch {
+      setMsg(t('premium.portalError'))
+      setSuccessMsg(false)
     }
   }
 
   const isPremium = sub?.plan && sub.plan !== 'FREE' && sub.status === 'ACTIVE'
+  const planName = id => t(`premium.plans.${id}.name`, id)
 
-  if (loading) return (
-    <div style={{ minHeight:'100vh', background:C.bg, display:'flex',
-      alignItems:'center', justifyContent:'center' }}>
-      <div style={{ color:C.primary, fontFamily:"'Playfair Display',serif",
-        fontSize:20, fontStyle:'italic' }}>A carregar...</div>
-    </div>
-  )
+  if (loading) return <div style={{ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center', color:C.primary }}>{t('premium.loading')}</div>
 
   return (
     <div style={{ minHeight:'100vh', background:C.bg, padding:'60px 20px 40px' }}>
       <div style={{ maxWidth:420, margin:'0 auto' }}>
-
-        {/* Header */}
         <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:28 }}>
-          <button onClick={() => navigate('/profile')}
-            style={{ background:'none', border:'none',
-              color:C.text2, fontSize:20, cursor:'pointer' }}>←</button>
-          <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:22,
-            fontWeight:700,
-            background:`linear-gradient(135deg,${C.primary},${C.primaryDim})`,
-            WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>
-            ✦ Between Premium
-          </h1>
+          <button onClick={() => navigate('/profile')} style={{ background:'none', border:'none', color:C.text2, fontSize:20, cursor:'pointer' }}>←</button>
+          <h1 style={{ fontSize:22, fontWeight:700, color:C.primary, margin:0 }}>✦ {t('premium.title')}</h1>
         </div>
 
-        {/* Feedback */}
-        {msg && (
-          <div style={{ background: msg.startsWith('✅')
-            ? 'rgba(61,214,140,0.1)' : 'rgba(201,149,107,0.1)',
-            border: `1px solid ${msg.startsWith('✅') ? C.success : C.primary}`,
-            borderRadius:12, padding:'12px 16px', marginBottom:20,
-            color: msg.startsWith('✅') ? C.success : C.primary,
-            fontSize:13 }}>{msg}</div>
-        )}
+        {msg && <div style={{ background:successMsg?'rgba(74,222,128,.1)':'rgba(184,167,255,.1)', border:`1px solid ${successMsg?C.success:C.primary}`, borderRadius:12, padding:'12px 16px', marginBottom:20, color:successMsg?C.success:C.primary, fontSize:13 }}>{msg}</div>}
 
-        {/* Active subscription */}
-        {isPremium && (
-          <div style={{ background:'rgba(61,214,140,0.08)',
-            border:`1px solid ${C.success}`, borderRadius:20,
-            padding:20, marginBottom:24, textAlign:'center' }}>
-            <div style={{ fontSize:40, marginBottom:12 }}>✅</div>
-            <div style={{ fontFamily:"'Playfair Display',serif", fontSize:20,
-              color:C.text, marginBottom:4 }}>
-              {sub.plan === 'COUPLE_PREMIUM' ? 'Between Casal' : 'Between Premium'} ativo
+        {isPremium && <div style={{ background:'rgba(74,222,128,.08)', border:`1px solid ${C.success}`, borderRadius:20, padding:20, marginBottom:24, textAlign:'center' }}>
+          <div style={{ fontSize:40, marginBottom:12 }}>✅</div>
+          <div style={{ fontSize:20, color:C.text, marginBottom:4 }}>{planName(sub.plan)} {t('premium.active')}</div>
+          {sub.currentPeriodEnd && <div style={{ color:C.muted, fontSize:12, marginBottom:16 }}>{t('premium.renews')} {formatDate(sub.currentPeriodEnd)}</div>}
+          <button onClick={handlePortal} style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:50, padding:'10px 24px', color:C.text2, cursor:'pointer', fontSize:13 }}>{t('premium.manage')} →</button>
+        </div>}
+
+        {!isPremium && visiblePlanIds.map(planId => {
+          const meta = PLAN_META[planId]
+          const features = t(`premium.plans.${planId}.features`, [])
+          const badge = t(`premium.plans.${planId}.badge`, null)
+          return <div key={planId} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:24, padding:24, marginBottom:16 }}>
+            {badge && <div style={{ display:'inline-block', background:'rgba(184,167,255,.15)', border:'1px solid rgba(184,167,255,.3)', borderRadius:50, padding:'4px 12px', fontSize:11, color:C.text2, marginBottom:12, fontWeight:600 }}>{badge}</div>}
+            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:20 }}>
+              <div><div style={{ fontSize:28 }}>{meta.icon}</div><div style={{ fontSize:20, fontWeight:700, color:C.text }}>{planName(planId)}</div></div>
+              <div style={{ textAlign:'right' }}><div style={{ fontSize:28, fontWeight:700, color:meta.color }}>{meta.price}</div><div style={{ fontSize:12, color:C.muted }}>{t('premium.month')}</div></div>
             </div>
-            {sub.currentPeriodEnd && (
-              <div style={{ color:C.muted, fontSize:12, marginBottom:16 }}>
-                Renova em {new Date(sub.currentPeriodEnd).toLocaleDateString('pt')}
-              </div>
-            )}
-            <button onClick={handlePortal}
-              style={{ background:'none', border:`1px solid ${C.border}`,
-                borderRadius:50, padding:'10px 24px', color:C.text2,
-                cursor:'pointer', fontSize:13, fontFamily:'Inter,sans-serif' }}>
-              Gerir subscrição →
+            <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:20 }}>
+              {features.map((feature, index) => <div key={index} style={{ fontSize:13, color:C.text2, display:'flex', gap:8 }}><span style={{ color:C.success }}>✓</span>{feature}</div>)}
+            </div>
+            <button onClick={() => handleCheckout(planId)} disabled={checkingOut===planId} style={{ width:'100%', background:C.primary, border:'none', borderRadius:50, padding:15, fontSize:15, fontWeight:700, color:'#0A141A', opacity:checkingOut===planId ? 0.7 : 1 }}>
+              {checkingOut===planId ? t('premium.processing') : `${t('premium.subscribe')} ${planName(planId)} — ${meta.price}${t('premium.month')}`}
             </button>
           </div>
-        )}
+        })}
 
-        {/* Plans — só os elegíveis segundo o backend (secção 14/16) */}
-        {!isPremium && visiblePlans.map(plan => (
-          <div key={plan.id} style={{ background:C.bgCard,
-            border:`1px solid ${C.border}`, borderRadius:24,
-            padding:24, marginBottom:16 }}>
+        {!isPremium && coupleContextButNotActive && <div style={{ color:C.muted, fontSize:12, lineHeight:1.6, textAlign:'center', marginBottom:18 }}>{t('premium.coupleRequired')}</div>}
 
-            {/* Badge */}
-            {plan.badge && (
-              <div style={{ display:'inline-block', background:`rgba(184,169,212,0.15)`,
-                border:`1px solid rgba(184,169,212,0.3)`, borderRadius:50,
-                padding:'4px 12px', fontSize:11, color:C.text2,
-                marginBottom:12, fontWeight:600 }}>
-                {plan.badge}
-              </div>
-            )}
-
-            {/* Plan header */}
-            <div style={{ display:'flex', alignItems:'flex-start',
-              justifyContent:'space-between', marginBottom:20 }}>
-              <div>
-                <div style={{ fontSize:28, marginBottom:4 }}>{plan.icon}</div>
-                <div style={{ fontFamily:"'Playfair Display',serif", fontSize:20,
-                  fontWeight:700, color:C.text }}>{plan.name}</div>
-              </div>
-              <div style={{ textAlign:'right' }}>
-                <div style={{ fontSize:28, fontWeight:700, color:plan.color }}>
-                  {plan.price}
-                </div>
-                <div style={{ fontSize:12, color:C.muted }}>{plan.period}</div>
-              </div>
-            </div>
-
-            {/* Features */}
-            <div style={{ display:'flex', flexDirection:'column',
-              gap:8, marginBottom:20 }}>
-              {plan.features.map((f, i) => (
-                <div key={i} style={{ fontSize:13, color:C.text2,
-                  display:'flex', alignItems:'flex-start', gap:8 }}>
-                  <span style={{ color:C.success, flexShrink:0 }}>✓</span>
-                  {f}
-                </div>
-              ))}
-            </div>
-
-            {/* CTA */}
-            <button
-              onClick={() => handleCheckout(plan.id)}
-              disabled={checkingOut === plan.id}
-              style={{ width:'100%',
-                background: plan.id === 'PREMIUM'
-                  ? `linear-gradient(135deg,${C.primary},${C.primaryDim})`
-                  : `linear-gradient(135deg,${C.primary},${C.text2})`,
-                border:'none', borderRadius:50, padding:'15px',
-                fontSize:15, fontWeight:700,
-                color: plan.id === 'PREMIUM' ? '#1A0A2E' : '#0A141A',
-                cursor: checkingOut ? 'not-allowed' : 'pointer',
-                opacity: checkingOut === plan.id ? 0.7 : 1,
-                fontFamily:'Inter,sans-serif', transition:'all 0.2s' }}>
-              {checkingOut === plan.id
-                ? 'A processar...'
-                : `Subscrever ${plan.name} — ${plan.price}/mês`}
-            </button>
-          </div>
-        ))}
-
-        {/* Security note */}
-        <div style={{ textAlign:'center', padding:'0 16px' }}>
-          <p style={{ color:C.muted, fontSize:11, lineHeight:1.6 }}>
-            🔒 Pagamento seguro via Stripe.<br/>
-            Podes cancelar a qualquer momento.<br/>
-            O nome "Between Us" não aparece no extrato bancário.
-          </p>
+        <div style={{ textAlign:'center', padding:'0 16px', color:C.muted, fontSize:11, lineHeight:1.7 }}>
+          🔒 {t('premium.secure')}<br/>{t('premium.cancelAnytime')}<br/>{t('premium.discreetBilling')}
         </div>
       </div>
     </div>

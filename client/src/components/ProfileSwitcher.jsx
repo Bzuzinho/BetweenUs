@@ -8,16 +8,22 @@
 import { useState } from 'react'
 import api from '../lib/api'
 import { useAuth } from '../context/AuthContext'
+import { useI18n } from '../i18n/I18nContext'
 
 const C = {
   bg:'#0A141A', surface:'#102129', border:'#1E3340',
   primary:'#B8A7FF', text:'#F5F7FA', muted:'#7E8FA3',
 }
 
-const TYPE_LABEL = { INDIVIDUAL: 'Perfil individual', COUPLE: 'Perfil de casal', GROUP: 'Perfil de grupo' }
+const TYPE_KEY = {
+  INDIVIDUAL: 'common.individualProfile',
+  COUPLE: 'common.coupleProfile',
+  GROUP: 'common.groupProfile',
+}
 
 export default function ProfileSwitcher() {
   const { user, refreshUser } = useAuth()
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [switching, setSwitching] = useState(false)
 
@@ -27,9 +33,9 @@ export default function ProfileSwitcher() {
   const hasCoupleProfile = contexts.some(ctx => ctx.type === 'COUPLE')
   const canSwitchProfile = hasCoupleProfile && contexts.length > 1
 
-  const realName = user?.accountName?.trim() || user?.email?.split('@')[0] || 'Utilizador'
-  const activeProfileName = active?.displayName || individual?.displayName || 'Perfil individual'
-  const activeTypeLabel = TYPE_LABEL[active?.type] || TYPE_LABEL.INDIVIDUAL
+  const realName = user?.accountName?.trim() || user?.email?.split('@')[0] || t('common.user')
+  const activeProfileName = active?.displayName || individual?.displayName || t('common.individualProfile')
+  const activeTypeLabel = t(TYPE_KEY[active?.type] || 'common.individualProfile')
 
   const handleSwitch = async (profileId) => {
     if (profileId === active?.profileId || profileId === active?.id) {
@@ -78,7 +84,7 @@ export default function ProfileSwitcher() {
       {canSwitchProfile ? (
         <button
           type="button"
-          aria-label="Mudar de perfil"
+          aria-label={t('profileSwitcher.change')}
           aria-expanded={open}
           onClick={() => setOpen(value => !value)}
           disabled={switching}
@@ -107,12 +113,13 @@ export default function ProfileSwitcher() {
           boxShadow:'0 14px 36px rgba(0,0,0,0.35)',
         }}>
           <div style={{ padding:'9px 12px', color:C.muted, fontSize:10, textTransform:'uppercase', letterSpacing:'0.06em', borderBottom:`1px solid ${C.border}` }}>
-            Usar a aplicação como
+            {t('profileSwitcher.useAs')}
           </div>
           {contexts
             .filter(ctx => ctx.type === 'INDIVIDUAL' || ctx.type === 'COUPLE')
             .map(ctx => {
               const isActive = ctx.profileId === active?.profileId || ctx.profileId === active?.id
+              const typeLabel = t(TYPE_KEY[ctx.type] || 'common.profile')
               return (
                 <button
                   type="button"
@@ -126,9 +133,9 @@ export default function ProfileSwitcher() {
                     color:C.text, fontSize:13, cursor:switching ? 'wait' : 'pointer', textAlign:'left',
                   }}
                 >
-                  <span style={{ fontWeight:600 }}>{ctx.displayName || TYPE_LABEL[ctx.type]}</span>
+                  <span style={{ fontWeight:600 }}>{ctx.displayName || typeLabel}</span>
                   <span style={{ color:C.muted, fontSize:11, marginTop:2 }}>
-                    {TYPE_LABEL[ctx.type] || ctx.type}{isActive ? ' · Ativo' : ''}
+                    {typeLabel}{isActive ? ` · ${t('common.active')}` : ''}
                   </span>
                 </button>
               )
