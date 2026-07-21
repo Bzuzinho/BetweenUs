@@ -47,9 +47,45 @@ router.put('/language', requireAuth, async (req: AuthRequest, res: Response) => 
   }
 })
 
+router.get('/preferences', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id:req.userId! },
+      select: { pushNotificationsEnabled:true, appIconBadgeEnabled:true }
+    })
+    if (!user) return res.status(404).json({ error:'Utilizador não encontrado.' })
+    res.json(user)
+  } catch (err: any) {
+    console.error('[PUSH PREFERENCES GET]', err.message)
+    res.status(500).json({ error:'Erro ao carregar preferências.' })
+  }
+})
+
+router.put('/preferences', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { pushNotificationsEnabled, appIconBadgeEnabled } = req.body
+    const user = await prisma.user.update({
+      where: { id:req.userId! },
+      data: {
+        ...(pushNotificationsEnabled !== undefined && { pushNotificationsEnabled:Boolean(pushNotificationsEnabled) }),
+        ...(appIconBadgeEnabled !== undefined && { appIconBadgeEnabled:Boolean(appIconBadgeEnabled) }),
+      },
+      select: { pushNotificationsEnabled:true, appIconBadgeEnabled:true }
+    })
+    res.json(user)
+  } catch (err: any) {
+    console.error('[PUSH PREFERENCES PUT]', err.message)
+    res.status(500).json({ error:'Erro ao guardar preferências.' })
+  }
+})
+
 // POST /api/push/subscribe — save push subscription
 router.post('/subscribe', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
+    const user = await prisma.user.findUnique({ where:{ id:req.userId! }, select:{ pushNotificationsEnabled:true } })
+    if (!user?.pushNotificationsEnabled) {
+      return res.status(409).json({ code:'PUSH_DISABLED', error:'As notificações push estão desativadas.' })
+    }
     const { endpoint, keys } = req.body
     if (!endpoint || !keys?.p256dh || !keys?.auth) {
       return res.status(400).json({ code: 'INVALID_PUSH_SUBSCRIPTION', error: 'Subscription inválida.' })

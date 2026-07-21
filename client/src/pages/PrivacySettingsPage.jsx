@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import TravelModeSection from '../components/TravelModeSection'
+import UserNotificationBell from '../components/UserNotificationBell'
 import { useI18n } from '../i18n/I18nContext'
+import { useAuth } from '../context/AuthContext'
+import { registerPush, unregisterPush, setAppBadge } from '../lib/push'
 
 const C = {
   bg:'#0A141A', surface:'#102129', border:'#1E3340', input:'#0F1E26',
@@ -25,7 +28,9 @@ function Row({ label, desc, value, onChange, arrow=false, onClick }) {
 export default function PrivacySettingsPage() {
   const navigate = useNavigate()
   const { t } = useI18n()
-  const [settings, setSettings] = useState({ visibleInDiscovery:true, showDistance:true, showOnlineStatus:false, invisibleMode:false, allowPhotoRequests:true, notificationMode:'DISCREET' })
+  const { refreshUser } = useAuth()
+  const [settings, setSettings] = useState({ visibleInDiscovery:true, showDistance:true, showOnlineStatus:true, invisibleMode:false, allowPhotoRequests:true, notificationMode:'DISCREET' })
+  const [pushPreferences, setPushPreferences] = useState({ pushNotificationsEnabled:true, appIconBadgeEnabled:true })
   const [sub, setSub] = useState(null)
   const [loading, setLoading] = useState(true)
   const [msg, setMsg] = useState('')
@@ -35,6 +40,7 @@ export default function PrivacySettingsPage() {
     Promise.all([
       api.get('/privacy').then(r => setSettings(s => ({ ...s, ...r.data }))).catch(() => {}),
       api.get('/subscriptions/me').then(r => setSub(r.data)).catch(() => {}),
+      api.get('/push/preferences').then(r => setPushPreferences(p => ({ ...p, ...r.data }))).catch(() => {}),
     ]).finally(() => setLoading(false))
   }, [])
 
@@ -55,13 +61,35 @@ export default function PrivacySettingsPage() {
     }
   }
 
+  const savePushPreference = async patch => {
+    const previous = pushPreferences
+    const next = { ...pushPreferences, ...patch }
+    setPushPreferences(next); setMsg(''); setError('')
+    try {
+      await api.put('/push/preferences', patch)
+      if (patch.pushNotificationsEnabled === true) {
+        const registered = await registerPush(api, { requestPermission:true })
+        if (!registered) throw new Error('PUSH_PERMISSION_NOT_GRANTED')
+      }
+      if (patch.pushNotificationsEnabled === false) await unregisterPush(api)
+      if (patch.appIconBadgeEnabled === false) await setAppBadge(0)
+      await refreshUser()
+      setMsg(t('privacySettings.saved'))
+      setTimeout(() => setMsg(''), 2000)
+    } catch (err) {
+      setPushPreferences(previous)
+      await api.put('/push/preferences', previous).catch(() => {})
+      setError(err.message === 'PUSH_PERMISSION_NOT_GRANTED' ? t('privacySettings.pushPermissionError') : t('privacySettings.saveError'))
+    }
+  }
+
   if (loading) return <div style={{ padding:32, color:C.muted, textAlign:'center' }}>{t('common.loading')}</div>
 
   const section = (title, children) => <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:'4px 16px', marginBottom:14 }}><div style={{ fontSize:11, color:C.muted, padding:'10px 0 4px', letterSpacing:'.06em', textTransform:'uppercase' }}>{title}</div>{children}</div>
 
   return <div style={{ minHeight:'100vh', background:C.bg, padding:'calc(20px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom))' }}>
     <div style={{ maxWidth:480, margin:'0 auto' }}>
-      <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:24 }}><button onClick={() => navigate(-1)} style={{ background:'none', border:'none', color:C.muted, fontSize:22 }}>←</button><h1 style={{ fontSize:20, color:C.text, margin:0 }}>{t('privacySettings.title')}</h1></div>
+      <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:18, minHeight:40 }}><button onClick={() => navigate(-1)} style={{ background:'none', border:'none', color:C.muted, fontSize:22 }}>←</button><h1 style={{ fontSize:20, color:C.text, margin:0, flex:1 }}>{t('privacySettings.title')}</h1><UserNotificationBell appBadgeEnabled={pushPreferences.appIconBadgeEnabled}/></div>
       {msg && <div style={{ background:'rgba(74,222,128,.1)', border:`1px solid ${C.success}`, borderRadius:10, padding:'10px 14px', marginBottom:14, fontSize:13, color:C.success }}>{msg}</div>}
       {error && <div style={{ background:'rgba(248,113,113,.1)', border:`1px solid ${C.danger}`, borderRadius:10, padding:'10px 14px', marginBottom:14, fontSize:13, color:C.danger }}>{error}</div>}
 
@@ -73,7 +101,11 @@ export default function PrivacySettingsPage() {
       </>)}
 
       {section(t('privacySettings.photos'), <Row label={t('privacySettings.photoRequests')} desc={t('privacySettings.photoRequestsHelp')} value={settings.allowPhotoRequests} onChange={v => save({ allowPhotoRequests:v })}/>)}
-      {section(t('privacySettings.notifications'), <Row label={`${t('privacySettings.mode')}: ${settings.notificationMode==='DISCREET'?t('privacySettings.discreet'):t('privacySettings.normal')}`} desc={t('privacySettings.notificationHelp')} value={settings.notificationMode==='DISCREET'} onChange={v => save({ notificationMode:v?'DISCREET':'NORMAL' })}/>)}
+      {section(t('privacySettings.notifications'), <>
+        <Row label={t('privacySettings.push')} desc={t('privacySettings.pushHelp')} value={pushPreferences.pushNotificationsEnabled} onChange={v => savePushPreference({ pushNotificationsEnabled:v })}/>
+        <Row label={t('privacySettings.appBadge')} desc={t('privacySettings.appBadgeHelp')} value={pushPreferences.appIconBadgeEnabled} onChange={v => savePushPreference({ appIconBadgeEnabled:v })}/>
+        <Row label={`${t('privacySettings.mode')}: ${settings.notificationMode==='DISCREET'?t('privacySettings.discreet'):t('privacySettings.normal')}`} desc={t('privacySettings.notificationHelp')} value={settings.notificationMode==='DISCREET'} onChange={v => save({ notificationMode:v?'DISCREET':'NORMAL' })}/>
+      </>)}
       <TravelModeSection helperText={t('privacySettings.travelHelp')}/>
       {section(t('privacySettings.contacts'), <Row label={t('privacySettings.blockContacts')} desc={t('privacySettings.blockContactsHelp')} arrow onClick={() => navigate('/contacts/block')}/>)}
       {section(t('privacySettings.dataAccount'), <>

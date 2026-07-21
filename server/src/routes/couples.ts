@@ -46,8 +46,8 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
         sharedDescription: coupleDescription || null,
         status: process.env.NODE_ENV === 'production' ? 'PENDING_REVIEW' : 'APPROVED',
         privacySettings: { create: {
-          visibleInDiscovery: false, showDistance: true,
-          showOnlineStatus: false, invisibleMode: false, notificationMode: 'DISCREET'
+          visibleInDiscovery: true, showDistance: true,
+          showOnlineStatus: true, invisibleMode: false, notificationMode: 'DISCREET'
         }}
       }
     })

@@ -21,6 +21,12 @@ const TYPE_KEY = {
   GROUP: 'common.groupProfile',
 }
 
+const firstAndLastName = value => {
+  const parts = String(value || '').trim().split(/\s+/).filter(Boolean)
+  if (parts.length <= 1) return parts[0] || ''
+  return `${parts[0]} ${parts[parts.length - 1]}`
+}
+
 export default function ProfileSwitcher() {
   const { user, refreshUser } = useAuth()
   const { t } = useI18n()
@@ -29,12 +35,10 @@ export default function ProfileSwitcher() {
 
   const contexts = user?.availableProfileContexts || []
   const active = user?.activeProfileContext || user?.individualProfile || null
-  const individual = contexts.find(ctx => ctx.type === 'INDIVIDUAL') || user?.individualProfile || null
   const hasCoupleProfile = contexts.some(ctx => ctx.type === 'COUPLE')
   const canSwitchProfile = hasCoupleProfile && contexts.length > 1
 
-  const realName = user?.accountName?.trim() || user?.email?.split('@')[0] || t('common.user')
-  const activeProfileName = active?.displayName || individual?.displayName || t('common.individualProfile')
+  const realName = firstAndLastName(user?.accountName) || t('common.user')
   const activeTypeLabel = t(TYPE_KEY[active?.type] || 'common.individualProfile')
 
   const handleSwitch = async (profileId) => {
@@ -70,7 +74,7 @@ export default function ProfileSwitcher() {
           {realName}
         </span>
         <span style={{ display:'block', color:C.muted, fontSize:10, marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-          {activeTypeLabel} · {activeProfileName}
+          {activeTypeLabel}
         </span>
       </span>
       {canSwitchProfile && (

@@ -26,7 +26,7 @@ const catalogIds = async () => {
 const defaultPrivacy = (overrides?: IndividualScenario['privacy']) => ({
   visibleInDiscovery: overrides?.visibleInDiscovery ?? true,
   showDistance: overrides?.showDistance ?? true,
-  showOnlineStatus: false,
+  showOnlineStatus: true,
   allowPhotoRequests: overrides?.allowPhotoRequests ?? true,
   invisibleMode: overrides?.invisibleMode ?? false,
   notificationMode: overrides?.notificationMode ?? 'DISCREET',

@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ProfilePage from './pages/ProfilePage'
 import ExploreScreen from './screens/ExploreScreen'
@@ -7,13 +8,12 @@ import RoomsLocalizedScreen from './screens/RoomsLocalizedScreen'
 import LegalReacceptanceBanner from './components/LegalReacceptanceBanner'
 import ProfileSwitcher from './components/ProfileSwitcher'
 import LanguageSelector from './components/LanguageSelector'
+import UserNotificationBell from './components/UserNotificationBell'
 import { Logo } from './lib/design'
 import { useI18n } from './i18n/I18nContext'
-
-const C = {
-  bg:'#0A141A', surface:'#102129', border:'#1E3340',
-  primary:'#B8A7FF', text:'#F5F7FA', muted:'#7E8FA3',
-}
+import { useAuth } from './context/AuthContext'
+import api from './lib/api'
+import { registerPush } from './lib/push'
 
 const NAV = [
   { key:'explore', labelKey:'nav.explore', icon:'○', path:'/explore' },
@@ -26,6 +26,11 @@ const NAV = [
 export default function AppShell({ screen }) {
   const navigate = useNavigate()
   const { t } = useI18n()
+  const { user } = useAuth()
+
+  useEffect(() => {
+    if (user?.pushNotificationsEnabled !== false) registerPush(api, { requestPermission:true })
+  }, [user?.id, user?.pushNotificationsEnabled])
 
   const renderScreen = () => {
     switch (screen) {
@@ -38,26 +43,41 @@ export default function AppShell({ screen }) {
   }
 
   return (
-    <div style={{ width:'100%', maxWidth:480, margin:'0 auto', minHeight:'100vh', minHeight:'-webkit-fill-available', background:C.bg, position:'relative' }}>
-      <div style={{ paddingBottom:'calc(68px + env(safe-area-inset-bottom))', paddingTop:'env(safe-area-inset-top)' }}>
-        <LegalReacceptanceBanner />
-        <div style={{ padding:'10px 16px 0', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10 }}>
-          <Logo size={28} />
-          <div style={{ display:'flex', alignItems:'center', gap:8, minWidth:0 }}>
+    <div className="app-shell">
+      <aside className="app-sidebar" aria-label={t('common.navigation', 'Navegação principal')}>
+        <div className="app-sidebar-brand"><Logo size={34} /><span>Between Us</span></div>
+        <nav className="app-sidebar-nav">
+          {NAV.map(item => {
+            const active = screen === item.key
+            return <button key={item.key} onClick={() => navigate(item.path)} className={`app-sidebar-item ${active ? 'active' : ''}`} aria-current={active ? 'page' : undefined}>
+              <span className="app-nav-icon">{item.icon}</span><span>{t(item.labelKey)}</span>
+            </button>
+          })}
+        </nav>
+      </aside>
+
+      <div className="app-main">
+        <header className="app-header">
+          <div className="app-mobile-logo"><Logo size={26} /></div>
+          <div className="app-header-actions">
             <LanguageSelector persistAccount compact />
+            <UserNotificationBell appBadgeEnabled={user?.appIconBadgeEnabled !== false} />
             <ProfileSwitcher />
           </div>
+        </header>
+        <div className="app-content">
+          <LegalReacceptanceBanner />
+          <div className="app-shell-screen">{renderScreen()}</div>
         </div>
-        {renderScreen()}
       </div>
 
-      <nav style={{ position:'fixed', bottom:0, left:'50%', transform:'translateX(-50%)', width:'100%', maxWidth:480, background:'rgba(10,20,26,0.97)', backdropFilter:'blur(20px)', WebkitBackdropFilter:'blur(20px)', borderTop:`1px solid ${C.border}`, display:'flex', justifyContent:'space-around', alignItems:'flex-start', paddingTop:10, paddingBottom:'calc(10px + env(safe-area-inset-bottom))', zIndex:100 }}>
+      <nav className="app-bottom-nav">
         {NAV.map(item => {
           const active = screen === item.key
           return (
-            <button key={item.key} onClick={() => navigate(item.path)} aria-label={t(item.labelKey)} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:4, padding:'4px 16px', background:'none', border:'none', cursor:'pointer', minWidth:48, minHeight:48 }}>
-              <span style={{ fontSize:20, color:active ? C.primary : C.muted, transition:'color 0.2s' }}>{item.icon}</span>
-              <span style={{ fontSize:10, fontWeight:active ? 500 : 400, color:active ? C.primary : C.muted, letterSpacing:0.3, transition:'color 0.2s' }}>{t(item.labelKey)}</span>
+            <button key={item.key} onClick={() => navigate(item.path)} aria-label={t(item.labelKey)} aria-current={active ? 'page' : undefined} className={`app-bottom-nav-item ${active ? 'active' : ''}`}>
+              <span className="app-nav-icon">{item.icon}</span>
+              <span className="app-nav-label">{t(item.labelKey)}</span>
             </button>
           )
         })}

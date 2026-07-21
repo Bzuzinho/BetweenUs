@@ -87,7 +87,7 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
         visibleInDiscovery: visibleInDiscovery !== false,
         invisibleMode: Boolean(invisibleMode),
         showDistance: showDistance !== false,
-        showOnlineStatus: Boolean(showOnlineStatus),
+        showOnlineStatus: showOnlineStatus !== false,
         allowPhotoRequests: allowPhotoRequests !== false,
         notificationMode: notificationMode || 'DISCREET'
       }

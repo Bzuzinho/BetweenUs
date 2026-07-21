@@ -12,6 +12,7 @@ import { runHardDeleteJob, findEligibleUsers } from '../lib/hardDeleteJob'
 import { signMediaUrl as signAvatarUrl } from '../lib/mediaAccessService'
 import { getReportEvidenceForModerator } from '../lib/reportEvidenceService'
 import { getLatestAssessment, computeAgreementStats, runModerationAssessment } from '../lib/moderationAssessmentService'
+import { notifyAdmins as notifyAdminsWithPush } from '../lib/notify'
 
 const CLIENT_URL = (process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app').replace(/\/+$/, '')
 
@@ -1397,15 +1398,5 @@ router.get('/service/sessions', requireAdmin('users'), async (req: AuthRequest, 
 
 // Helper: create notification for all admins
 async function notifyAdmins(title: string, body: string, excludeUserId?: string) {
-  const admins = await prisma.user.findMany({
-    where: { adminRole: { in: ['SUPER_ADMIN', 'ADMIN'] as any[] }, NOT: excludeUserId ? { id: excludeUserId } : undefined },
-    select: { id: true }
-  })
-  const notifs = admins.map((a: { id: string }) => ({
-    userId: a.id, type: 'service_event', title, body,
-    data: JSON.stringify({ tab: 'audit' })
-  }))
-  if (notifs.length) {
-    await (prisma as any).notification.createMany({ data: notifs }).catch(() => {})
-  }
+  await notifyAdminsWithPush('service_event', title, body, { tab:'admin/audit' }, excludeUserId)
 }

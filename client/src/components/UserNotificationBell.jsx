@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import { useI18n } from '../i18n/I18nContext'
+import { setAppBadge } from '../lib/push'
 
 const C = {
   surface: '#102129', border: '#1E3340',
@@ -9,7 +10,7 @@ const C = {
   danger: '#F87171',
 }
 
-export default function UserNotificationBell() {
+export default function UserNotificationBell({ appBadgeEnabled = true }) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [notifs, setNotifs] = useState([])
@@ -34,6 +35,10 @@ export default function UserNotificationBell() {
   }, [])
 
   const unread = notifs.filter(notification => !notification.readAt).length
+
+  useEffect(() => {
+    setAppBadge(appBadgeEnabled ? unread : 0)
+  }, [appBadgeEnabled, unread])
 
   const markRead = async id => {
     await api.put(`/notifications/${id}/read`).catch(() => {})

@@ -30,7 +30,12 @@ self.addEventListener('push', e => {
     vibrate: [200, 100, 200],
   }
 
-  e.waitUntil(self.registration.showNotification(title, options))
+  e.waitUntil(Promise.all([
+    self.registration.showNotification(title, options),
+    data.showAppBadge !== false && self.navigator?.setAppBadge
+      ? self.navigator.setAppBadge(data.notificationCount || undefined).catch(() => {})
+      : Promise.resolve(),
+  ]))
 })
 
 // ─── Notification click handler ───────────────────────────────────────────────

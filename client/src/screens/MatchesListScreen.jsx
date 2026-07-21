@@ -119,7 +119,7 @@ export default function MatchesListScreen() {
 
   const openMatch = match => navigate(`/rooms?matchId=${encodeURIComponent(match.id)}`)
 
-  return <div style={{ padding:'60px 16px 0' }}>
+  return <div style={{ padding:'16px 16px 0', maxWidth:480, margin:'0 auto' }}>
     <div style={{ fontSize:22, fontWeight:700, marginBottom:20, color:C.primary }}>{t('matches.title')}</div>
     {error && <div style={{ background:'rgba(248,113,113,.08)', border:'1px solid rgba(248,113,113,.25)', borderRadius:12, padding:'10px 14px', color:C.danger, fontSize:13, marginBottom:14 }}>{error}</div>}
 

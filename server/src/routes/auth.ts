@@ -255,6 +255,7 @@ router.get('/me', async (req: Request, res: Response) => {
       select: {
         id:true, email:true, status:true, adminRole:true, emailVerifiedAt:true, createdAt:true, ageVerifiedAt:true,
         accountName:true, nif:true, avatarPath:true, dateOfBirth:true,
+        pushNotificationsEnabled:true, appIconBadgeEnabled:true,
         subscription: { select:{ plan:true, status:true, currentPeriodEnd:true } }
       }
     })

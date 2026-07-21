@@ -63,8 +63,44 @@ export const pushToUsers = async (
   const wp = await getWebPush()
   if (!wp) return
 
+  const enabledUsers = await prisma.user.findMany({
+    where: { id:{ in:userIds }, pushNotificationsEnabled:true },
+    select: {
+      id:true,
+      appIconBadgeEnabled:true,
+      activeProfileId:true,
+      profile:{ select:{ id:true, privacySettings:{ select:{ notificationMode:true } } } },
+    }
+  }).catch(() => [])
+  const badgePreference = new Map(enabledUsers.map(user => [user.id, user.appIconBadgeEnabled]))
+  const activeSharedProfileIds = enabledUsers
+    .map(user => user.activeProfileId)
+    .filter((profileId): profileId is string => Boolean(profileId))
+  const sharedPrivacySettings = activeSharedProfileIds.length
+    ? await prisma.privacySettings.findMany({
+        where:{ profileId:{ in:activeSharedProfileIds } },
+        select:{ profileId:true, notificationMode:true },
+      }).catch(() => [])
+    : []
+  const notificationModeByProfile = new Map(sharedPrivacySettings.map(setting => [setting.profileId, setting.notificationMode]))
+  const notificationModeByUser = new Map(enabledUsers.map(user => [
+    user.id,
+    (user.activeProfileId && notificationModeByProfile.get(user.activeProfileId))
+      || user.profile?.privacySettings?.notificationMode
+      || 'NORMAL',
+  ]))
+  const enabledUserIds = enabledUsers.map(user => user.id)
+  if (!enabledUserIds.length) return
+
+  const unreadCounts = await (prisma as any).notification.groupBy({
+    by: ['userId'],
+    where: { userId:{ in:enabledUserIds }, readAt:null },
+    _count: { _all:true },
+  }).catch(() => [])
+  const unreadCountByUser = new Map(unreadCounts.map((row: any) => [row.userId, row._count._all]))
+
   const subs = await (prisma as any).pushSubscription.findMany({
-    where: { userId: { in: userIds } }
+    where: { userId: { in: enabledUserIds } }
   }).catch(() => [])
 
   if (!subs?.length) {
@@ -76,9 +112,17 @@ export const pushToUsers = async (
 
   await Promise.all(subs.map(async (sub: any) => {
     try {
+      const discreet = notificationModeByUser.get(sub.userId) === 'DISCREET'
       await wp.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-        JSON.stringify({ ...payload, icon: payload.icon || '/apple-touch-icon.png', badge: '/icon-144.png' })
+        JSON.stringify({
+          ...payload,
+          ...(discreet && { title:'Between Us', body:'Tens uma nova notificação.' }),
+          icon: payload.icon || '/apple-touch-icon.png',
+          badge: '/icon-144.png',
+          showAppBadge: badgePreference.get(sub.userId) !== false,
+          notificationCount: unreadCountByUser.get(sub.userId) || 1,
+        })
       )
       console.log('[PUSH] ✅ Sent to', sub.endpoint.slice(0,40))
     } catch (err: any) {

@@ -17,7 +17,7 @@ const urlBase64ToUint8Array = (base64String) => {
   return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)))
 }
 
-export const registerPush = async (api) => {
+export const registerPush = async (api, { requestPermission = false } = {}) => {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     console.log('[PUSH] Not supported')
     return false
@@ -35,7 +35,10 @@ export const registerPush = async (api) => {
     const { data } = await api.get('/push/vapid-key').catch(() => ({ data: {} }))
     if (!data?.publicKey) { console.log('[PUSH] No VAPID public key configured server-side — skipping.'); return false }
 
-    const permission = await Notification.requestPermission()
+    if (Notification.permission === 'default' && !requestPermission) return false
+    const permission = Notification.permission === 'default'
+      ? await Notification.requestPermission()
+      : Notification.permission
     if (permission !== 'granted') { console.log('[PUSH] Denied'); return false }
 
     const sub = await reg.pushManager.subscribe({
@@ -49,5 +52,30 @@ export const registerPush = async (api) => {
   } catch (err) {
     console.error('[PUSH] Failed:', err.message)
     return false
+  }
+}
+
+export const unregisterPush = async api => {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return true
+  try {
+    const reg = await navigator.serviceWorker.ready
+    const subscription = await reg.pushManager.getSubscription()
+    if (!subscription) return true
+    const endpoint = subscription.endpoint
+    await api.delete('/push/unsubscribe', { data:{ endpoint } }).catch(() => {})
+    await subscription.unsubscribe()
+    return true
+  } catch (err) {
+    console.error('[PUSH] Unsubscribe failed:', err.message)
+    return false
+  }
+}
+
+export const setAppBadge = async count => {
+  try {
+    if (count > 0 && 'setAppBadge' in navigator) await navigator.setAppBadge(count)
+    else if ('clearAppBadge' in navigator) await navigator.clearAppBadge()
+  } catch {
+    // Badging is progressive enhancement and is not available in every browser.
   }
 }
