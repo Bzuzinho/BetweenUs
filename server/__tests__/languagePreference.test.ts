@@ -2,6 +2,13 @@ import request from 'supertest'
 import app from './app'
 import { createTestUser, prisma } from './helpers'
 
+const ensureLanguageColumn = async () => {
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "User"
+    ADD COLUMN IF NOT EXISTS "preferredLanguage" TEXT NOT NULL DEFAULT 'pt-PT'
+  `)
+}
+
 const readLanguage = async (userId: string) => {
   const rows = await prisma.$queryRaw<Array<{ preferredLanguage: string }>>`
     SELECT "preferredLanguage" FROM "User" WHERE id = ${userId} LIMIT 1
@@ -10,15 +17,9 @@ const readLanguage = async (userId: string) => {
 }
 
 describe('Account language preference', () => {
-  beforeAll(async () => {
-    await prisma.$executeRawUnsafe(`
-      ALTER TABLE "User"
-      ADD COLUMN IF NOT EXISTS "preferredLanguage" TEXT NOT NULL DEFAULT 'pt-PT'
-    `)
-  })
-
   it('returns Portuguese by default and persists a supported language', async () => {
     const user = await createTestUser({ email: 'language-preference@test.com' })
+    await ensureLanguageColumn()
 
     const initial = await request(app)
       .get('/api/push/language')
@@ -39,6 +40,7 @@ describe('Account language preference', () => {
 
   it('rejects unsupported languages without changing the stored preference', async () => {
     const user = await createTestUser({ email: 'language-invalid@test.com' })
+    await ensureLanguageColumn()
 
     const update = await request(app)
       .put('/api/push/language')
