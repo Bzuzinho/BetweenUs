@@ -2,18 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import api from '../../lib/api'
 import { useI18n } from '../../i18n/I18nContext'
 import AdminAsyncState from './AdminAsyncState'
-
-export const REPORT_STATUSES = ['PENDING', 'REVIEWING', 'RESOLVED', 'DISMISSED', 'ESCALATED']
-
-export const reportTierForPriority = priority => {
-  if (priority >= 10) return 'MAXIMUM'
-  if (priority >= 8) return 'HIGH'
-  if (priority >= 7) return 'ELEVATED'
-  if (priority >= 5) return 'MODERATE'
-  if (priority >= 3) return 'LOW'
-  if (priority >= 1) return 'MINIMAL'
-  return 'NONE'
-}
+import { REPORT_STATUSES, reportTierForPriority } from './adminReportContracts'
 
 export default function AdminReportsQueue({ colors, onSelectReport }) {
   const C = colors
