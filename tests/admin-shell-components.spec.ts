@@ -93,3 +93,18 @@ test('admin account menu translations cover every extracted action', () => {
     expect(account.logout).not.toBe('logout')
   }
 })
+
+test('common async states are localized in every supported language', () => {
+  for (const language of languages) {
+    const common = adminTranslations[language].admin.common
+    expect(common.loading).toBeTruthy()
+    expect(common.retry).toBeTruthy()
+    expect(common.unavailable).toBeTruthy()
+    expect(common.error).toBeTruthy()
+
+    expect(common.loading).not.toBe('loading')
+    expect(common.retry).not.toBe('retry')
+    expect(common.unavailable).not.toBe('unavailable')
+    expect(common.error).not.toBe('error')
+  }
+})
