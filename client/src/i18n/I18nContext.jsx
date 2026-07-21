@@ -30,6 +30,7 @@ import { adminUserSensitiveTranslations } from './adminUserSensitiveTranslations
 import { adminCoupleContextTranslations } from './adminCoupleContextTranslations'
 import { adminUserReferralsTranslations } from './adminUserReferralsTranslations'
 import { adminUserNavigationTranslations } from './adminUserNavigationTranslations'
+import { adminOperationsTranslations } from './adminOperationsTranslations'
 
 const STORAGE_KEY = 'betweenus.language'
 const DEFAULT_LANGUAGE = 'pt-PT'
@@ -46,6 +47,7 @@ const mergedAdminTranslations = Object.fromEntries(SUPPORTED_LANGUAGES.map(langu
     ...adminCoupleContextTranslations[language].admin,
     ...adminUserReferralsTranslations[language].admin,
     ...adminUserNavigationTranslations[language].admin,
+    ...adminOperationsTranslations[language].admin,
     users: {
       ...adminTranslations[language].admin.users,
       detail: adminUserDetailTranslations[language].admin.users.detail,
