@@ -120,7 +120,7 @@ jobs:
 
       - name: Apply preferred language migration
         working-directory: server
-        run: npx prisma db execute --file prisma/migrations/20260720150500_add_preferred_language/migration.sql --schema prisma/schema.prisma
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/migrations/20260720150500_add_preferred_language/migration.sql
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betweenus_test
 
