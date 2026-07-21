@@ -21,7 +21,7 @@ router.get('/language', requireAuth, async (req: AuthRequest, res: Response) => 
     res.json({ preferredLanguage: rows[0]?.preferredLanguage || 'pt-PT' })
   } catch (err: any) {
     console.error('[LANGUAGE GET]', err.message)
-    res.status(500).json({ error: 'Erro ao carregar o idioma.' })
+    res.status(500).json({ code: 'LANGUAGE_LOAD_FAILED', error: 'Erro ao carregar o idioma.' })
   }
 })
 
@@ -29,7 +29,11 @@ router.put('/language', requireAuth, async (req: AuthRequest, res: Response) => 
   try {
     const preferredLanguage = String(req.body?.preferredLanguage || '')
     if (!SUPPORTED_LANGUAGES.has(preferredLanguage)) {
-      return res.status(400).json({ error: 'Idioma não suportado.' })
+      return res.status(400).json({
+        code: 'UNSUPPORTED_LANGUAGE',
+        error: 'Idioma não suportado.',
+        supportedLanguages: [...SUPPORTED_LANGUAGES],
+      })
     }
     await prisma.$executeRaw`
       UPDATE "users"
@@ -39,7 +43,7 @@ router.put('/language', requireAuth, async (req: AuthRequest, res: Response) => 
     res.json({ ok: true, preferredLanguage })
   } catch (err: any) {
     console.error('[LANGUAGE PUT]', err.message)
-    res.status(500).json({ error: 'Erro ao guardar o idioma.' })
+    res.status(500).json({ code: 'LANGUAGE_SAVE_FAILED', error: 'Erro ao guardar o idioma.' })
   }
 })
 
@@ -48,7 +52,7 @@ router.post('/subscribe', requireAuth, async (req: AuthRequest, res: Response) =
   try {
     const { endpoint, keys } = req.body
     if (!endpoint || !keys?.p256dh || !keys?.auth) {
-      return res.status(400).json({ error: 'Subscription inválida.' })
+      return res.status(400).json({ code: 'INVALID_PUSH_SUBSCRIPTION', error: 'Subscription inválida.' })
     }
     const userAgent = req.headers['user-agent'] || ''
     await (prisma as any).pushSubscription.upsert({
@@ -60,7 +64,7 @@ router.post('/subscribe', requireAuth, async (req: AuthRequest, res: Response) =
     res.json({ ok: true })
   } catch (err: any) {
     console.error('[PUSH SUBSCRIBE]', err.message)
-    res.status(500).json({ error: 'Erro interno.' })
+    res.status(500).json({ code: 'PUSH_SUBSCRIPTION_SAVE_FAILED', error: 'Erro interno.' })
   }
 })
 
@@ -72,7 +76,9 @@ router.delete('/unsubscribe', requireAuth, async (req: AuthRequest, res: Respons
       await (prisma as any).pushSubscription.deleteMany({ where: { endpoint, userId: req.userId! } })
     }
     res.json({ ok: true })
-  } catch { res.status(500).json({ error: 'Erro interno.' }) }
+  } catch {
+    res.status(500).json({ code: 'PUSH_SUBSCRIPTION_DELETE_FAILED', error: 'Erro interno.' })
+  }
 })
 
 export default router
