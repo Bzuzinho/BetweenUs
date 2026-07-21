@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import api from '../../lib/api'
 import { useI18n } from '../../i18n/I18nContext'
 import AdminReasonModal from './AdminReasonModal'
-
-export const ADMIN_PROFILE_DETAIL_STATUSES = ['DRAFT', 'PENDING_REVIEW', 'APPROVED', 'REJECTED', 'HIDDEN', 'SUSPENDED']
+import { ADMIN_PROFILE_DETAIL_STATUSES } from './adminUserProfileContracts'
 
 export default function AdminUserProfilePanel({ colors, profile, onSaved }) {
   const C = colors
@@ -14,42 +13,24 @@ export default function AdminUserProfilePanel({ colors, profile, onSaved }) {
   const [message, setMessage] = useState('')
 
   useEffect(() => {
-    setForm({
-      displayName: profile?.displayName || '',
-      bio: profile?.bio || '',
-      city: profile?.city || '',
-      status: profile?.status || 'DRAFT',
-    })
+    setForm({ displayName:profile?.displayName || '', bio:profile?.bio || '', city:profile?.city || '', status:profile?.status || 'DRAFT' })
   }, [profile])
 
   if (!profile) return <div style={{ color:C.muted, textAlign:'center', padding:20 }}>{t('admin.userProfile.empty')}</div>
 
   const save = async (reason, internalNote) => {
-    setError('')
-    setMessage('')
+    setError(''); setMessage('')
     try {
-      await api.put(`/admin/profiles/${profile.id}`, {
-        displayName: form.displayName,
-        bio: form.bio,
-        city: form.city,
-        status: form.status,
-        reason,
-        internalNote,
-      })
-      setModalOpen(false)
-      setMessage(t('admin.userProfile.updated'))
-      onSaved?.()
+      await api.put(`/admin/profiles/${profile.id}`, { displayName:form.displayName, bio:form.bio, city:form.city, status:form.status, reason, internalNote })
+      setModalOpen(false); setMessage(t('admin.userProfile.updated')); onSaved?.()
     } catch (responseError) {
       setError(responseError.response?.data?.error || t('admin.userProfile.actionError'))
     }
   }
 
   const readOnlyFields = [
-    ['relationshipStatus', profile.relationshipStatus],
-    ['discretion', profile.discretionLevel],
-    ['gender', profile.gender],
-    ['orientation', profile.orientation],
-    ['country', profile.country],
+    ['relationshipStatus', profile.relationshipStatus], ['discretion', profile.discretionLevel], ['gender', profile.gender],
+    ['orientation', profile.orientation], ['country', profile.country],
     ['photos', t('admin.userProfile.photoCount').replace('{count}', profile.photos?.length || 0)],
     ['verified', profile.user?.ageVerifiedAt ? t('admin.userProfile.yes') : t('admin.userProfile.no')],
     ['createdAt', formatDate(profile.createdAt)],
@@ -90,23 +71,11 @@ export default function AdminUserProfilePanel({ colors, profile, onSaved }) {
       <div style={{ marginTop:14, paddingTop:12, borderTop:`1px solid ${C.border}` }}>
         <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', marginBottom:10 }}>{t('admin.userProfile.readOnly')}</div>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(130px, 1fr))', gap:8 }}>
-          {readOnlyFields.map(([key, value]) => value ? (
-            <div key={key} style={{ background:C.elevated, borderRadius:8, padding:'8px 10px' }}>
-              <div style={{ fontSize:10, color:C.muted, textTransform:'uppercase', marginBottom:2 }}>{t(`admin.userProfile.fields.${key}`)}</div>
-              <div style={{ fontSize:12, color:C.text }}>{value}</div>
-            </div>
-          ) : null)}
+          {readOnlyFields.map(([key, value]) => value ? <div key={key} style={{ background:C.elevated, borderRadius:8, padding:'8px 10px' }}><div style={{ fontSize:10, color:C.muted, textTransform:'uppercase', marginBottom:2 }}>{t(`admin.userProfile.fields.${key}`)}</div><div style={{ fontSize:12, color:C.text }}>{value}</div></div> : null)}
         </div>
       </div>
 
-      {profile.intentions?.length > 0 && (
-        <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${C.border}` }}>
-          <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', marginBottom:8 }}>{t('admin.userProfile.intentions')}</div>
-          <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
-            {profile.intentions.map(item => <span key={item.intention?.id || item.intention?.slug} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'3px 10px', fontSize:12, color:C.text2 }}>{item.intention?.name || item.intention?.slug}</span>)}
-          </div>
-        </div>
-      )}
+      {profile.intentions?.length > 0 && <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${C.border}` }}><div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', marginBottom:8 }}>{t('admin.userProfile.intentions')}</div><div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>{profile.intentions.map(item => <span key={item.intention?.id || item.intention?.slug} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'3px 10px', fontSize:12, color:C.text2 }}>{item.intention?.name || item.intention?.slug}</span>)}</div></div>}
     </section>
   )
 }
