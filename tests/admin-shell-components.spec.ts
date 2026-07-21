@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { ADMIN_TABS } from '../client/src/components/admin/AdminTabBar.jsx'
+import { REPORT_STATUSES, reportTierForPriority } from '../client/src/components/admin/AdminReportsQueue.jsx'
 import { adminTranslations } from '../client/src/i18n/adminTranslations.js'
 
 const languages = ['pt-PT', 'en', 'fr'] as const
@@ -23,6 +24,8 @@ const dashboardMetricKeys = [
   'premium',
   'suspended',
 ]
+
+const reportTierKeys = ['MAXIMUM', 'HIGH', 'ELEVATED', 'MODERATE', 'LOW', 'MINIMAL', 'NONE']
 
 test('every extracted admin tab has a localized label and description', () => {
   const keys = ADMIN_TABS.map(tab => tab.key)
@@ -145,5 +148,41 @@ test('photo moderation translations cover loading outcomes and actions', () => {
 
     expect(photos.approve).not.toBe('approve')
     expect(photos.reject).not.toBe('reject')
+  }
+})
+
+test('report queue keeps backend status and priority contracts stable', () => {
+  expect(REPORT_STATUSES).toEqual(['PENDING', 'REVIEWING', 'RESOLVED', 'DISMISSED', 'ESCALATED'])
+  expect([
+    reportTierForPriority(10),
+    reportTierForPriority(8),
+    reportTierForPriority(7),
+    reportTierForPriority(5),
+    reportTierForPriority(3),
+    reportTierForPriority(1),
+    reportTierForPriority(0),
+  ]).toEqual(reportTierKeys)
+})
+
+test('report queue translations cover filters, tiers and relative age', () => {
+  for (const language of languages) {
+    const reports = adminTranslations[language].admin.reports
+    expect(reports.empty).toBeTruthy()
+    expect(reports.loadError).toBeTruthy()
+    expect(reports.aiAvailable).toBeTruthy()
+    expect(reports.aiBadge).toBeTruthy()
+    expect(reports.risk).toContain('{score}')
+    expect(reports.age.minutes).toContain('{count}')
+    expect(reports.age.hours).toContain('{count}')
+    expect(reports.age.days).toContain('{count}')
+
+    for (const status of REPORT_STATUSES) {
+      expect(reports.status[status]).toBeTruthy()
+      expect(reports.status[status]).not.toBe(status)
+    }
+    for (const tier of reportTierKeys) {
+      expect(reports.tier[tier]).toBeTruthy()
+      expect(reports.tier[tier]).not.toBe(tier)
+    }
   }
 })
