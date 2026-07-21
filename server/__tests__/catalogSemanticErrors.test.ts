@@ -1,6 +1,6 @@
 import request from 'supertest'
 import app from './app'
-import { createTestUser } from './helpers'
+import { createTestProfile, createTestUser, prisma } from './helpers'
 
 describe('Catalog semantic error codes', () => {
   it('returns a stable validation code and field', async () => {
@@ -16,6 +16,29 @@ describe('Catalog semantic error codes', () => {
     expect(response.body.field).toBe('slug')
   })
 
+  it('returns a stable duplicate-slug code and resource', async () => {
+    const admin = await createTestUser({ email: 'catalog-duplicate@test.com', adminRole: 'SUPER_ADMIN' })
+    const payload = { name: 'Duplicate test', slug: 'duplicate_test' }
+
+    const first = await request(app)
+      .post('/api/catalog/admin/intentions')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send(payload)
+
+    const duplicate = await request(app)
+      .post('/api/catalog/admin/intentions')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send(payload)
+
+    expect(first.status).toBe(201)
+    expect(duplicate.status).toBe(409)
+    expect(duplicate.body).toMatchObject({
+      code: 'CATALOG_SLUG_ALREADY_EXISTS',
+      resource: 'intention',
+      field: 'slug',
+    })
+  })
+
   it('returns a stable not-found code for catalog items', async () => {
     const admin = await createTestUser({ email: 'catalog-not-found@test.com', adminRole: 'SUPER_ADMIN' })
 
@@ -25,6 +48,31 @@ describe('Catalog semantic error codes', () => {
 
     expect(response.status).toBe(404)
     expect(response.body).toMatchObject({ code: 'CATALOG_ITEM_NOT_FOUND', resource: 'gender' })
+  })
+
+  it('returns a stable in-use code and usage count', async () => {
+    const admin = await createTestUser({ email: 'catalog-in-use-admin@test.com', adminRole: 'SUPER_ADMIN' })
+    const member = await createTestUser({ email: 'catalog-in-use-member@test.com' })
+    const profileId = await createTestProfile(member.id)
+
+    const created = await request(app)
+      .post('/api/catalog/admin/genders')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ slug: 'in_use_gender', label: 'In-use gender' })
+
+    expect(created.status).toBe(201)
+    await prisma.profile.update({ where: { id: profileId }, data: { gender: 'in_use_gender' } })
+
+    const response = await request(app)
+      .delete(`/api/catalog/admin/genders/${created.body.id}`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+
+    expect(response.status).toBe(409)
+    expect(response.body).toMatchObject({
+      code: 'CATALOG_ITEM_IN_USE',
+      resource: 'gender',
+      usageCount: 1,
+    })
   })
 
   it('returns a stable code for invalid boundary constraints', async () => {
