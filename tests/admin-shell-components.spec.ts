@@ -79,3 +79,17 @@ test('service status translations cover moderator and support states', () => {
     expect(service.stop).toBeTruthy()
   }
 })
+
+test('admin account menu translations cover every extracted action', () => {
+  for (const language of languages) {
+    const account = adminTranslations[language].admin.account
+    expect(account.adminAccount).toBeTruthy()
+    expect(account.changePassword).toBeTruthy()
+    expect(account.logout).toBeTruthy()
+    expect(account.fallbackName).toBeTruthy()
+
+    expect(account.adminAccount).not.toBe('adminAccount')
+    expect(account.changePassword).not.toBe('changePassword')
+    expect(account.logout).not.toBe('logout')
+  }
+})
