@@ -18,16 +18,43 @@ jobs:
 
       - name: Run gitleaks on pull request commits
         if: github.event_name == 'pull_request'
-        uses: gitleaks/gitleaks-action@v2
+        shell: bash
         env:
-          GITLEAKS_CONFIG: .gitleaks.toml
-          GITLEAKS_LOG_OPTS: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" \
+            zricethezav/gitleaks:latest \
+            git /repo \
+            --config=/repo/.gitleaks.toml \
+            --log-opts="$BASE_SHA..$HEAD_SHA" \
+            --redact \
+            --report-format=json \
+            --report-path=/repo/gitleaks-report.json \
+            --exit-code=1
 
       - name: Run gitleaks on main history
         if: github.event_name == 'push'
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITLEAKS_CONFIG: .gitleaks.toml
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" \
+            zricethezav/gitleaks:latest \
+            git /repo \
+            --config=/repo/.gitleaks.toml \
+            --redact \
+            --report-format=json \
+            --report-path=/repo/gitleaks-report.json \
+            --exit-code=1
+
+      - name: Upload redacted gitleaks report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   test:
     name: Run test suite
