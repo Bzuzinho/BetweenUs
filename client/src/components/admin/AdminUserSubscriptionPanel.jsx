@@ -3,7 +3,11 @@ import { useI18n } from '../../i18n/I18nContext'
 export default function AdminUserSubscriptionPanel({ colors, subscription, financials, isTestAccount = false }) {
   const C = colors
   const { t, formatDate, formatNumber } = useI18n()
-  const formatMoney = (amount, currency = 'EUR') => formatNumber(Number(amount || 0), { style:'currency', currency })
+  const formatMoney = (minorUnits, currency = 'EUR') => {
+    if (minorUnits === null || minorUnits === undefined) return '—'
+    try { return formatNumber(Number(minorUnits) / 100, { style:'currency', currency }) }
+    catch { return `${(Number(minorUnits) / 100).toFixed(2)} ${currency}` }
+  }
   const card = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:16, fontSize:13, color:C.text2, lineHeight:2, marginBottom:14 }
 
   if (!subscription) return <div style={card}>{t('admin.userSubscription.empty')}</div>
