@@ -2,6 +2,13 @@ import request from 'supertest'
 import app from './app'
 import { createTestUser, prisma } from './helpers'
 
+const readLanguage = async (userId: string) => {
+  const rows = await prisma.$queryRaw<Array<{ preferredLanguage: string }>>`
+    SELECT "preferredLanguage" FROM "User" WHERE id = ${userId} LIMIT 1
+  `
+  return rows[0]?.preferredLanguage
+}
+
 describe('Account language preference', () => {
   it('returns Portuguese by default and persists a supported language', async () => {
     const user = await createTestUser({ email: 'language-preference@test.com' })
@@ -20,9 +27,7 @@ describe('Account language preference', () => {
 
     expect(update.status).toBe(200)
     expect(update.body).toEqual({ ok: true, preferredLanguage: 'fr' })
-
-    const stored = await prisma.user.findUnique({ where: { id: user.id } })
-    expect((stored as any)?.preferredLanguage).toBe('fr')
+    expect(await readLanguage(user.id)).toBe('fr')
   })
 
   it('rejects unsupported languages without changing the stored preference', async () => {
@@ -34,8 +39,6 @@ describe('Account language preference', () => {
       .send({ preferredLanguage: 'de' })
 
     expect(update.status).toBe(400)
-
-    const stored = await prisma.user.findUnique({ where: { id: user.id } })
-    expect((stored as any)?.preferredLanguage).toBe('pt-PT')
+    expect(await readLanguage(user.id)).toBe('pt-PT')
   })
 })
