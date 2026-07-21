@@ -127,11 +127,8 @@ jobs:
         working-directory: server
         shell: bash
         run: |
-          set +e
+          set -o pipefail
           npm test -- --runInBand __tests__/auth.test.ts __tests__/languagePreference.test.ts 2>&1 | tee scoped-backend-tests.log
-          status=${PIPESTATUS[0]}
-          echo "$status" > scoped-backend-tests.status
-          exit 0
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betweenus_test
           REDIS_URL: redis://localhost:6379/1
@@ -173,14 +170,3 @@ jobs:
       - name: Frontend build
         working-directory: client
         run: npm run build
-
-      - name: Enforce scoped backend test result
-        if: github.event_name == 'pull_request'
-        working-directory: server
-        shell: bash
-        run: |
-          status=$(cat scoped-backend-tests.status)
-          if [ "$status" -ne 0 ]; then
-            echo "Scoped backend tests failed with exit code $status"
-            exit "$status"
-          fi
