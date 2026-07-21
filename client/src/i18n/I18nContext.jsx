@@ -25,6 +25,7 @@ import { roomsTranslations } from './roomsTranslations'
 import { catalogTranslations } from './catalogTranslations'
 import { adminTranslations } from './adminTranslations'
 import { adminUserDetailTranslations } from './adminUserDetailTranslations'
+import { adminUserPanelsTranslations } from './adminUserPanelsTranslations'
 
 const STORAGE_KEY = 'betweenus.language'
 const DEFAULT_LANGUAGE = 'pt-PT'
@@ -36,6 +37,7 @@ const getNestedValue = (object, path) => path.split('.').reduce((value, key) => 
 const mergedAdminTranslations = Object.fromEntries(SUPPORTED_LANGUAGES.map(language => [language, {
   admin: {
     ...adminTranslations[language].admin,
+    ...adminUserPanelsTranslations[language].admin,
     users: {
       ...adminTranslations[language].admin.users,
       detail: adminUserDetailTranslations[language].admin.users.detail,
