@@ -120,8 +120,7 @@ jobs:
 
       - name: Apply preferred language migration
         working-directory: server
-        run: |
-          node -e "const { PrismaClient } = require('@prisma/client'); const p = new PrismaClient(); p.\$executeRawUnsafe(\`ALTER TABLE \\\"User\\\" ADD COLUMN IF NOT EXISTS \\\"preferredLanguage\\\" TEXT NOT NULL DEFAULT 'pt-PT' CHECK (\\\"preferredLanguage\\\" IN ('pt-PT','en','fr'))\`).then(() => p.\$disconnect()).catch(async error => { console.error(error); await p.\$disconnect(); process.exit(1) })"
+        run: node scripts/applyPreferredLanguageTestMigration.js
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/betweenus_test
 
