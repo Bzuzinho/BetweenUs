@@ -59,7 +59,7 @@ function Conversions() {
   if(loading) return <Empty>A carregar…</Empty>
   if(error) return <Notice danger>{error}</Notice>
   if(!items.length) return <Empty>Ainda não existem conversões de afiliação.</Empty>
-  return <div>{items.map(x=><div key={x.id} style={{...card,marginBottom:8}}>
+  return <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(min(100%,300px),1fr))',gap:12}}>{items.map(x=><div key={x.id} style={card}>
     <div style={{display:'flex',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}><div><div style={{color:C.text,fontWeight:600}}>{x.referrerEmail}</div><div style={{fontSize:12,color:C.muted,marginTop:3}}>convidou {x.referredEmail}</div></div><div style={{fontSize:12,color:x.subscribedAt?C.success:C.warning}}>{x.subscribedAt?'Subscrito':'Registado'}</div></div>
     <div style={{fontSize:11,color:C.muted,marginTop:8}}>Código {x.code} · {new Date(x.createdAt).toLocaleString('pt-PT')} {x.creditGranted?'· benefício atribuído':''}</div>
   </div>)}</div>
@@ -76,9 +76,9 @@ function BetaApplications() {
     {!enabled&&<Notice danger>A receção de novos pedidos beta está desativada. O histórico continua disponível.</Notice>}
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap'}}><div><h3 style={heading}>Pedidos de acesso beta</h3><p style={copy}>Área temporária, separada das afiliações entre membros.</p></div><select value={status} onChange={e=>setStatus(e.target.value)} style={{...input,width:'auto',marginBottom:0}}><option value="ALL">Todos</option><option value="PENDING">Pendentes</option><option value="INVITED">Convidados</option><option value="REJECTED">Arquivados</option></select></div>
     {message&&<Notice>{message}</Notice>}{error&&<Notice danger>{error}</Notice>}
-    {loading?<Empty>A carregar…</Empty>:!items.length?<Empty>Não existem pedidos neste estado.</Empty>:items.map(item=><div key={item.id} style={{...card,marginBottom:8}}>
+    {loading?<Empty>A carregar…</Empty>:!items.length?<Empty>Não existem pedidos neste estado.</Empty>:<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(min(100%,340px),1fr))',gap:12}}>{items.map(item=><div key={item.id} style={card}>
       <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}><div style={{flex:1,minWidth:220}}><div style={{color:C.text,fontWeight:600}}>{item.email}</div><div style={{fontSize:11,color:C.muted,marginTop:4}}>{new Date(item.createdAt).toLocaleString('pt-PT')} · {item.source}</div>{item.inviteCode&&<div style={{fontSize:11,color:C.text2,marginTop:3}}>Convite: {item.inviteCode}{item.inviteUsedAt?' · utilizado':''}</div>}</div><span style={{fontSize:11,color:item.status==='INVITED'?C.success:item.status==='PENDING'?C.warning:C.muted,background:C.elevated,border:`1px solid ${C.border}`,borderRadius:999,padding:'4px 10px'}}>{item.status}</span><div style={{display:'flex',gap:7}}>{item.status!=='INVITED'&&<button disabled={busy===item.id} onClick={()=>invite(item)} style={primaryButton}>{busy===item.id?'…':'Aprovar e enviar convite'}</button>}{item.status==='PENDING'&&<button disabled={busy===item.id} onClick={()=>reject(item)} style={secondaryButton}>Arquivar</button>}</div></div>
-    </div>)}
+    </div>)}</div>}
   </div>
 }
 
@@ -88,7 +88,7 @@ export default function AffiliationsAdminPage(){
   return <div style={{minHeight:'100vh',background:C.bg,color:C.text}}>
     <header style={{height:48,borderBottom:`1px solid ${C.border}`,background:C.surface,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 14px'}}><div style={{display:'flex',alignItems:'center',gap:9}}><Logo size={30}/><b>Between Us</b></div><div style={{fontSize:12,color:C.text2}}>{user?.email}</div></header>
     <nav style={{display:'flex',gap:22,padding:'12px 20px',borderBottom:`1px solid ${C.border}`,overflowX:'auto',whiteSpace:'nowrap'}}>{NAV.map(([key,text])=><Link key={key} to={key==='affiliations'?'/admin/affiliations':`/admin/${key}`} style={{color:key==='affiliations'?C.primary:C.text,textDecoration:'none',fontSize:13,padding:key==='affiliations'?'7px 10px':'7px 0',border:key==='affiliations'?`1px solid ${C.primary}`:'none',borderRadius:8}}>{text}</Link>)}</nav>
-    <main style={{padding:16,maxWidth:1400,margin:'0 auto'}}><div style={{display:'flex',gap:6,marginBottom:18,flexWrap:'wrap'}}>{tabs.map(([key,text])=><button key={key} onClick={()=>setSubtab(key)} style={{background:subtab===key?C.primaryDim:C.surface,border:`1px solid ${subtab===key?C.primary:C.border}`,borderRadius:9,padding:'8px 13px',color:subtab===key?C.primary:C.text2,cursor:'pointer'}}>{text}</button>)}</div>{subtab==='overview'&&<Overview/>}{subtab==='affiliates'&&<AffiliateRuleManager/>}{subtab==='conversions'&&<Conversions/>}{subtab==='beta-access'&&<BetaApplications/>}</main>
+    <main style={{width:'100%',padding:'18px clamp(16px, 2vw, 32px)',boxSizing:'border-box'}}><div style={{display:'flex',gap:6,marginBottom:18,flexWrap:'wrap'}}>{tabs.map(([key,text])=><button key={key} onClick={()=>setSubtab(key)} style={{background:subtab===key?C.primaryDim:C.surface,border:`1px solid ${subtab===key?C.primary:C.border}`,borderRadius:9,padding:'8px 13px',color:subtab===key?C.primary:C.text2,cursor:'pointer'}}>{text}</button>)}</div>{subtab==='overview'&&<Overview/>}{subtab==='affiliates'&&<AffiliateRuleManager/>}{subtab==='conversions'&&<Conversions/>}{subtab==='beta-access'&&<BetaApplications/>}</main>
   </div>
 }
 

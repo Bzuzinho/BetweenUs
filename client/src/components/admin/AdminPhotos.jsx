@@ -31,10 +31,10 @@ export default function AdminPhotos({ colors }) {
   if (photos.length === 0) return <AdminAsyncState colors={C} type="unavailable" message={t('admin.photos.empty')} compact />
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+    <div className="admin-card-grid">
       {photos.map(photo => (
         <article key={photo.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden' }}>
-          <img src={photo.storagePath} alt="" style={{ width: '100%', height: 160, objectFit: 'cover' }} />
+          <img src={photo.storagePath} alt="" style={{ width: '100%', height: 220, objectFit: 'cover' }} />
           <div style={{ padding: 10 }}>
             <div style={{ color: C.text2, fontSize: 11, marginBottom: 8 }}>
               {photo.profile?.displayName || t('admin.photos.unknownProfile')}

@@ -76,7 +76,7 @@ export default function AdminReportsQueue({ colors, onSelectReport }) {
         <AdminAsyncState colors={C} state="unavailable" message={t('admin.reports.empty')} compact />
       )}
 
-      {reports.map(report => {
+      <div className="admin-card-grid">{reports.map(report => {
         const tier = reportTierForPriority(report.priority)
         const isCritical = tier === 'MAXIMUM' || tier === 'HIGH'
         return (
@@ -87,7 +87,7 @@ export default function AdminReportsQueue({ colors, onSelectReport }) {
             style={{
               width: '100%', textAlign: 'left', background: C.surface,
               border: `1px solid ${isCritical ? 'rgba(248,113,113,0.3)' : C.border}`,
-              borderRadius: 14, padding: 14, marginBottom: 10, cursor: 'pointer', color: 'inherit',
+              borderRadius: 14, padding: 14, cursor: 'pointer', color: 'inherit',
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8, flexWrap: 'wrap' }}>
@@ -116,7 +116,7 @@ export default function AdminReportsQueue({ colors, onSelectReport }) {
             {report.details && <div style={{ color: C.muted, fontSize: 12 }}>{report.details}</div>}
           </button>
         )
-      })}
+      })}</div>
     </section>
   )
 }

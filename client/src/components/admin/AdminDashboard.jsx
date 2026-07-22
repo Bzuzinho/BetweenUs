@@ -56,30 +56,16 @@ export default function AdminDashboard({ changeTab, colors }) {
   const metric = key => t(`admin.dashboard.metrics.${key}`, key)
 
   return (
-    <div>
-      {(visible.has('users') || visible.has('profiles') || visible.has('reports')) && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-          {visible.has('users') && <StatCard colors={C} label={metric('users')} value={data.users?.total} onClick={() => changeTab('users')} />}
-          {visible.has('users') && <StatCard colors={C} label={metric('today')} value={data.users?.newToday} color={C.success} onClick={() => changeTab('users')} />}
-          {visible.has('users') && <StatCard colors={C} label={metric('highRisk')} value={data.users?.highRisk} color={C.danger} onClick={() => changeTab('users')} />}
-        </div>
-      )}
-
-      {(visible.has('profiles') || visible.has('reports') || visible.has('photos')) && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-          {visible.has('profiles') && <StatCard colors={C} label={metric('pendingProfiles')} value={data.profiles?.pending} color={C.warning} onClick={() => changeTab('profiles')} />}
-          {visible.has('reports') && <StatCard colors={C} label={metric('reports')} value={data.reports?.pending} color={C.danger} onClick={() => changeTab('reports')} />}
-          {visible.has('photos') && <StatCard colors={C} label={metric('pendingPhotos')} value={data.photos?.pending} color={C.warning} onClick={() => changeTab('photos')} />}
-        </div>
-      )}
-
-      {(visible.has('verifications') || visible.has('subscriptions') || visible.has('users')) && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {visible.has('verifications') && <StatCard colors={C} label={metric('pendingVerifications')} value={data.verifications?.pending} color={C.warning} onClick={() => changeTab('verifications')} />}
-          {visible.has('subscriptions') && <StatCard colors={C} label={metric('premium')} value={data.subscriptions?.total} color={C.success} onClick={() => changeTab('users')} />}
-          {visible.has('users') && <StatCard colors={C} label={metric('suspended')} value={data.users?.suspended} color={C.muted} onClick={() => changeTab('users')} />}
-        </div>
-      )}
+    <div className="admin-card-grid">
+      {visible.has('users') && <StatCard colors={C} label={metric('users')} value={data.users?.total} onClick={() => changeTab('users')} />}
+      {visible.has('users') && <StatCard colors={C} label={metric('today')} value={data.users?.newToday} color={C.success} onClick={() => changeTab('users')} />}
+      {visible.has('users') && <StatCard colors={C} label={metric('highRisk')} value={data.users?.highRisk} color={C.danger} onClick={() => changeTab('users')} />}
+      {visible.has('profiles') && <StatCard colors={C} label={metric('pendingProfiles')} value={data.profiles?.pending} color={C.warning} onClick={() => changeTab('profiles')} />}
+      {visible.has('reports') && <StatCard colors={C} label={metric('reports')} value={data.reports?.pending} color={C.danger} onClick={() => changeTab('reports')} />}
+      {visible.has('photos') && <StatCard colors={C} label={metric('pendingPhotos')} value={data.photos?.pending} color={C.warning} onClick={() => changeTab('photos')} />}
+      {visible.has('verifications') && <StatCard colors={C} label={metric('pendingVerifications')} value={data.verifications?.pending} color={C.warning} onClick={() => changeTab('verifications')} />}
+      {visible.has('subscriptions') && <StatCard colors={C} label={metric('premium')} value={data.subscriptions?.total} color={C.success} onClick={() => changeTab('users')} />}
+      {visible.has('users') && <StatCard colors={C} label={metric('suspended')} value={data.users?.suspended} color={C.muted} onClick={() => changeTab('users')} />}
     </div>
   )
 }

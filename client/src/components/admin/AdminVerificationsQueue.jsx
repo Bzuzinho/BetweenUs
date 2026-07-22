@@ -53,8 +53,8 @@ export default function AdminVerificationsQueue({ colors, onSelectUser }) {
       {message && <div role="status" style={{ color:C.success, marginBottom:10 }}>{message}</div>}
       {error && <div role="alert" style={{ color:C.danger, marginBottom:10 }}>{error}</div>}
       {items.length === 0 && <AdminAsyncState colors={C} state="unavailable" message={t('admin.verifications.empty')} compact />}
-      {items.map(item => (
-        <article key={item.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:14, marginBottom:8 }}>
+      <div className="admin-card-grid">{items.map(item => (
+        <article key={item.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:14 }}>
           <button type="button" onClick={() => onSelectUser?.(item.userId)} style={{ width:'100%', border:'none', background:'none', padding:0, cursor:'pointer', display:'flex', justifyContent:'space-between', textAlign:'left', color:'inherit', marginBottom:8 }}>
             <div><div style={{ fontSize:14, fontWeight:500, color:C.text }}>{item.user?.profile?.displayName || t('admin.verifications.noProfile')}</div><div style={{ fontSize:12, color:C.muted }}>{item.user?.email}</div></div><span aria-hidden="true" style={{ color:C.muted }}>›</span>
           </button>
@@ -64,7 +64,7 @@ export default function AdminVerificationsQueue({ colors, onSelectUser }) {
             <button type="button" onClick={() => setRejecting(item.userId)} style={{ background:C.dangerDim, border:`1px solid ${C.danger}`, borderRadius:10, padding:10, color:C.danger, cursor:'pointer' }}>{t('admin.verifications.reject')}</button>
           </div>
         </article>
-      ))}
+      ))}</div>
     </section>
   )
 }

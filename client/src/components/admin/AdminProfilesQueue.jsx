@@ -58,7 +58,7 @@ export default function AdminProfilesQueue({ colors, onSelectProfile }) {
         <AdminAsyncState colors={C} state="unavailable" message={t('admin.profiles.empty')} compact />
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+      <div className="admin-card-grid">
         {profiles.map(profile => {
           const photo = profile.photos?.[0]
           const name = profile.displayName || t('admin.profiles.unknownProfile')

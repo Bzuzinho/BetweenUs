@@ -55,12 +55,12 @@ export default function AdminUsersQueue({ colors, adminRole, onSelectUser, onCre
       {!loading && error && <AdminAsyncState colors={C} state="error" message={error} onRetry={load} compact />}
       {!loading && !error && users.length === 0 && <AdminAsyncState colors={C} state="unavailable" message={t('admin.users.empty')} compact />}
 
-      {!loading && !error && users.map(user => (
+      {!loading && !error && users.length > 0 && <div className="admin-card-grid">{users.map(user => (
         <button
           key={user.id}
           type="button"
           onClick={() => onSelectUser?.(user.id)}
-          style={{ width:'100%', textAlign:'left', background:C.surface, border:`1px solid ${user.status === 'DELETED' ? 'rgba(248,113,113,0.25)' : C.border}`, borderRadius:14, padding:14, marginBottom:8, cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center', color:'inherit' }}
+          style={{ width:'100%', minHeight:94, textAlign:'left', background:C.surface, border:`1px solid ${user.status === 'DELETED' ? 'rgba(248,113,113,0.25)' : C.border}`, borderRadius:14, padding:14, cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center', color:'inherit' }}
         >
           <div>
             <div style={{ fontSize:13, fontWeight:500, color:C.text, marginBottom:3 }}>
@@ -81,7 +81,7 @@ export default function AdminUsersQueue({ colors, adminRole, onSelectUser, onCre
           </div>
           <span aria-hidden="true" style={{ color:C.muted, fontSize:18 }}>›</span>
         </button>
-      ))}
+      ))}</div>}
     </section>
   )
 }

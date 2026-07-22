@@ -40,7 +40,7 @@ export default function AdminProfileDetail({ colors, profile, onBack, onResolved
   ]
 
   return (
-    <section style={{ maxWidth: 600 }} aria-label={name}>
+    <section style={{ width:'100%' }} aria-label={name}>
       {showReject && (
         <AdminReasonModal
           colors={C}
@@ -56,8 +56,8 @@ export default function AdminProfileDetail({ colors, profile, onBack, onResolved
 
       {error && <div role="alert" style={{ color: C.danger, marginBottom: 12, fontSize: 13 }}>{error}</div>}
 
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 20, overflow: 'hidden', marginBottom: 16 }}>
-        <div style={{ height: 200, background: C.elevated, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="admin-profile-detail-card" style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 20, overflow: 'hidden', marginBottom: 16 }}>
+        <div className="admin-profile-detail-hero" style={{ height: 200, background: C.elevated, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {photo
             ? <img src={photo.storagePath} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             : <div aria-hidden="true" style={{ fontSize: 48, color: C.muted, opacity: 0.4 }}>○</div>}

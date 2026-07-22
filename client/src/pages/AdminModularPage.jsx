@@ -74,9 +74,28 @@ export default function AdminModularPage() {
       <AdminHeader user={user} onLogout={signOut} colors={C} />
       <AdminServiceStatus role={user?.adminRole} colors={C} />
       <AdminTabBar tab={tab} changeTab={changeTab} allowedTabs={allowedTabs} colors={C} />
-      <main style={{ width:'100%', maxWidth:960, margin:'0 auto', padding:'18px 16px calc(40px + env(safe-area-inset-bottom))', boxSizing:'border-box' }}>
+      <main className="admin-main-content" style={{ width:'100%', padding:'18px clamp(16px, 2vw, 32px) calc(40px + env(safe-area-inset-bottom))', boxSizing:'border-box' }}>
         {content()}
       </main>
+      <style>{`
+        .admin-card-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+          gap: 12px;
+          align-items: stretch;
+        }
+        .admin-card-grid > * { min-width: 0; }
+        @media (min-width: 900px) {
+          .admin-profile-detail-card {
+            display: grid;
+            grid-template-columns: minmax(320px, 38%) minmax(0, 1fr);
+          }
+          .admin-profile-detail-hero { height: 100% !important; min-height: 520px; }
+        }
+        @media (min-width: 1280px) {
+          .admin-main-content { padding-left: 32px !important; padding-right: 32px !important; }
+        }
+      `}</style>
     </div>
   )
 }

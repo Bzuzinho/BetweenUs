@@ -58,11 +58,11 @@ export default function AdminConversations({ colors }) {
         {error && <div role="alert" style={{ color:C.danger, fontSize:12, marginTop:6 }}>{error}</div>}
       </div>
       {conversations.length === 0 && <AdminAsyncState colors={C} state="unavailable" message={t('admin.conversations.empty')} compact />}
-      {conversations.map(conversation => (
-        <button key={conversation.id} type="button" onClick={() => openConversation(conversation)} style={{ width:'100%', textAlign:'left', background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:14, marginBottom:8, cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center', color:'inherit' }}>
+      <div className="admin-card-grid">{conversations.map(conversation => (
+        <button key={conversation.id} type="button" onClick={() => openConversation(conversation)} style={{ width:'100%', minHeight:78, textAlign:'left', background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:14, cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center', color:'inherit' }}>
           <div><div style={{ fontSize:13, fontWeight:500, color:C.text }}>{conversation.match?.profileOne?.displayName} ↔ {conversation.match?.profileTwo?.displayName}</div><div style={{ fontSize:11, color:C.muted }}>{t('admin.conversations.messageCount').replace('{count}', conversation._count?.messages || 0)}</div></div><span aria-hidden="true" style={{ color:C.muted }}>›</span>
         </button>
-      ))}
+      ))}</div>
     </section>
   )
 }
