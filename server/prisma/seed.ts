@@ -304,6 +304,24 @@ Para questões sobre privacidade: privacy@betweenus.app`,
   }
   console.log(`Seeded ${profileTypeConfigs.length} profile type configs`)
 
+  console.log('Seeding admin role config...')
+  const adminRoleConfigs = [
+    { role:'CONTENT_REVIEWER', label:'Revisor de conteúdo', description:'Revisão de fotografias, perfis e conteúdos.', permissions:['photos','profiles','guide'] },
+    { role:'SUPPORT', label:'Suporte', description:'Apoio a utilizadores e tratamento inicial de denúncias.', permissions:['users','reports'] },
+    { role:'MODERATOR', label:'Moderador', description:'Moderação de perfis, fotografias, denúncias e conversas.', permissions:['profiles','photos','reports','conversations','moderation.evidence.view','events'] },
+    { role:'FINANCE', label:'Financeiro', description:'Subscrições e métricas financeiras.', permissions:['subscriptions','metrics'] },
+    { role:'ADMIN', label:'Administrador', description:'Administração operacional, sem gestão de roles.', permissions:['users','profiles','photos','reports','subscriptions','metrics','audit','beta','conversations','guide','catalog','legal','moderation.evidence.view','events','circle.manage','recommendations'] },
+    { role:'SUPER_ADMIN', label:'Super Admin', description:'Acesso total, incluindo roles e configurações.', permissions:['*'] },
+  ]
+  for (const cfg of adminRoleConfigs) {
+    await (prisma as any).adminRoleConfig.upsert({
+      where: { role: cfg.role },
+      update: {}, // never overwrite edits made in the backoffice
+      create: cfg,
+    })
+  }
+  console.log(`Seeded ${adminRoleConfigs.length} admin role configs`)
+
   console.log('Seed complete')
 }
 

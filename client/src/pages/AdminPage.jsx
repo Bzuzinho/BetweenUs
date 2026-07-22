@@ -43,6 +43,23 @@ const ROLE_TABS = {
   CONTENT_REVIEWER: ['dashboard','photos','profiles'],
 }
 
+const tabsForPermissions = permissions => {
+  if (permissions?.includes('*')) return ALL_TABS.map(t => t.key)
+  const p = new Set(permissions || [])
+  return [
+    'dashboard',
+    p.has('reports') && 'reports',
+    p.has('photos') && 'photos',
+    p.has('profiles') && 'profiles',
+    p.has('users') && 'users',
+    p.has('profiles') && 'verifications',
+    p.has('conversations') && 'conversations',
+    p.has('audit') && 'audit',
+    p.has('beta') && 'beta',
+    [...p].some(key => ['catalog','subscriptions','guide','legal','events','circle.manage','recommendations'].includes(key)) && 'configuracoes',
+  ].filter(Boolean)
+}
+
 const ALL_TABS = [
   { key:'dashboard',     label:'Dashboard',    icon:'▣',  desc:'Visão geral' },
   { key:'reports',       label:'Reports',      icon:'⚑',  desc:'Denúncias' },
@@ -1788,8 +1805,6 @@ function EmailDiagnosticPanel() {
   const [testTo, setTestTo] = useState('')
   const [testMsg, setTestMsg] = useState('')
   const [testErr, setTestErr] = useState('')
-  const [otpEmail, setOtpEmail] = useState('')
-  const [otpUrl, setOtpUrl] = useState('')
 
   const runDiag = async () => {
     setLoading(true)
@@ -1808,21 +1823,17 @@ function EmailDiagnosticPanel() {
     } catch (e) { setTestErr(e.response?.data?.detail || e.response?.data?.error || 'Erro') }
   }
 
-  const genOtp = async () => {
-    try {
-      const r = await api.post('/auth/otp', { targetEmail: otpEmail })
-      setOtpUrl(r.data.loginUrl)
-    } catch (e) { setTestErr(e.response?.data?.error || 'Erro ao gerar OTP') }
-  }
-
   useEffect(() => { runDiag() }, [])
 
   return (
     <div>
-      {/* SMTP Status */}
+      {/* Transactional email provider status */}
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18, marginBottom:14 }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
-          <div style={{ fontSize:14, fontWeight:500, color:C.text }}>Configuração SMTP</div>
+          <div>
+            <div style={{ fontSize:14, fontWeight:500, color:C.text }}>Email transacional</div>
+            <div style={{ fontSize:12, color:C.muted, marginTop:3 }}>Fornecedor ativo e remetente usados pela aplicação.</div>
+          </div>
           <button onClick={runDiag} disabled={loading} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:8, padding:'5px 12px', color:C.text2, fontSize:12, cursor:'pointer' }}>
             {loading ? '…' : '↻ Testar'}
           </button>
@@ -1835,7 +1846,7 @@ function EmailDiagnosticPanel() {
               color: diag.status==='ok' ? C.success : C.danger,
               border: `1px solid ${diag.status==='ok' ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}`,
             }}>
-              {diag.status==='ok' ? '✅ SMTP ligado' : diag.status==='misconfigured' ? '⚠️ Não configurado' : '❌ Erro de ligação'}
+              {diag.status==='ok' ? `✅ ${diag.config?.provider === 'sendgrid' ? 'SendGrid ligado' : 'Fornecedor ligado'}` : diag.status==='misconfigured' ? '⚠️ Não configurado' : '❌ Erro de ligação'}
             </div>
 
             {diag.message && diag.status !== 'ok' && (
@@ -1864,7 +1875,7 @@ function EmailDiagnosticPanel() {
 
             {diag.config && (
               <div style={{ marginTop:10 }}>
-                <div style={{ fontSize:11, color:C.muted, marginBottom:6, textTransform:'uppercase', letterSpacing:'0.05em' }}>Valores actuais:</div>
+                <div style={{ fontSize:11, color:C.muted, marginBottom:6, textTransform:'uppercase', letterSpacing:'0.05em' }}>Configuração ativa:</div>
                 {Object.entries(diag.config).map(([k,v]) => (
                   <div key={k} style={{ display:'flex', gap:8, fontSize:12, marginBottom:2 }}>
                     <span style={{ color:C.muted, minWidth:120, fontFamily:'monospace' }}>{k}</span>
@@ -1879,36 +1890,14 @@ function EmailDiagnosticPanel() {
 
       {/* Test email */}
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18, marginBottom:14 }}>
-        <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:12 }}>Enviar email de teste</div>
+        <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:4 }}>Testar entrega</div>
+        <div style={{ fontSize:12, color:C.muted, lineHeight:1.5, marginBottom:12 }}>Envia uma mensagem real através do fornecedor ativo. Serve para confirmar que o SendGrid aceita o remetente e que o email chega ao destino.</div>
         {testMsg && <div style={{ color:C.success, fontSize:13, marginBottom:8 }}>{testMsg}</div>}
         {testErr && <div style={{ color:C.danger, fontSize:12, fontFamily:'monospace', marginBottom:8, background:C.elevated, borderRadius:8, padding:'8px 10px' }}>{testErr}</div>}
         <div style={{ display:'flex', gap:8 }}>
           <input value={testTo} onChange={e=>setTestTo(e.target.value)} placeholder="email@destino.com" style={{ ...INP, marginBottom:0, flex:1 }}/>
           <button onClick={sendTest} disabled={!testTo} style={{ background:C.primary, border:'none', borderRadius:10, padding:'0 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer', flexShrink:0 }}>Enviar</button>
         </div>
-      </div>
-
-      {/* OTP login (emergency) */}
-      <div style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:16, padding:18 }}>
-        <div style={{ fontSize:14, fontWeight:500, color:C.text, marginBottom:4 }}>Login de emergência (OTP)</div>
-        <div style={{ fontSize:12, color:C.muted, marginBottom:12, lineHeight:1.5 }}>
-          Gera um link de login único (15 min) para um utilizador sem precisar de email.
-          Útil quando o SMTP não está configurado.
-        </div>
-        <div style={{ display:'flex', gap:8 }}>
-          <input value={otpEmail} onChange={e=>setOtpEmail(e.target.value)} placeholder="email do utilizador" style={{ ...INP, marginBottom:0, flex:1 }}/>
-          <button onClick={genOtp} disabled={!otpEmail} style={{ background:C.elevated, border:`1px solid ${C.primary}`, borderRadius:10, padding:'0 14px', color:C.primary, fontWeight:600, fontSize:13, cursor:'pointer', flexShrink:0 }}>Gerar</button>
-        </div>
-        {otpUrl && (
-          <div style={{ marginTop:12 }}>
-            <div style={{ fontSize:11, color:C.muted, marginBottom:4 }}>Link de login (1 uso · 15 min):</div>
-            <div style={{ background:C.bg, borderRadius:8, padding:'10px 12px', fontSize:11, color:C.primary, fontFamily:'monospace', wordBreak:'break-all', marginBottom:6 }}>{otpUrl}</div>
-            <button onClick={() => navigator.clipboard.writeText(otpUrl)}
-              style={{ background:'none', border:`1px solid ${C.border}`, borderRadius:6, padding:'5px 12px', color:C.muted, fontSize:12, cursor:'pointer' }}>
-              Copiar link
-            </button>
-          </div>
-        )}
       </div>
     </div>
   )
@@ -2629,14 +2618,95 @@ function RecommendationsManager() {
 }
 
 /* ─── Configurações Tab (SUPER_ADMIN only) ───────────────────────────────────── */
-const ROLES_CONFIG = [
-  { value:'CONTENT_REVIEWER', label:'Revisor de conteúdo', desc:'Fotos e perfis', perms:['photos','profiles'] },
-  { value:'SUPPORT',          label:'Suporte',             desc:'Utilizadores e reports', perms:['users','reports'] },
-  { value:'MODERATOR',        label:'Moderador',           desc:'Perfis, fotos, conversas', perms:['profiles','photos','conversations'] },
-  { value:'FINANCE',          label:'Financeiro',          desc:'Subscrições e métricas', perms:['users'] },
-  { value:'ADMIN',            label:'Admin',               desc:'Tudo excepto roles', perms:['dashboard','reports','photos','profiles','users','verifications','conversations','audit','beta'] },
-  { value:'SUPER_ADMIN',      label:'Super Admin',         desc:'Acesso total incluindo roles e configurações', perms:['*'] },
-]
+const PERMISSION_LABELS = {
+  users:'Utilizadores', profiles:'Perfis e verificações', photos:'Fotografias', reports:'Denúncias',
+  subscriptions:'Subscrições', metrics:'Métricas', audit:'Auditoria', beta:'Beta e afiliados',
+  conversations:'Conversas', guide:'Guia', catalog:'Catálogos e configurações', legal:'Conteúdos legais',
+  'moderation.evidence.view':'Evidências de moderação', events:'Eventos', 'circle.manage':'Circles', recommendations:'Recomendações',
+}
+
+function AdminRolesManager() {
+  const [items, setItems] = useState([])
+  const [available, setAvailable] = useState([])
+  const [editing, setEditing] = useState(null)
+  const [form, setForm] = useState({ label:'', description:'', permissions:[] })
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  const [msg, setMsg] = useState('')
+
+  const load = useCallback(() => {
+    setLoading(true); setErr('')
+    api.get('/admin/role-configs')
+      .then(r => { setItems(r.data.configs || []); setAvailable(r.data.availablePermissions || []) })
+      .catch(e => setErr(e.response?.data?.error || 'Não foi possível carregar os roles.'))
+      .finally(() => setLoading(false))
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const openEdit = role => {
+    setEditing(role.role)
+    setForm({ label:role.label, description:role.description || '', permissions:role.permissions || [] })
+    setErr(''); setMsg('')
+  }
+  const togglePermission = permission => setForm(current => ({
+    ...current,
+    permissions: current.permissions.includes(permission)
+      ? current.permissions.filter(p => p !== permission)
+      : [...current.permissions, permission],
+  }))
+  const save = async () => {
+    if (!form.label.trim()) return setErr('O nome do role é obrigatório.')
+    try {
+      await api.put(`/admin/role-configs/${editing}`, form)
+      setEditing(null); setMsg('Role atualizado. As novas permissões aplicam-se no pedido seguinte.'); load()
+    } catch (e) { setErr(e.response?.data?.error || 'Não foi possível guardar o role.') }
+  }
+
+  if (loading) return <div style={{ color:C.muted, padding:20 }}>A carregar…</div>
+  if (editing) {
+    const isSuper = editing === 'SUPER_ADMIN'
+    return <div>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
+        <button onClick={()=>setEditing(null)} style={{ background:'none', border:'none', color:C.muted, fontSize:20, cursor:'pointer' }}>←</button>
+        <h3 style={{ color:C.text, fontSize:16, margin:0, flex:1 }}>Editar {editing}</h3>
+        <button onClick={save} style={{ background:C.primary, border:'none', borderRadius:8, padding:'8px 16px', color:'#0A141A', fontWeight:600, cursor:'pointer' }}>Guardar</button>
+      </div>
+      {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>NOME VISÍVEL *</label>
+      <input style={INP} value={form.label} onChange={e=>setForm(p=>({...p,label:e.target.value}))}/>
+      <label style={{ fontSize:11, color:C.muted, display:'block', marginBottom:4 }}>DESCRIÇÃO</label>
+      <textarea style={{...INP, resize:'vertical'}} rows={2} value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))}/>
+      <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', margin:'14px 0 8px' }}>Permissões</div>
+      {isSuper && <div style={{ color:C.warning, fontSize:12, marginBottom:10 }}>O Super Admin mantém sempre acesso total para evitar bloquear a administração.</div>}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))', gap:8 }}>
+        {available.map(permission => {
+          const checked = isSuper || form.permissions.includes(permission)
+          return <label key={permission} style={{ display:'flex', alignItems:'center', gap:9, background:C.surface, border:`1px solid ${checked?C.primary:C.border}`, borderRadius:10, padding:'10px 12px', color:checked?C.text:C.muted, cursor:isSuper?'default':'pointer' }}>
+            <input type="checkbox" checked={checked} disabled={isSuper} onChange={()=>togglePermission(permission)}/>
+            <span>{PERMISSION_LABELS[permission] || permission}</span>
+          </label>
+        })}
+      </div>
+    </div>
+  }
+
+  return <div>
+    {msg && <div style={{ color:C.success, fontSize:13, marginBottom:10 }}>{msg}</div>}
+    {err && <div style={{ color:C.danger, fontSize:13, marginBottom:10 }}>{err}</div>}
+    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(300px,1fr))', gap:10 }}>
+      {items.map(role => <div key={role.role} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18 }}>
+        <div style={{ display:'flex', justifyContent:'space-between', gap:12, marginBottom:10 }}>
+          <div><div style={{ fontSize:16, fontWeight:600, color:C.text }}>{role.label}</div><div style={{ fontSize:12, color:C.muted, marginTop:3 }}>{role.description}</div></div>
+          <span style={{ fontSize:11, color:C.text2 }}>{role.role}</span>
+        </div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:5, marginBottom:12 }}>
+          {(role.permissions || []).map(p => <span key={p} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'3px 8px', color:C.text2, fontSize:11 }}>{p==='*'?'Acesso total':(PERMISSION_LABELS[p]||p)}</span>)}
+        </div>
+        <button onClick={()=>openEdit(role)} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:8, padding:'7px 14px', color:C.text2, cursor:'pointer' }}>Editar</button>
+      </div>)}
+    </div>
+  </div>
+}
 
 /* ─── Admin Account Area (Conta / Perfil Público / Subscrição / Segurança) ────
    Reached only via o badge/menu "Conta (Admin)" — nunca pelas tabs normais.
@@ -2833,7 +2903,23 @@ function AdminAccountTab({ changeTab }) {
           )}
 
           {profile?.photos?.length > 0 && (
-            <div style={{ fontSize:12, color:C.muted, marginBottom:12 }}>{profile.photos.length} foto(s) de perfil — gestão em Fotos (tab Admin).</div>
+            <div style={{ marginBottom:12 }}>
+              <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', marginBottom:8 }}>Fotos de perfil ({profile.photos.length})</div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(88px, 120px))', gap:8 }}>
+                {profile.photos.map((photo, index) => (
+                  <div key={photo.id} style={{ position:'relative', aspectRatio:'1' }}>
+                    <img
+                      src={photo.storagePath}
+                      alt={`Foto de perfil ${index + 1}`}
+                      loading="lazy"
+                      style={{ width:'100%', height:'100%', objectFit:'cover', borderRadius:10, border:`1px solid ${C.border}`, display:'block' }}
+                    />
+                    {photo.isPrimary && <span style={{ position:'absolute', top:5, left:5, background:'rgba(10,20,26,.86)', borderRadius:5, padding:'2px 6px', color:C.text, fontSize:9 }}>Principal</span>}
+                    {photo.moderationStatus && <span style={{ position:'absolute', right:5, bottom:5, background:'rgba(10,20,26,.86)', borderRadius:5, padding:'2px 6px', color:C.text2, fontSize:9 }}>{photo.moderationStatus}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           <button onClick={saveProfile} disabled={saving} style={{ background:C.primary, border:'none', borderRadius:10, padding:'10px 18px', color:'#0A141A', fontWeight:700, fontSize:14, cursor:'pointer' }}>
@@ -3525,30 +3611,9 @@ function ConfiguracoesTab() {
         <div>
           <div style={{ background:C.primaryDim, border:`1px solid rgba(184,167,255,0.2)`, borderRadius:12, padding:'12px 16px', marginBottom:20, fontSize:13, color:C.primary, lineHeight:1.5 }}>
             Os roles de admin definem as permissões de cada tipo de utilizador no painel de administração.
-            Apenas o Super Admin pode atribuir ou remover roles (feito na ficha do utilizador, não aqui).
+            Aqui podes alterar o nome, a descrição e as permissões efetivas de cada role. A atribuição do role a cada pessoa continua a ser feita na ficha do utilizador.
           </div>
-
-          {ROLES_CONFIG.map(role => (
-            <div key={role.value} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18, marginBottom:10 }}>
-              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
-                <div>
-                  <div style={{ fontSize:16, fontWeight:600, color:C.text, marginBottom:3 }}>{role.label}</div>
-                  <div style={{ fontSize:13, color:C.muted }}>{role.desc}</div>
-                </div>
-                <div style={{ fontSize:11, background:C.elevated, border:`1px solid ${C.border}`, borderRadius:8, padding:'4px 10px', color:C.text2, flexShrink:0, marginLeft:10 }}>
-                  {role.value}
-                </div>
-              </div>
-              <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>Permissões</div>
-              <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
-                {role.perms[0]==='*' ? (
-                  <span style={{ background:'rgba(74,222,128,0.1)', border:`1px solid rgba(74,222,128,0.3)`, borderRadius:6, padding:'3px 10px', fontSize:12, color:C.success }}>★ Acesso total</span>
-                ) : role.perms.map(p => (
-                  <span key={p} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'3px 10px', fontSize:12, color:C.text2 }}>{p}</span>
-                ))}
-              </div>
-            </div>
-          ))}
+          <AdminRolesManager />
         </div>
       )}
 
@@ -3645,6 +3710,7 @@ export default function AdminPage() {
   const navigate = useNavigate()
   const { tab: urlTab } = useParams()
   const [tab, setTab] = useState(urlTab || 'dashboard')
+  const [rolePermissions, setRolePermissions] = useState(null)
 
   // Keep in sync when navigation happens outside changeTab() — e.g. the
   // "Conta (Admin)" menu item does navigate('/admin/me') directly so it
@@ -3652,7 +3718,12 @@ export default function AdminPage() {
   useEffect(() => { setTab(urlTab || 'dashboard') }, [urlTab])
 
   const role = user?.adminRole || 'SUPPORT'
-  const allowedTabs = ROLE_TABS[role] || ['dashboard']
+  useEffect(() => {
+    api.get('/admin/my-role-config')
+      .then(r => setRolePermissions(r.data.permissions || []))
+      .catch(() => setRolePermissions(null))
+  }, [role])
+  const allowedTabs = rolePermissions ? tabsForPermissions(rolePermissions) : (ROLE_TABS[role] || ['dashboard'])
 
   const changeTab = t => {
     if (!allowedTabs.includes(t)) return

@@ -66,7 +66,7 @@ router.get('/dashboard', requireAdmin(), async (req: AuthRequest, res: Response)
       matches: { total: totalMatches, active: activeMatches }, messages: { total: totalMessages }, reports: { pending: pendingReports },
       subscriptions: { premium: premiumSubs, couple: coupleSubs, total: premiumSubs + coupleSubs }, verifications: { pending: pendingVerifications }
     }
-    res.json({ includeTestData, testAccountCount, ...filterDashboardForRole(full, (req as any).adminRole || null) })
+    res.json({ includeTestData, testAccountCount, ...await filterDashboardForRole(full, (req as any).adminRole || null) })
   } catch (err: any) {
     console.error('[ADMIN DASHBOARD OVERRIDE]', err.message)
     res.status(500).json({ error: 'Erro interno.' })

@@ -1,18 +1,16 @@
 // Between Us — Email
 // Primary: SendGrid HTTP API (plain HTTPS — works even when the host blocks
 // outbound SMTP ports, which Railway appears to do for this project).
-// Fallback: Gmail SMTP, kept for local/dev or if SendGrid isn't configured.
-// Sender: emailtemp02@gmail.com — verified as a Single Sender in SendGrid,
-// no domain required.
+// Fallback: generic SMTP, kept for local/dev or if SendGrid isn't configured.
 
 import nodemailer from 'nodemailer'
 
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY
-const SMTP_HOST = process.env.SMTP_HOST   // smtp.gmail.com
+const SMTP_HOST = process.env.SMTP_HOST
 const SMTP_PORT = Number(process.env.SMTP_PORT || 587)
-const SMTP_USER = process.env.SMTP_USER   // emailtemp02@gmail.com
-const SMTP_PASS = process.env.SMTP_PASS   // Gmail App Password (16 chars)
-const EMAIL_FROM = process.env.EMAIL_FROM || 'Between Us <emailtemp02@gmail.com>'
+const SMTP_USER = process.env.SMTP_USER
+const SMTP_PASS = process.env.SMTP_PASS
+const EMAIL_FROM = process.env.EMAIL_FROM || 'Between Us <info@betweenus.pt>'
 const EMAIL_FROM_ADDRESS = (EMAIL_FROM.match(/<(.+)>/)?.[1]) || EMAIL_FROM
 const EMAIL_FROM_NAME = EMAIL_FROM.replace(/\s*<.+>\s*/, '').trim() || 'Between Us'
 const CLIENT_URL = (process.env.CLIENT_URL || 'http://localhost:3000').replace(/\/+$/, '')
@@ -140,6 +138,15 @@ export const sendWelcomeEmail = async (email: string, displayName?: string) => {
   `), 'welcome')
 }
 
+export const sendProviderTestEmail = async (email: string) => {
+  await send(email, 'Teste de email — Between Us', wrap(`
+    <h2 style="font-size:20px;color:#F5F7FA;margin:0 0 12px">Configuração validada</h2>
+    <p style="color:#AAB6C2;line-height:1.6;margin:0">
+      Esta mensagem confirma que o fornecedor de email transacional do Between Us consegue enviar para este endereço.
+    </p>
+  `), 'provider-test')
+}
+
 export const sendMatchEmail = async (email: string, matchName: string) => {
   await send(email, 'Novo match — Between Us', wrap(`
     <h2 style="font-size:20px;color:#F5F7FA;margin:0 0 12px">💫 Novo match!</h2>
@@ -180,11 +187,6 @@ export const sendSafetyAlertEmail = async (
 
 export const getEmailConfig = () => ({
   provider: SENDGRID_API_KEY ? 'sendgrid' : (SMTP_HOST ? 'smtp' : null),
-  host: SMTP_HOST || null,
-  port: SMTP_PORT,
-  user: SMTP_USER || null,
-  pass: SMTP_PASS ? `set (${SMTP_PASS.slice(0,4)}…)` : null,
-  sendgridKey: SENDGRID_API_KEY ? `set (${SENDGRID_API_KEY.slice(0,6)}…)` : null,
   from: EMAIL_FROM,
   configured: !!SENDGRID_API_KEY || !!(SMTP_HOST && SMTP_USER && SMTP_PASS),
 })

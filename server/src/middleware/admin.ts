@@ -12,7 +12,7 @@ export type AdminRole =
 // snapshots, media references, or profile snapshots attached as
 // evidence — that stays with SUPER_ADMIN ('*'), ADMIN, and MODERATOR
 // only. FINANCE and CONTENT_REVIEWER never touch reports at all.
-const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
+export const DEFAULT_ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   SUPER_ADMIN:      ['*'],
   ADMIN:            ['users','profiles','photos','reports','subscriptions','metrics','audit','beta','conversations','guide','catalog','legal','moderation.evidence.view','events','circle.manage','recommendations'],
   MODERATOR:        ['profiles','photos','reports','conversations','moderation.evidence.view','events'],
@@ -21,13 +21,29 @@ const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
   CONTENT_REVIEWER: ['photos','profiles','guide'],
 }
 
+export const ADMIN_PERMISSIONS = [
+  'users','profiles','photos','reports','subscriptions','metrics','audit','beta',
+  'conversations','guide','catalog','legal','moderation.evidence.view','events',
+  'circle.manage','recommendations',
+] as const
+
+export const getRolePermissions = async (role: AdminRole): Promise<string[]> => {
+  try {
+    const config = await (prisma as any).adminRoleConfig.findUnique({ where: { role } })
+    return Array.isArray(config?.permissions) ? config.permissions : DEFAULT_ROLE_PERMISSIONS[role]
+  } catch {
+    // Safe deploy fallback while the migration is being applied.
+    return DEFAULT_ROLE_PERMISSIONS[role]
+  }
+}
+
 // 9.2 — exported so routes that need a SECOND, more granular check inside
 // an already-`requireAdmin('reports')`-gated handler (e.g. "can this
 // admin see evidence, not just the report shell") don't have to
 // re-implement the prefix-match rule themselves.
-export const roleHasPermission = (role: AdminRole | null, permission: string): boolean => {
+export const roleHasPermission = (role: AdminRole | null, permission: string, effectivePermissions?: string[]): boolean => {
   if (!role) return false
-  const perms = ROLE_PERMISSIONS[role] || []
+  const perms = effectivePermissions || DEFAULT_ROLE_PERMISSIONS[role] || []
   return perms.includes('*') || perms.some(p => permission.startsWith(p) || p.startsWith(permission))
 }
 
@@ -49,7 +65,7 @@ export const requireAdmin = (permission?: string) => {
       if (!role) return res.status(403).json({ error: 'Acesso negado.' })
 
       if (permission) {
-        const perms = ROLE_PERMISSIONS[role as AdminRole] || []
+        const perms = await getRolePermissions(role as AdminRole)
         const hasPermission = perms.includes('*') || perms.some(p =>
           permission.startsWith(p) || p.startsWith(permission)
         )
@@ -59,6 +75,7 @@ export const requireAdmin = (permission?: string) => {
       }
 
       ;(req as any).adminRole = role
+      ;(req as any).adminPermissions = await getRolePermissions(role as AdminRole)
       next()
     } catch (err: any) {
       res.status(500).json({ error: 'Erro interno.' })

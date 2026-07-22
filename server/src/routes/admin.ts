@@ -1,7 +1,8 @@
 import { Router, Response } from 'express'
+import { z } from 'zod'
 import prisma from '../lib/prisma'
 import { requireAuth, AuthRequest } from '../middleware/auth'
-import { requireAdmin, logAdminAction, roleHasPermission } from '../middleware/admin'
+import { requireAdmin, logAdminAction, roleHasPermission, ADMIN_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS } from '../middleware/admin'
 import { recalculateRiskScore, recalculateAllRiskScores } from '../lib/riskScore'
 import { evaluateAndActivateUser, canTransitionStatus } from '../lib/userActivationService'
 import { getActiveMembers } from '../lib/profileMembershipService'
@@ -125,7 +126,7 @@ router.get('/dashboard', requireAdmin(), async (req: AuthRequest, res: Response)
     res.json({
       includeTestData,
       testAccountCount,
-      ...filterDashboardForRole(full, (req as any).adminRole || null)
+      ...await filterDashboardForRole(full, (req as any).adminRole || null)
     })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
@@ -789,7 +790,7 @@ router.get('/reports/:id', requireAdmin('reports'), async (req: AuthRequest, res
   })
   if (!report) return res.status(404).json({ error: 'Report não encontrado.' })
 
-  const canViewEvidence = roleHasPermission((req as any).adminRole || null, 'moderation.evidence.view')
+  const canViewEvidence = roleHasPermission((req as any).adminRole || null, 'moderation.evidence.view', (req as any).adminPermissions)
   const evidence = canViewEvidence ? await getReportEvidenceForModerator(report.id, req.userId!) : null
 
   const previousReports = report.reportedUserId
@@ -1161,12 +1162,10 @@ router.post('/test-email', requireAdmin(), async (req: AuthRequest, res: Respons
 
     const to = req.body.to || user.email
 
-    const { sendVerificationEmail } = await import('../lib/email')
-    const { randomBytes } = await import('crypto')
-    const testToken = randomBytes(16).toString('hex')
+    const { sendProviderTestEmail } = await import('../lib/email')
 
     try {
-      await sendVerificationEmail(to, 'test-user-id', testToken)
+      await sendProviderTestEmail(to)
       res.json({ ok: true, message: `Email enviado para ${to}` })
     } catch (err: any) {
       res.status(500).json({
@@ -1186,19 +1185,69 @@ router.post('/test-email', requireAdmin(), async (req: AuthRequest, res: Respons
   }
 })
 
+// ─── Admin role configuration (fixed roles, editable labels/policy) ───────────
+const adminRoleConfigSchema = z.object({
+  label: z.string().trim().min(2).max(60),
+  description: z.string().trim().max(240).optional().nullable(),
+  permissions: z.array(z.enum(ADMIN_PERMISSIONS as unknown as [string, ...string[]])),
+})
+const ADMIN_ROLES = ['SUPER_ADMIN','ADMIN','MODERATOR','SUPPORT','FINANCE','CONTENT_REVIEWER'] as const
+
+router.get('/my-role-config', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  const role = (req as any).adminRole as typeof ADMIN_ROLES[number]
+  const config = await (prisma as any).adminRoleConfig.findUnique({ where: { role } }).catch(() => null)
+  res.json({
+    role,
+    label: config?.label || role,
+    description: config?.description || null,
+    permissions: Array.isArray(config?.permissions) ? config.permissions : DEFAULT_ROLE_PERMISSIONS[role],
+  })
+})
+
+router.get('/role-configs', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  if ((req as any).adminRole !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Apenas SUPER_ADMIN pode gerir roles.' })
+  const stored = await (prisma as any).adminRoleConfig.findMany()
+  const byRole = new Map(stored.map((c: any) => [c.role, c]))
+  const configs = ADMIN_ROLES.map(role => byRole.get(role) || {
+    role, label: role, description: null, permissions: DEFAULT_ROLE_PERMISSIONS[role],
+  })
+  res.json({ configs, availablePermissions: ADMIN_PERMISSIONS })
+})
+
+router.put('/role-configs/:role', requireAdmin(), async (req: AuthRequest, res: Response) => {
+  if ((req as any).adminRole !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Apenas SUPER_ADMIN pode gerir roles.' })
+  if (!ADMIN_ROLES.includes(req.params.role as any)) return res.status(400).json({ error: 'Role desconhecida.' })
+  try {
+    const data = adminRoleConfigSchema.parse(req.body)
+    const role = req.params.role as typeof ADMIN_ROLES[number]
+    // SUPER_ADMIN must always retain full access; only its presentation is editable.
+    const permissions = role === 'SUPER_ADMIN' ? ['*'] : [...new Set(data.permissions)]
+    const previous = await (prisma as any).adminRoleConfig.findUnique({ where: { role } })
+    const config = await (prisma as any).adminRoleConfig.upsert({
+      where: { role },
+      update: { label: data.label, description: data.description, permissions },
+      create: { role, label: data.label, description: data.description, permissions },
+    })
+    await logAdminAction(req.userId!, 'UPDATE_ADMIN_ROLE_CONFIG', 'admin_role_config', role, {
+      previousData: previous, newData: config, ipAddress: req.ip,
+    })
+    res.json(config)
+  } catch (err: any) {
+    if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
+    console.error('[ADMIN ROLE CONFIG]', err)
+    res.status(500).json({ error: 'Não foi possível guardar o role.' })
+  }
+})
+
 
 // ─── GET /api/admin/email-config — SMTP diagnostic ────────────────────────────
 router.get('/email-config', requireAdmin('configuracoes'), async (req: AuthRequest, res: Response) => {
   const { getEmailConfig } = await import('../lib/email')
   const config = getEmailConfig()
-  const missing = Object.entries(config)
-    .filter(([k, v]) => !v && !['port', 'configured', 'sendgridKey'].includes(k))
-    .map(([k]) => k)
-
   if (!config.configured) {
     return res.json({
-      status: 'misconfigured', missing, config,
-      fix: 'Recomendado: no Railway → serviço backend → Variables, define SENDGRID_API_KEY=<a tua API key do SendGrid> (usa HTTP, não é bloqueado pelo Railway). Alternativa (pode falhar por bloqueio de porta): SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, SMTP_USER=emailtemp02@gmail.com, SMTP_PASS=<Gmail App Password>, EMAIL_FROM=Between Us <emailtemp02@gmail.com>.'
+      status: 'misconfigured', config,
+      fix: 'Configura SENDGRID_API_KEY e EMAIL_FROM no serviço backend do Railway.'
     })
   }
 
@@ -1225,7 +1274,7 @@ router.get('/email-config', requireAdmin('configuracoes'), async (req: AuthReque
     }
   }
 
-  // Gmail SMTP fallback test
+  // Generic SMTP fallback test (local/dev only in the current deployment)
   try {
     const nodemailer = require('nodemailer')
     const t = nodemailer.createTransport({
@@ -1246,14 +1295,8 @@ router.get('/email-config', requireAdmin('configuracoes'), async (req: AuthReque
       code: err.code,
       config,
       hints: [
-        'SMTP_HOST deve ser smtp.gmail.com',
-        'SMTP_USER deve ser o email completo (emailtemp02@gmail.com)',
-        'SMTP_PASS deve ser uma Gmail App Password de 16 caracteres, não a password normal da conta',
-        'A conta Gmail precisa de verificação em 2 passos ativa para gerar App Passwords',
-        'Gera a App Password em myaccount.google.com/apppasswords',
-        'SMTP_PORT deve ser 587 (STARTTLS), não 465',
-        err.code === 'EAUTH' ? '⚠️ Erro de autenticação — a App Password está errada, expirou, ou foi revogada' : null,
-        (err.code === 'ETIMEDOUT' || /timeout/i.test(err.message)) ? '⚠️ Timeout de ligação persistente mesmo com IPv4 — o Railway está provavelmente a bloquear portas SMTP de saída. Recomendado: configura SENDGRID_API_KEY em vez de SMTP (ver acima).' : null,
+        'Confirma SMTP_HOST, SMTP_PORT, SMTP_USER e SMTP_PASS nas variáveis do serviço.',
+        'Na produção BetweenUs deve ser usado SendGrid através de SENDGRID_API_KEY.',
       ].filter(Boolean)
     })
   }

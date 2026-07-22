@@ -465,6 +465,19 @@ model ProfileTypeConfig {
   @@map("profile_type_configs")
 }
 
+// Editable presentation and permission policy for the fixed AdminRole enum.
+// The enum remains structural (users reference it), while labels, descriptions
+// and effective permissions can be managed safely from the backoffice.
+model AdminRoleConfig {
+  role        AdminRole @id
+  label       String
+  description String?
+  permissions String[]
+  updatedAt   DateTime  @updatedAt
+
+  @@map("admin_role_configs")
+}
+
 model Profile {
   id                 String        @id @default(uuid())
   // BETA.2 (FASE C) — relaxed from required+unique to optional+unique.

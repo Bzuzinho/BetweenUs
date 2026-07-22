@@ -81,11 +81,24 @@ const interestSchema = z.object({
 })
 
 router.get('/admin', requireAdmin('catalog'), async (_req: AuthRequest, res: Response) => {
-  const interests = await (prisma as any).privateInterest.findMany({ orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }] })
-  const withUsage = await Promise.all(interests.map(async (i: any) => ({
-    ...i, usageCount: await (prisma as any).profilePrivateInterest.count({ where: { interestId: i.id } })
-  })))
-  res.json({ interests: withUsage })
+  try {
+    const interests = await (prisma as any).privateInterest.findMany({ orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }] })
+    let counts = new Map<string, number>()
+    let usageWarning: string | undefined
+    try {
+      const grouped = await (prisma as any).profilePrivateInterest.groupBy({ by: ['interestId'], _count: { _all: true } })
+      counts = new Map(grouped.map((row: any) => [row.interestId, row._count._all]))
+    } catch (err) {
+      // Catalogue management must remain available even if the optional
+      // usage counter is temporarily unavailable during a deploy/migration.
+      console.error('[PRIVATE INTEREST USAGE COUNT]', err)
+      usageWarning = 'Não foi possível calcular a utilização dos interesses.'
+    }
+    res.json({ interests: interests.map((i: any) => ({ ...i, usageCount: counts.get(i.id) || 0 })), usageWarning })
+  } catch (err) {
+    console.error('[PRIVATE INTEREST ADMIN LOAD]', err)
+    res.status(500).json({ error: 'Não foi possível carregar os interesses privados.', code: 'PRIVATE_INTEREST_ADMIN_LOAD_FAILED' })
+  }
 })
 
 router.post('/admin', requireAdmin('catalog'), async (req: AuthRequest, res: Response) => {

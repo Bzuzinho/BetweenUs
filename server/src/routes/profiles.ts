@@ -71,14 +71,17 @@ async function validateHomeLocationId(homeLocationId: string | null | undefined)
 
 
 async function upsertIntentions(profileId: string, intentions: { slug: string; preference: 'YES'|'MAYBE'|'NO' }[]) {
-  for (const { slug } of intentions) {
-    await prisma.intention.upsert({
-      where: { slug },
-      update: {},
-      create: { slug, name: slug.replace(/_/g, ' '), active: true }
+  const requestedSlugs = [...new Set(intentions.map(i => i.slug))]
+  const records = await prisma.intention.findMany({ where: { slug: { in: requestedSlugs }, active: true } })
+  const knownSlugs = new Set(records.map(i => i.slug))
+  const unknownSlugs = requestedSlugs.filter(slug => !knownSlugs.has(slug))
+  if (unknownSlugs.length) {
+    throw Object.assign(new Error('Uma ou mais intenções já não existem no catálogo.'), {
+      statusCode: 400,
+      code: 'UNKNOWN_INTENTIONS',
+      unknownSlugs,
     })
   }
-  const records = await prisma.intention.findMany({ where: { slug: { in: intentions.map(i => i.slug) } } })
   await prisma.profileIntention.deleteMany({ where: { profileId } })
   await prisma.profileIntention.createMany({
     data: (records as { id: string; slug: string }[]).map((ir: { id: string; slug: string }) => {
@@ -238,6 +241,7 @@ router.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     res.json(updated)
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message, code: err.code, unknownSlugs: err.unknownSlugs })
     res.status(500).json({ error: 'Erro interno.' })
   }
 })
@@ -337,6 +341,7 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     res.status(201).json(profile)
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message, code: err.code, unknownSlugs: err.unknownSlugs })
     console.error('[CREATE PROFILE]', err.message)
     res.status(500).json({ error: 'Erro ao criar perfil.' })
   }
@@ -428,6 +433,7 @@ router.put('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
     res.json(updated)
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message, code: err.code, unknownSlugs: err.unknownSlugs })
     res.status(500).json({ error: 'Erro interno.' })
   }
 })

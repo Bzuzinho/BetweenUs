@@ -28,7 +28,7 @@
 // mirror of existing requireAdmin(...) calls in routes/verifications.ts,
 // routes/reports.ts, routes/admin.ts, routes/photos.ts).
 import prisma from './prisma'
-import { roleHasPermission, AdminRole } from '../middleware/admin'
+import { roleHasPermission, getRolePermissions, AdminRole } from '../middleware/admin'
 import { PRIORITY_TIER } from './reportPriorityService'
 
 export interface AdminWorkQueueCounts {
@@ -75,8 +75,9 @@ const computeAllCounts = async (): Promise<Required<AdminWorkQueueCounts>> => {
 export const getWorkQueueForRole = async (role: AdminRole | null): Promise<AdminWorkQueueCounts> => {
   const all = await computeAllCounts()
   const out: AdminWorkQueueCounts = {}
+  const permissions = role ? await getRolePermissions(role) : []
   for (const key of Object.keys(all) as QueueKey[]) {
-    if (roleHasPermission(role, WIDGET_PERMISSION[key])) out[key] = all[key]
+    if (roleHasPermission(role, WIDGET_PERMISSION[key], permissions)) out[key] = all[key]
   }
   return out
 }
@@ -130,11 +131,12 @@ const SECTION_PERMISSION: Record<DashboardSection, string> = {
   verifications: 'profiles', // same gate as routes/verifications.ts
 }
 
-export const filterDashboardForRole = <T extends Record<string, any>>(full: T, role: AdminRole | null): Partial<T> & { visibleSections: DashboardSection[] } => {
+export const filterDashboardForRole = async <T extends Record<string, any>>(full: T, role: AdminRole | null): Promise<Partial<T> & { visibleSections: DashboardSection[] }> => {
   const out: any = {}
   const visible: DashboardSection[] = []
+  const permissions = role ? await getRolePermissions(role) : []
   for (const [section, permission] of Object.entries(SECTION_PERMISSION) as [DashboardSection, string][]) {
-    if (full[section] !== undefined && roleHasPermission(role, permission)) {
+    if (full[section] !== undefined && roleHasPermission(role, permission, permissions)) {
       out[section] = full[section]
       visible.push(section)
     }

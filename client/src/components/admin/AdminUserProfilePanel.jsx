@@ -31,7 +31,6 @@ export default function AdminUserProfilePanel({ colors, profile, onSaved }) {
   const readOnlyFields = [
     ['relationshipStatus', profile.relationshipStatus], ['discretion', profile.discretionLevel], ['gender', profile.gender],
     ['orientation', profile.orientation], ['country', profile.country],
-    ['photos', t('admin.userProfile.photoCount').replace('{count}', profile.photos?.length || 0)],
     ['verified', profile.user?.ageVerifiedAt ? t('admin.userProfile.yes') : t('admin.userProfile.no')],
     ['createdAt', formatDate(profile.createdAt)],
   ]
@@ -74,6 +73,36 @@ export default function AdminUserProfilePanel({ colors, profile, onSaved }) {
           {readOnlyFields.map(([key, value]) => value ? <div key={key} style={{ background:C.elevated, borderRadius:8, padding:'8px 10px' }}><div style={{ fontSize:10, color:C.muted, textTransform:'uppercase', marginBottom:2 }}>{t(`admin.userProfile.fields.${key}`)}</div><div style={{ fontSize:12, color:C.text }}>{value}</div></div> : null)}
         </div>
       </div>
+
+      {profile.photos?.length > 0 && (
+        <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${C.border}` }}>
+          <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', marginBottom:8 }}>
+            {t('admin.userProfile.fields.photos')} ({profile.photos.length})
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(88px, 1fr))', gap:8 }}>
+            {profile.photos.map((photo, index) => (
+              <div key={photo.id} style={{ position:'relative', aspectRatio:'1', minWidth:0 }}>
+                <img
+                  src={photo.storagePath}
+                  alt={`${profile.displayName || t('admin.userProfile.title')} — ${index + 1}`}
+                  loading="lazy"
+                  style={{ width:'100%', height:'100%', objectFit:'cover', borderRadius:10, border:`1px solid ${C.border}`, display:'block' }}
+                />
+                {photo.isPrimary && (
+                  <span style={{ position:'absolute', top:5, left:5, background:'rgba(10,20,26,.86)', borderRadius:5, padding:'2px 6px', color:C.text, fontSize:9 }}>
+                    {t('admin.userProfile.primaryPhoto', 'Principal')}
+                  </span>
+                )}
+                {photo.moderationStatus && (
+                  <span style={{ position:'absolute', right:5, bottom:5, background:'rgba(10,20,26,.86)', borderRadius:5, padding:'2px 6px', color:C.text2, fontSize:9 }}>
+                    {photo.moderationStatus}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {profile.intentions?.length > 0 && <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${C.border}` }}><div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', marginBottom:8 }}>{t('admin.userProfile.intentions')}</div><div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>{profile.intentions.map(item => <span key={item.intention?.id || item.intention?.slug} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:6, padding:'3px 10px', fontSize:12, color:C.text2 }}>{item.intention?.name || item.intention?.slug}</span>)}</div></div>}
     </section>
