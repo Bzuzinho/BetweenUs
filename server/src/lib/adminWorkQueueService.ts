@@ -37,6 +37,7 @@ export interface AdminWorkQueueCounts {
   reportsPending?: number
   reportsCritical?: number
   photosPending?: number
+  betaApplicationsPending?: number
 }
 
 type QueueKey = keyof AdminWorkQueueCounts
@@ -51,10 +52,11 @@ const WIDGET_PERMISSION: Record<QueueKey, string> = {
   reportsPending: 'reports',
   reportsCritical: 'reports',
   photosPending: 'photos',
+  betaApplicationsPending: 'beta',
 }
 
 const computeAllCounts = async (): Promise<Required<AdminWorkQueueCounts>> => {
-  const [verificationsPending, profilesPendingReview, reportsPending, reportsCritical, photosPending] = await Promise.all([
+  const [verificationsPending, profilesPendingReview, reportsPending, reportsCritical, photosPending, betaApplicationRows] = await Promise.all([
     prisma.verification.count({ where: { status: 'PENDING' } }),
     prisma.profile.count({ where: { status: 'PENDING_REVIEW' } }),
     prisma.report.count({ where: { status: 'PENDING' } }),
@@ -64,8 +66,18 @@ const computeAllCounts = async (): Promise<Required<AdminWorkQueueCounts>> => {
     // does everywhere else reports are triaged.
     prisma.report.count({ where: { status: 'PENDING', priority: { gte: PRIORITY_TIER.HIGH } } }),
     prisma.profilePhoto.count({ where: { moderationStatus: 'PENDING' } }),
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+      SELECT COUNT(*)::bigint AS count FROM "beta_applications" WHERE "status" = 'PENDING'
+    `.catch(() => []),
   ])
-  return { verificationsPending, profilesPendingReview, reportsPending, reportsCritical, photosPending }
+  return {
+    verificationsPending,
+    profilesPendingReview,
+    reportsPending,
+    reportsCritical,
+    photosPending,
+    betaApplicationsPending: Number(betaApplicationRows[0]?.count || 0),
+  }
 }
 
 // Only includes keys the role actually has permission to act on — a
@@ -106,6 +118,7 @@ export const getAdminNotificationSummary = async (userId: string, role: AdminRol
     + (workQueue.profilesPendingReview || 0)
     + (workQueue.reportsPending || 0)
     + (workQueue.photosPending || 0)
+    + (workQueue.betaApplicationsPending || 0)
   return {
     unreadNotifications,
     workQueue,

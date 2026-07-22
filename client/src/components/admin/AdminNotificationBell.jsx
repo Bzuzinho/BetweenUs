@@ -9,6 +9,7 @@ const QUEUE_TAB = {
   reportsPending: 'reports',
   reportsCritical: 'reports',
   photosPending: 'photos',
+  betaApplicationsPending: 'affiliations?tab=beta-access',
 }
 
 export default function AdminNotificationBell({ colors }) {
@@ -44,6 +45,7 @@ export default function AdminNotificationBell({ colors }) {
     + (workQueue.profilesPendingReview || 0)
     + (workQueue.reportsPending || 0)
     + (workQueue.photosPending || 0)
+    + (workQueue.betaApplicationsPending || 0)
   const totalAttention = unread + queueTotal
 
   const markRead = async id => {
@@ -151,7 +153,11 @@ export default function AdminNotificationBell({ colors }) {
                   markRead(notification.id)
                   try {
                     const data = notification.data ? JSON.parse(notification.data) : {}
-                    if (data.tab) { setOpen(false); navigate(`/admin/${data.tab}`) }
+                    if (data.tab) {
+                      const suffix = data.subtab ? `?tab=${encodeURIComponent(data.subtab)}` : ''
+                      setOpen(false)
+                      navigate(`/admin/${data.tab}${suffix}`)
+                    }
                   } catch {}
                 }}
                 style={{

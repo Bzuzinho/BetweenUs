@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 import { Logo } from '../lib/design'
@@ -83,12 +83,15 @@ function BetaApplications() {
 }
 
 export default function AffiliationsAdminPage(){
-  const {user}=useAuth(); const [subtab,setSubtab]=useState('overview')
+  const {user}=useAuth(); const [searchParams,setSearchParams]=useSearchParams()
   const tabs=useMemo(()=>[['overview','Visão geral'],['affiliates','Afiliados'],['conversions','Convites e conversões'],['beta-access','Pedidos de acesso']],[])
+  const requestedTab=searchParams.get('tab')
+  const subtab=tabs.some(([key])=>key===requestedTab)?requestedTab:'overview'
+  const selectSubtab=key=>setSearchParams(key==='overview'?{}:{tab:key})
   return <div style={{minHeight:'100vh',background:C.bg,color:C.text}}>
     <header style={{height:48,borderBottom:`1px solid ${C.border}`,background:C.surface,display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 14px'}}><div style={{display:'flex',alignItems:'center',gap:9}}><Logo size={30}/><b>Between Us</b></div><div style={{fontSize:12,color:C.text2}}>{user?.email}</div></header>
     <nav style={{display:'flex',gap:22,padding:'12px 20px',borderBottom:`1px solid ${C.border}`,overflowX:'auto',whiteSpace:'nowrap'}}>{NAV.map(([key,text])=><Link key={key} to={key==='affiliations'?'/admin/affiliations':`/admin/${key}`} style={{color:key==='affiliations'?C.primary:C.text,textDecoration:'none',fontSize:13,padding:key==='affiliations'?'7px 10px':'7px 0',border:key==='affiliations'?`1px solid ${C.primary}`:'none',borderRadius:8}}>{text}</Link>)}</nav>
-    <main style={{width:'100%',padding:'18px clamp(16px, 2vw, 32px)',boxSizing:'border-box'}}><div style={{display:'flex',gap:6,marginBottom:18,flexWrap:'wrap'}}>{tabs.map(([key,text])=><button key={key} onClick={()=>setSubtab(key)} style={{background:subtab===key?C.primaryDim:C.surface,border:`1px solid ${subtab===key?C.primary:C.border}`,borderRadius:9,padding:'8px 13px',color:subtab===key?C.primary:C.text2,cursor:'pointer'}}>{text}</button>)}</div>{subtab==='overview'&&<Overview/>}{subtab==='affiliates'&&<AffiliateRuleManager/>}{subtab==='conversions'&&<Conversions/>}{subtab==='beta-access'&&<BetaApplications/>}</main>
+    <main style={{width:'100%',padding:'18px clamp(16px, 2vw, 32px)',boxSizing:'border-box'}}><div style={{display:'flex',gap:6,marginBottom:18,flexWrap:'wrap'}}>{tabs.map(([key,text])=><button key={key} onClick={()=>selectSubtab(key)} style={{background:subtab===key?C.primaryDim:C.surface,border:`1px solid ${subtab===key?C.primary:C.border}`,borderRadius:9,padding:'8px 13px',color:subtab===key?C.primary:C.text2,cursor:'pointer'}}>{text}</button>)}</div>{subtab==='overview'&&<Overview/>}{subtab==='affiliates'&&<AffiliateRuleManager/>}{subtab==='conversions'&&<Conversions/>}{subtab==='beta-access'&&<BetaApplications/>}</main>
   </div>
 }
 

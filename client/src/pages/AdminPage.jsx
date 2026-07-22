@@ -84,6 +84,7 @@ const QUEUE_TAB = {
   reportsPending: 'reports',
   reportsCritical: 'reports',
   photosPending: 'photos',
+  betaApplicationsPending: 'affiliations?tab=beta-access',
 }
 const QUEUE_LABEL = {
   verificationsPending: 'Verificações pendentes',
@@ -91,6 +92,7 @@ const QUEUE_LABEL = {
   reportsPending: 'Reports pendentes',
   reportsCritical: 'Reports críticos',
   photosPending: 'Fotos pendentes',
+  betaApplicationsPending: 'Pedidos beta pendentes',
 }
 
 function NotificationBell() {
@@ -125,7 +127,7 @@ function NotificationBell() {
   const unread = notifs.filter(n => !n.readAt).length
   // reportsCritical is a subset of reportsPending — don't double-count it
   // in the badge, same reasoning as adminWorkQueueService.ts's totalAttentionCount.
-  const queueTotal = (workQueue.verificationsPending||0) + (workQueue.profilesPendingReview||0) + (workQueue.reportsPending||0) + (workQueue.photosPending||0)
+  const queueTotal = (workQueue.verificationsPending||0) + (workQueue.profilesPendingReview||0) + (workQueue.reportsPending||0) + (workQueue.photosPending||0) + (workQueue.betaApplicationsPending||0)
   const totalAttention = unread + queueTotal
 
   const markRead = async id => {
@@ -203,7 +205,11 @@ function NotificationBell() {
                 // Navigate to relevant admin tab
                 try {
                   const d = n.data ? JSON.parse(n.data) : {}
-                  if (d.tab) { setOpen(false); navigate(`/admin/${d.tab}`) }
+                  if (d.tab) {
+                    const suffix = d.subtab ? `?tab=${encodeURIComponent(d.subtab)}` : ''
+                    setOpen(false)
+                    navigate(`/admin/${d.tab}${suffix}`)
+                  }
                 } catch {}
               }} style={{
                 padding:'12px 14px', borderBottom:`1px solid ${C.border}`, cursor:'pointer',

@@ -51,7 +51,12 @@ export const notifyAdmins = async (
     ))
 
     // Send push
-    await sendPush(adminIds, { title, body, url: '/admin', tag: type })
+    const tab = typeof data?.tab === 'string' ? data.tab : ''
+    const subtab = typeof data?.subtab === 'string' ? data.subtab : ''
+    const url = tab
+      ? `/admin/${tab}${subtab ? `?tab=${encodeURIComponent(subtab)}` : ''}`
+      : '/admin'
+    await sendPush(adminIds, { title, body, url, tag: type })
 
     console.log(`[NOTIFY] ${type} → ${adminIds.length} admins`)
   } catch (err: any) {

@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { rateLimit } from 'express-rate-limit'
 import prisma from '../lib/prisma'
 import { sendBetaApplicationNotification } from '../lib/betaApplicationEmail'
+import { notifyAdmins } from '../lib/notify'
 
 const router = Router()
 const BETA_APPLICATIONS_ENABLED = process.env.BETA_APPLICATIONS_ENABLED !== 'false'
@@ -41,6 +42,17 @@ router.post('/applications', applicationLimiter, async (req: Request, res: Respo
           INSERT INTO "beta_applications" ("id", "email", "status", "source", "createdAt", "updatedAt")
           VALUES (${id}, ${email}, 'PENDING', 'LANDING_PAGE', ${createdAt}, ${createdAt})
         `
+
+        // A beta application is administrative work, not just an email.
+        // Persist the event for the admin bell and let the central notifier
+        // deliver web push only to admins who have push enabled.
+        await notifyAdmins(
+          'new_beta_application',
+          'Novo pedido de acesso beta',
+          `${email} pediu acesso através do website.`,
+          { betaApplicationId: id, email, tab: 'affiliations', subtab: 'beta-access' }
+        )
+
         sendBetaApplicationNotification(email, createdAt).catch(err => {
           console.error('[BETA APPLICATION EMAIL]', err.message)
         })
