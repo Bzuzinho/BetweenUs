@@ -10,6 +10,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { requireAdmin, logAdminAction } from '../middleware/admin'
 import { evaluateAndActivateUser } from '../lib/userActivationService'
 import { notifyAdmins } from '../lib/notify'
+import { notifyUserModerationDecision, notifyUserModerationPending } from '../lib/moderationNotifications'
 
 const router = Router()
 const isProd = process.env.NODE_ENV === 'production'
@@ -108,6 +109,8 @@ router.post('/submit', requireAuth, submitVerificationLimiter, upload.single('se
       { userId: req.userId, tab: 'verifications' }
     ).catch(() => {})
 
+    await notifyUserModerationPending(req.userId!, 'verification', { verificationType: requestedType })
+
     res.json({ ok: true, status: 'PENDING', message: 'Selfie recebida. Aguarda revisão.' })
   } catch (err: any) {
     console.error('[VERIFICATION]', err.message)
@@ -198,7 +201,7 @@ router.post('/email/confirm', async (req: Request, res: Response) => {
 // selfie file; full consolidation into UserActivationService is tracked separately.
 router.put('/admin/:userId', requireAuth, requireAdmin('profiles'), async (req: AuthRequest, res: Response) => {
   try {
-    const { status } = req.body
+    const { status, reason } = req.body
     if (!['APPROVED','REJECTED'].includes(status)) return res.status(400).json({ error: 'Status inválido.' })
     const prev = await prisma.verification.findUnique({ where: { userId: req.params.userId }, select: { status: true } })
     const verification = await prisma.verification.update({
@@ -224,6 +227,9 @@ router.put('/admin/:userId', requireAuth, requireAdmin('profiles'), async (req: 
       newData: { status },
       ipAddress: req.ip
     })
+    if (prev?.status === 'PENDING') {
+      await notifyUserModerationDecision(req.params.userId, 'verification', status as 'APPROVED' | 'REJECTED', reason)
+    }
     res.json({ ok: true, status, activation })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
 })

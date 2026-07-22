@@ -8,6 +8,7 @@ import { getVerificationBadges } from '../lib/verificationBadges'
 import { isActiveMember, getActiveMembers, resolveMyProfileId, getRequiredApprovers } from '../lib/profileMembershipService'
 import { evaluateCompleteness } from '../lib/profileCompletenessService'
 import { canChangeHomeLocation, getHomeLocation } from '../lib/effectiveLocationService'
+import { notifyAdminsOfModerationSubmission, notifyUserModerationPending } from '../lib/moderationNotifications'
 
 const router = Router()
 
@@ -338,6 +339,12 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     // is done serving its purpose. Best-effort: a failure here shouldn't
     // fail profile creation itself, it'd just leave one harmless stale row.
     await (prisma as any).onboardingProgress.delete({ where: { userId: req.userId! } }).catch(() => {})
+    if (isProd) {
+      await Promise.all([
+        notifyUserModerationPending(req.userId!, 'profile', { profileId: profile.id }),
+        notifyAdminsOfModerationSubmission('profile', profile.displayName, { profileId: profile.id, tab: 'profiles' }),
+      ])
+    }
     res.status(201).json(profile)
   } catch (err: any) {
     if (err.name === 'ZodError') return res.status(400).json({ error: err.errors[0].message })
@@ -373,6 +380,13 @@ router.put('/onboarding/step', requireAuth, async (req: AuthRequest, res: Respon
     })
     if (completing) {
       await prisma.privacySettings.update({ where: { profileId: profile.id }, data: { visibleInDiscovery: true } })
+    }
+    const enteredReview = completing && profile.status === 'DRAFT' && updated.status === 'PENDING_REVIEW'
+    if (enteredReview) {
+      await Promise.all([
+        notifyUserModerationPending(req.userId!, 'profile', { profileId: profile.id }),
+        notifyAdminsOfModerationSubmission('profile', profile.displayName, { profileId: profile.id, tab: 'profiles' }),
+      ])
     }
     res.json({ ok: true, profile: updated, completed: completing })
   } catch {

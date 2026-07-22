@@ -14,6 +14,7 @@ import { signMediaUrl as signAvatarUrl } from '../lib/mediaAccessService'
 import { getReportEvidenceForModerator } from '../lib/reportEvidenceService'
 import { getLatestAssessment, computeAgreementStats, runModerationAssessment } from '../lib/moderationAssessmentService'
 import { notifyAdmins as notifyAdminsWithPush } from '../lib/notify'
+import { notifyProfileModerationDecision, notifyUserModerationDecision } from '../lib/moderationNotifications'
 
 const CLIENT_URL = (process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app').replace(/\/+$/, '')
 
@@ -473,6 +474,15 @@ router.put('/profiles/:id', requireAdmin('profiles'), async (req: AuthRequest, r
       userAgent: req.headers['user-agent']
     })
 
+    if (prev.status === 'PENDING_REVIEW' && ['APPROVED', 'REJECTED'].includes(updated.status)) {
+      await notifyProfileModerationDecision(
+        updated.id,
+        'profile',
+        updated.status as 'APPROVED' | 'REJECTED',
+        updated.rejectionReason,
+      )
+    }
+
     res.json({ ok: true, profile: updated })
   } catch (err: any) {
     res.status(500).json({ error: 'Erro interno.' })
@@ -645,6 +655,8 @@ router.put('/profiles/:id/status', requireAdmin('profiles'), async (req: AuthReq
   const valid = ['APPROVED', 'REJECTED', 'HIDDEN', 'SUSPENDED', 'PENDING_REVIEW']
   if (!valid.includes(status)) return res.status(400).json({ error: 'Status inválido.' })
 
+  const previous = await prisma.profile.findUnique({ where: { id: req.params.id }, select: { status: true } })
+  if (!previous) return res.status(404).json({ error: 'Perfil não encontrado.' })
   const profile = await prisma.profile.update({
     where: { id: req.params.id },
     data: { status, rejectionReason: reason, moderationNotes: reason }
@@ -689,6 +701,9 @@ router.put('/profiles/:id/status', requireAdmin('profiles'), async (req: AuthReq
   }
 
   await logAdminAction(req.userId!, `${status}_PROFILE`, 'profile', req.params.id, { reason, ipAddress: req.ip })
+  if (previous.status === 'PENDING_REVIEW' && ['APPROVED', 'REJECTED'].includes(status)) {
+    await notifyProfileModerationDecision(profile.id, 'profile', status as 'APPROVED' | 'REJECTED', reason)
+  }
   res.json({ ok: true, profile, activation, activations })
 })
 
@@ -718,6 +733,9 @@ router.get('/photos', requireAdmin('photos'), async (req: AuthRequest, res: Resp
 
 router.put('/photos/:id', requireAdmin('photos'), async (req: AuthRequest, res: Response) => {
   const { moderationStatus, moderationNotes } = req.body
+  if (!['APPROVED', 'REJECTED'].includes(moderationStatus)) return res.status(400).json({ error: 'Estado de moderação inválido.' })
+  const previous = await prisma.profilePhoto.findUnique({ where: { id: req.params.id }, select: { moderationStatus: true, profileId: true } })
+  if (!previous) return res.status(404).json({ error: 'Foto não encontrada.' })
   const photo = await prisma.profilePhoto.update({
     where: { id: req.params.id },
     data: { moderationStatus, moderationNotes }
@@ -738,6 +756,9 @@ router.put('/photos/:id', requireAdmin('photos'), async (req: AuthRequest, res: 
     }
   }
   await logAdminAction(req.userId!, `${moderationStatus}_PHOTO`, 'photo', req.params.id, { reason: moderationNotes, ipAddress: req.ip })
+  if (previous.moderationStatus === 'PENDING') {
+    await notifyProfileModerationDecision(previous.profileId, 'photo', moderationStatus as 'APPROVED' | 'REJECTED', moderationNotes, { photoId: photo.id })
+  }
   res.json({ ok: true, photo })
 })
 
@@ -868,6 +889,9 @@ router.put('/verifications/:userId', requireAdmin('profiles'), async (req: AuthR
     previousData: { status: prev?.status }, newData: { status },
     ipAddress: req.ip
   })
+  if (prev?.status === 'PENDING') {
+    await notifyUserModerationDecision(req.params.userId, 'verification', status as 'APPROVED' | 'REJECTED', reason)
+  }
   res.json({ ok: true, activation })
 })
 

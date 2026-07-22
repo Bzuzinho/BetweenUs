@@ -5,6 +5,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { inviteMember } from '../lib/profileMembershipService'
 import { assertGroupProfilesEnabled } from '../lib/profileTypePolicy'
 import { getAvailableContexts } from '../lib/activeProfileContextService'
+import { notifyAdminsOfModerationSubmission, notifyUserModerationPending } from '../lib/moderationNotifications'
 
 const CLIENT_URL = (process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app').replace(/\/+$/, '')
 
@@ -66,6 +67,13 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
         data: { profileId: profile.id, invitedEmail: email, status: 'PENDING', inviteToken }
       })
       invites.push({ email, inviteUrl: `${CLIENT_URL}/group-invite/${inviteToken}` })
+    }
+
+    if (profile.status === 'PENDING_REVIEW') {
+      await Promise.all([
+        notifyUserModerationPending(req.userId!, 'profile', { profileId: profile.id }),
+        notifyAdminsOfModerationSubmission('profile', profile.displayName, { profileId: profile.id, tab: 'profiles' }),
+      ])
     }
 
     res.status(201).json({ profile, invites })

@@ -5,6 +5,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth'
 import { createLikeOrMatch } from '../lib/matchService'
 import { removeMember, resolveMyProfileId } from '../lib/profileMembershipService'
 import { getAvailableContexts } from '../lib/activeProfileContextService'
+import { notifyAdminsOfModerationSubmission, notifyUserModerationPending } from '../lib/moderationNotifications'
 
 const CLIENT_URL = (process.env.CLIENT_URL || 'https://betweenus-production.up.railway.app').replace(/\/+$/, '')
 
@@ -73,6 +74,13 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
       await (prisma as any).profileMember.create({
         data: { profileId: profile.id, invitedEmail: partnerEmail, status: 'PENDING', inviteToken }
       }).catch((e: any) => console.error('[PROFILE MEMBER DUAL-WRITE]', e.message))
+    }
+
+    if (profile.status === 'PENDING_REVIEW') {
+      await Promise.all([
+        notifyUserModerationPending(req.userId!, 'profile', { profileId: profile.id }),
+        notifyAdminsOfModerationSubmission('profile', profile.displayName, { profileId: profile.id, tab: 'profiles' }),
+      ])
     }
 
     res.status(201).json({

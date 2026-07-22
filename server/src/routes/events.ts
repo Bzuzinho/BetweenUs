@@ -9,6 +9,7 @@ import {
   isPrivateEventsEnabled, checkOrganizerEligibility, runEventTransition,
   requestAttendance, approveAttendance, declineAttendance, cancelAttendance
 } from '../lib/eventService'
+import { notifyAdminsOfModerationSubmission, notifyProfileModerationDecision, notifyProfileModerationPending } from '../lib/moderationNotifications'
 
 const router = Router()
 
@@ -161,6 +162,10 @@ router.post('/:id/submit', requireAuth, featureGate, async (req: AuthRequest, re
 
   const result = await runEventTransition(req.params.id, 'SUBMIT')
   if (!result.ok) return res.status(400).json({ error: result.error })
+  await Promise.all([
+    notifyProfileModerationPending(guard.event.organizerProfileId, 'event', { eventId: req.params.id }),
+    notifyAdminsOfModerationSubmission('event', guard.event.title, { eventId: req.params.id, tab: 'events' }),
+  ])
   res.json({ ok: true, status: result.status })
 })
 
@@ -260,16 +265,20 @@ router.get('/admin/all', requireAuth, requireAdmin('events'), async (req: AuthRe
 })
 
 router.post('/admin/:id/approve', requireAuth, requireAdmin('events'), async (req: AuthRequest, res: Response) => {
+  const event = await (prisma as any).event.findUnique({ where: { id: req.params.id }, select: { organizerProfileId: true } })
   const result = await runEventTransition(req.params.id, 'APPROVE')
   if (!result.ok) return res.status(400).json({ error: result.error })
   await logAdminAction(req.userId!, 'APPROVE_EVENT', 'event', req.params.id, { ipAddress: req.ip })
+  if (event) await notifyProfileModerationDecision(event.organizerProfileId, 'event', 'APPROVED', null, { eventId: req.params.id })
   res.json({ ok: true, status: result.status })
 })
 
 router.post('/admin/:id/reject', requireAuth, requireAdmin('events'), async (req: AuthRequest, res: Response) => {
+  const event = await (prisma as any).event.findUnique({ where: { id: req.params.id }, select: { organizerProfileId: true } })
   const result = await runEventTransition(req.params.id, 'REJECT')
   if (!result.ok) return res.status(400).json({ error: result.error })
   await logAdminAction(req.userId!, 'REJECT_EVENT', 'event', req.params.id, { reason: req.body?.reason, ipAddress: req.ip })
+  if (event) await notifyProfileModerationDecision(event.organizerProfileId, 'event', 'REJECTED', req.body?.reason, { eventId: req.params.id })
   res.json({ ok: true, status: result.status })
 })
 

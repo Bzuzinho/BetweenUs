@@ -168,3 +168,44 @@ describe('Connection-request notifications fan out to every profile member', () 
     expect(userIds.slice().sort()).toEqual([memberA.id, memberB.id].sort())
   })
 })
+
+describe('Moderation notifications', () => {
+  it('records pending and approved photo notifications for every accepted member of a shared profile', async () => {
+    const { notifyProfileModerationDecision, notifyProfileModerationPending } = await import('../src/lib/moderationNotifications')
+    const memberA = await createTestUser({ email: 'nf-moderation-a@test.com' })
+    const memberB = await createTestUser({ email: 'nf-moderation-b@test.com' })
+    const profileId = await createGroupProfile([memberA.id, memberB.id])
+
+    await notifyProfileModerationPending(profileId, 'photo', { photoId: 'photo-under-review' })
+    await notifyProfileModerationDecision(profileId, 'photo', 'APPROVED', null, { photoId: 'photo-under-review' })
+
+    for (const member of [memberA, memberB]) {
+      const notifications = await prisma.notification.findMany({
+        where: { userId: member.id, type: { in: ['moderation_photo_pending', 'moderation_photo_approved'] } },
+        orderBy: { createdAt: 'asc' },
+      })
+      expect(notifications.map(notification => notification.type)).toEqual([
+        'moderation_photo_pending',
+        'moderation_photo_approved',
+      ])
+      expect(JSON.parse(notifications[1].data || '{}')).toMatchObject({
+        profileId,
+        photoId: 'photo-under-review',
+        tab: 'photos',
+        moderationStatus: 'APPROVED',
+      })
+    }
+  })
+
+  it('includes the rejection reason in the user notification', async () => {
+    const { notifyUserModerationDecision } = await import('../src/lib/moderationNotifications')
+    const user = await createTestUser({ email: 'nf-moderation-rejected@test.com' })
+
+    await notifyUserModerationDecision(user.id, 'verification', 'REJECTED', 'A imagem não está legível.')
+
+    const notification = await prisma.notification.findFirst({
+      where: { userId: user.id, type: 'moderation_verification_rejected' },
+    })
+    expect(notification?.body).toContain('A imagem não está legível.')
+  })
+})

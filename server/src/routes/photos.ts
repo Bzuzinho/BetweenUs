@@ -6,7 +6,7 @@ import { uploadPrivateFile, deleteFile } from '../lib/storage'
 import { resolvePhotoForViewer, isStorageKey, PhotoRecord } from '../lib/mediaAccessService'
 import { processImage, detectRealImageType } from '../lib/imageProcessing'
 import { requireAuth, AuthRequest } from '../middleware/auth'
-import { notifyAdmins } from '../lib/notify'
+import { notifyAdminsOfModerationSubmission, notifyUserModerationPending } from '../lib/moderationNotifications'
 import { resolveMyProfileId, getActiveMembers } from '../lib/profileMembershipService'
 import * as sharedMediaConsentService from '../lib/sharedMediaConsentService'
 import { isPhaseCurrentlyRevoked } from '../lib/consentCheckService'
@@ -111,6 +111,13 @@ router.post('/', requireAuth, uploadLimiter, upload.single('photo'), async (req:
         exifStripped: true
       }
     })
+
+    if (isProd) {
+      await Promise.all([
+        notifyUserModerationPending(req.userId!, 'photo', { photoId: photo.id, profileId: profile.id }),
+        notifyAdminsOfModerationSubmission('photo', profile.displayName, { photoId: photo.id, profileId: profile.id, tab: 'photos' }),
+      ])
+    }
 
     res.status(201).json({
       ...photo,
