@@ -125,7 +125,7 @@ export default function CheckInPage() {
           </div>
         </div>
 
-        <GuideRecommendations context="SAFETY_CHECKIN" title="Antes do encontro" />
+        <GuideRecommendations context="SAFETY_CHECKIN" />
 
         {success && (
           <div style={{ background: `${C.success}15`, border: `1px solid ${C.success}44`,

@@ -63,6 +63,22 @@ describe('Guide V2 — public visibility', () => {
     expect(titles).toContain('English Article')
     expect(titles).not.toContain('Artigo Português')
   })
+
+  it('normalizes regional locales and defaults public results to Portuguese', async () => {
+    const user = await createTestUser({ email: 'guide-regional-locale@test.com' })
+    await createArticle({ published: true, publishedAt: new Date(), locale: 'en', title: 'Regional English', slug: 'regional-en-test' })
+    await createArticle({ published: true, publishedAt: new Date(), locale: 'pt', title: 'Português por defeito', slug: 'default-pt-test' })
+
+    const regional = await request(app).get('/api/guide?locale=en-GB')
+      .set('Authorization', `Bearer ${user.accessToken}`)
+    expect(regional.body.articles.map((article: any) => article.title)).toContain('Regional English')
+
+    const defaultLocale = await request(app).get('/api/guide')
+      .set('Authorization', `Bearer ${user.accessToken}`)
+    const defaultTitles = defaultLocale.body.articles.map((article: any) => article.title)
+    expect(defaultTitles).toContain('Português por defeito')
+    expect(defaultTitles).not.toContain('Regional English')
+  })
 })
 
 describe('Guide V2 — admin publish/unpublish (published <-> publishedAt bridge)', () => {

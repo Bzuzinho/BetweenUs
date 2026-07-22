@@ -6,6 +6,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
+import { useI18n } from '../i18n/I18nContext'
 
 const C = {
   surface:'#102129', elevated:'#172C36', border:'#1E3340',
@@ -13,24 +14,25 @@ const C = {
   text:'#F5F7FA', text2:'#AAB6C2', muted:'#7E8FA3',
 }
 
-export default function GuideRecommendations({ context, title = 'Pode ser útil' }) {
+export default function GuideRecommendations({ context, title }) {
   const navigate = useNavigate()
+  const { language, t } = useI18n()
   const [articles, setArticles] = useState([])
 
   useEffect(() => {
     let alive = true
-    api.get(`/guide/contextual/${context}`)
+    api.get(`/guide/contextual/${context}`, { params:{ locale:language === 'pt-PT' ? 'pt' : language.split('-')[0] } })
       .then(r => { if (alive) setArticles(r.data.articles || []) })
       .catch(() => {})
     return () => { alive = false }
-  }, [context])
+  }, [context, language])
 
   if (articles.length === 0) return null
 
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
-        ◈ {title}
+        ◈ {title || t('guide.recommendationsTitle')}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {articles.map(a => (

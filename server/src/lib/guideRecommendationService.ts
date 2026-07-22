@@ -29,12 +29,12 @@ const CONTEXT_RULES: Record<GuideContext, ContextRule> = {
 
 const publicSelect = { id: true, slug: true, title: true, category: true, summary: true, icon: true, readingTime: true }
 
-export const getRecommendedArticles = async (context: GuideContext, limit = 3) => {
+export const getRecommendedArticles = async (context: GuideContext, limit = 3, locale = 'pt') => {
   const rule = CONTEXT_RULES[context]
   if (!rule) return []
 
   const candidates = await (prisma as any).guideArticle.findMany({
-    where: { published: true, category: rule.category },
+    where: { published: true, category: rule.category, locale },
     select: publicSelect,
     orderBy: { sortOrder: 'asc' }
   })

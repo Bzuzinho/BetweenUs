@@ -7,6 +7,7 @@ MIGRATIONS=(
   "20260716120000_add_home_location_updated_at"
   "20260716140000_add_geo_locations"
   "20260722190000_publish_between_guide_editorial"
+  "20260722213000_localize_between_guide"
 )
 
 for migration in "${MIGRATIONS[@]}"; do

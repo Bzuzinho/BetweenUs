@@ -10,6 +10,14 @@ const router = Router()
 
 // 10.2 — controlled catalog (Prisma enum), not free text anymore.
 const CATEGORIES = ['CONSENT', 'COUPLES', 'OPEN_RELATIONSHIPS', 'POLYAMORY', 'PRIVACY', 'SAFETY', 'PROFILES', 'FIRST_MEETINGS', 'PRIVATE_INTERESTS'] as const
+const GUIDE_LOCALES = ['pt', 'en', 'fr'] as const
+
+export const normalizeGuideLocale = (value: unknown): typeof GUIDE_LOCALES[number] => {
+  const locale = String(value || 'pt').toLowerCase().split('-')[0]
+  return GUIDE_LOCALES.includes(locale as typeof GUIDE_LOCALES[number])
+    ? locale as typeof GUIDE_LOCALES[number]
+    : 'pt'
+}
 
 const publicSelect = {
   id: true, slug: true, title: true, category: true, summary: true, icon: true, coverPath: true,
@@ -20,12 +28,13 @@ const publicSelect = {
 // locale are explicit query filters, both optional.
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { category, locale } = req.query
+    const { category } = req.query
+    const locale = normalizeGuideLocale(req.query.locale)
     const articles = await (prisma as any).guideArticle.findMany({
       where: {
         published: true,
         ...(category ? { category: category as string } : {}),
-        ...(locale ? { locale: locale as string } : {}),
+        locale,
       },
       select: publicSelect,
       orderBy: { sortOrder: 'asc' }
@@ -62,7 +71,7 @@ router.get('/:slug', async (req: Request, res: Response) => {
 router.get('/contextual/:context', async (req: Request, res: Response) => {
   const context = req.params.context as any
   if (!GUIDE_CONTEXTS.includes(context)) return res.status(400).json({ error: 'Contexto desconhecido.' })
-  const articles = await getRecommendedArticles(context)
+  const articles = await getRecommendedArticles(context, 3, normalizeGuideLocale(req.query.locale))
   res.json({ articles })
 })
 

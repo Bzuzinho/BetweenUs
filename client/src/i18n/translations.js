@@ -46,6 +46,7 @@ export const translations = {
       sections: { guide: 'Guia', events: 'Eventos', circles: 'Circles' },
       categories: { CONSENT: 'Consentimento', COUPLES: 'Casais', OPEN_RELATIONSHIPS: 'Relações abertas', POLYAMORY: 'Poliamor', PRIVACY: 'Privacidade', SAFETY: 'Segurança', PROFILES: 'Perfil', FIRST_MEETINGS: 'Primeiros encontros', PRIVATE_INTERESTS: 'Interesses privados' },
       readingTime: 'min de leitura', preparing: 'Este artigo está a ser preparado. O Between Guide cresce com a comunidade — cada artigo é revisto pela nossa equipa antes de ser publicado.',
+      recommendationsTitle: 'Pode ser útil',
       footer: 'Between Guide — conteúdo educativo para adultos',
       fallback: [
         ['PRIVACY','◌','Privacidade digital básica','Protege a tua identidade online. Passos simples.'],
@@ -96,6 +97,7 @@ export const translations = {
       sections: { guide: 'Guide', events: 'Events', circles: 'Circles' },
       categories: { CONSENT: 'Consent', COUPLES: 'Couples', OPEN_RELATIONSHIPS: 'Open relationships', POLYAMORY: 'Polyamory', PRIVACY: 'Privacy', SAFETY: 'Safety', PROFILES: 'Profiles', FIRST_MEETINGS: 'First meetings', PRIVATE_INTERESTS: 'Private interests' },
       readingTime: 'min read', preparing: 'This article is being prepared. Between Guide grows with the community — every article is reviewed by our team before publication.',
+      recommendationsTitle: 'You may find this useful',
       footer: 'Between Guide — educational content for adults',
       fallback: [
         ['PRIVACY','◌','Digital privacy basics','Protect your identity online with simple practical steps.'],
@@ -146,6 +148,7 @@ export const translations = {
       sections: { guide: 'Guide', events: 'Événements', circles: 'Cercles' },
       categories: { CONSENT: 'Consentement', COUPLES: 'Couples', OPEN_RELATIONSHIPS: 'Relations ouvertes', POLYAMORY: 'Polyamour', PRIVACY: 'Confidentialité', SAFETY: 'Sécurité', PROFILES: 'Profils', FIRST_MEETINGS: 'Premières rencontres', PRIVATE_INTERESTS: 'Intérêts privés' },
       readingTime: 'min de lecture', preparing: 'Cet article est en préparation. Between Guide grandit avec la communauté — chaque article est relu par notre équipe avant publication.',
+      recommendationsTitle: 'Cela peut vous être utile',
       footer: 'Between Guide — contenu éducatif pour adultes',
       fallback: [
         ['PRIVACY','◌','Bases de la confidentialité numérique','Protégez votre identité en ligne avec des étapes simples.'],

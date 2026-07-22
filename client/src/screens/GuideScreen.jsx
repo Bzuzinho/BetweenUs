@@ -12,9 +12,12 @@ const C = {
 
 function buildFallback(t) {
   return (t('guide.fallback', []) || []).map((item, index) => ({
-    id:`f${index + 1}`, slug:`f${index + 1}`, category:item[0], icon:item[1], title:item[2], summary:item[3],
+    id:`f${index + 1}`, slug:`f${index + 1}`, category:item[0], icon:item[1], title:item[2], summary:item[3], sortOrder:index,
   }))
 }
+
+const guideLocale = language => language === 'pt-PT' ? 'pt' : language.split('-')[0]
+const articleKey = article => `${article.category}:${article.sortOrder}`
 
 function renderInlineMarkdown(text) {
   return text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => {
@@ -75,42 +78,60 @@ function ArticleBody({ body }) {
 }
 
 function GuideArticles() {
-  const { t } = useI18n()
+  const { t, language } = useI18n()
   const fallback = buildFallback(t)
   const [articles, setArticles] = useState([])
   const [loading, setLoading] = useState(true)
   const [cat, setCat] = useState('ALL')
-  const [openSlug, setOpenSlug] = useState(null)
+  const [openArticleKey, setOpenArticleKey] = useState(null)
   const [detail, setDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
 
   const categoryLabel = category => t(`guide.categories.${category}`, category)
 
   useEffect(() => {
-    api.get('/guide')
-      .then(r => setArticles(r.data.articles?.length ? r.data.articles : fallback))
-      .catch(() => setArticles(fallback))
-      .finally(() => setLoading(false))
-  }, [])
+    let alive = true
+    setLoading(true)
+    setArticles([])
+    setDetail(null)
+    api.get('/guide', { params:{ locale:guideLocale(language) } })
+      .then(r => {
+        if (!alive) return
+        const nextArticles = r.data.articles?.length ? r.data.articles : fallback
+        setArticles(nextArticles)
+        setOpenArticleKey(current => current && !nextArticles.some(article => articleKey(article) === current) ? null : current)
+      })
+      .catch(() => {
+        if (!alive) return
+        setArticles(fallback)
+        setOpenArticleKey(current => current && !fallback.some(article => articleKey(article) === current) ? null : current)
+      })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [language])
+
+  const openArticle = openArticleKey ? articles.find(article => articleKey(article) === openArticleKey) : null
 
   useEffect(() => {
-    if (!openSlug) { setDetail(null); return }
-    const fallbackArticle = fallback.find(a => a.slug === openSlug)
+    if (!openArticle) { setDetail(null); return }
+    const fallbackArticle = fallback.find(a => articleKey(a) === openArticleKey)
     if (fallbackArticle) { setDetail(fallbackArticle); return }
 
+    let alive = true
     setDetailLoading(true)
-    api.get(`/guide/${openSlug}`)
-      .then(r => setDetail(r.data))
-      .catch(() => setDetail(articles.find(a => a.slug === openSlug) || null))
-      .finally(() => setDetailLoading(false))
-  }, [openSlug])
+    api.get(`/guide/${openArticle.slug}`)
+      .then(r => { if (alive) setDetail(r.data) })
+      .catch(() => { if (alive) setDetail(openArticle) })
+      .finally(() => { if (alive) setDetailLoading(false) })
+    return () => { alive = false }
+  }, [openArticle?.slug, openArticleKey])
 
   const categories = ['ALL', ...new Set(articles.map(a => a.category))]
   const filtered = cat === 'ALL' ? articles : articles.filter(a => a.category === cat)
 
-  if (openSlug) return (
+  if (openArticleKey) return (
     <div>
-      <button onClick={() => setOpenSlug(null)} aria-label={t('common.back')} style={{ background:'none', border:'none', color:C.muted, fontSize:22, cursor:'pointer', padding:'4px 0', marginBottom:20 }}>
+      <button onClick={() => setOpenArticleKey(null)} aria-label={t('common.back')} style={{ background:'none', border:'none', color:C.muted, fontSize:22, cursor:'pointer', padding:'4px 0', marginBottom:20 }}>
         ←
       </button>
 
@@ -161,7 +182,7 @@ function GuideArticles() {
 
       <div className="guide-card-grid" style={{ display:'flex', flexDirection:'column', gap:10 }}>
         {filtered.map(article => (
-          <div key={article.id} onClick={() => setOpenSlug(article.slug || article.id)} style={{
+          <div key={article.id} onClick={() => setOpenArticleKey(articleKey(article))} style={{
             background:C.surface, border:`1px solid ${C.border}`, borderRadius:16,
             padding:16, cursor:'pointer', display:'flex', gap:14, alignItems:'flex-start',
           }}>
