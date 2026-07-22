@@ -30,7 +30,12 @@ export default function PrivacySettingsPage() {
   const { t } = useI18n()
   const { refreshUser } = useAuth()
   const [settings, setSettings] = useState({ visibleInDiscovery:true, showDistance:true, showOnlineStatus:true, invisibleMode:false, allowPhotoRequests:true, notificationMode:'DISCREET' })
-  const [pushPreferences, setPushPreferences] = useState({ pushNotificationsEnabled:true, appIconBadgeEnabled:true })
+  const [pushPreferences, setPushPreferences] = useState({
+    pushNotificationsEnabled:true,
+    appIconBadgeEnabled:true,
+    roomMessageNotificationsEnabled:true,
+    roomMessagePushEnabled:true,
+  })
   const [sub, setSub] = useState(null)
   const [loading, setLoading] = useState(true)
   const [msg, setMsg] = useState('')
@@ -103,6 +108,8 @@ export default function PrivacySettingsPage() {
       {section(t('privacySettings.photos'), <Row label={t('privacySettings.photoRequests')} desc={t('privacySettings.photoRequestsHelp')} value={settings.allowPhotoRequests} onChange={v => save({ allowPhotoRequests:v })}/>)}
       {section(t('privacySettings.notifications'), <>
         <Row label={t('privacySettings.push')} desc={t('privacySettings.pushHelp')} value={pushPreferences.pushNotificationsEnabled} onChange={v => savePushPreference({ pushNotificationsEnabled:v })}/>
+        <Row label={t('privacySettings.chatBell')} desc={t('privacySettings.chatBellHelp')} value={pushPreferences.roomMessageNotificationsEnabled} onChange={v => savePushPreference({ roomMessageNotificationsEnabled:v })}/>
+        <Row label={t('privacySettings.chatPush')} desc={t('privacySettings.chatPushHelp')} value={pushPreferences.roomMessagePushEnabled} onChange={v => savePushPreference({ roomMessagePushEnabled:v })}/>
         <Row label={t('privacySettings.appBadge')} desc={t('privacySettings.appBadgeHelp')} value={pushPreferences.appIconBadgeEnabled} onChange={v => savePushPreference({ appIconBadgeEnabled:v })}/>
         <Row label={`${t('privacySettings.mode')}: ${settings.notificationMode==='DISCREET'?t('privacySettings.discreet'):t('privacySettings.normal')}`} desc={t('privacySettings.notificationHelp')} value={settings.notificationMode==='DISCREET'} onChange={v => save({ notificationMode:v?'DISCREET':'NORMAL' })}/>
       </>)}

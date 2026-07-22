@@ -145,8 +145,13 @@ function RoomChat({ room:initialRoom, onBack }) {
   const [refreshConsent, setRefreshConsent] = useState(0)
   const [refreshIntentions, setRefreshIntentions] = useState(0)
   const [error, setError] = useState('')
-  const bottomRef = useRef(null)
+  const messagesRef = useRef(null)
   const rulesAutoOpenRef = useRef(false)
+
+  const scrollToLatest = useCallback((behavior = 'auto') => {
+    const list = messagesRef.current
+    if (list) list.scrollTo({ top:list.scrollHeight, behavior })
+  }, [])
 
   const applyConsentSummary = useCallback(consent => {
     setConsentSummary(consent)
@@ -178,15 +183,30 @@ function RoomChat({ room:initialRoom, onBack }) {
       api.get(`/rooms/${room.id}/rules`).then(response => applyConsentSummary(response.data.consent)),
       api.get(`/rooms/${room.id}/messages`).then(response => setMessages(response.data.messages || [])),
       loadConsentCheckPresence(),
-    ]).catch(() => setError(t('rooms.genericError'))).finally(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior:'smooth' }), 80))
-  }, [room.id, t, applyConsentSummary, loadConsentCheckPresence])
+    ]).catch(() => setError(t('rooms.genericError'))).finally(() => setTimeout(() => scrollToLatest(), 80))
+  }, [room.id, t, applyConsentSummary, loadConsentCheckPresence, scrollToLatest])
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    document.documentElement.classList.add('room-chat-open')
+    return () => document.documentElement.classList.remove('room-chat-open')
+  }, [])
 
   useEffect(() => {
     const socket = getSocket()
     if (!socket.connected) socket.connect()
     socket.emit('room:join', room.id)
-    const onCreated = message => { if (message.roomId === room.id) setMessages(previous => previous.some(item => item.id === message.id) ? previous : [...previous, message]) }
+    const syncViewingState = () => socket.emit('room:viewing', { roomId:room.id, viewing:document.visibilityState === 'visible' })
+    const markNotViewing = () => socket.emit('room:viewing', { roomId:room.id, viewing:false })
+    syncViewingState()
+    document.addEventListener('visibilitychange', syncViewingState)
+    window.addEventListener('pagehide', markNotViewing)
+    window.addEventListener('pageshow', syncViewingState)
+    const onCreated = message => {
+      if (message.roomId !== room.id) return
+      setMessages(previous => previous.some(item => item.id === message.id) ? previous : [...previous, message])
+      setTimeout(() => scrollToLatest('smooth'), 0)
+    }
     const onDeleted = ({ messageId }) => setMessages(previous => previous.filter(item => item.id !== messageId))
     const onStatus = ({ roomId, status }) => { if (roomId === room.id) setRoom(previous => ({ ...previous, status })) }
     const onClosed = ({ roomId }) => { if (roomId === room.id) { window.alert(t('rooms.roomClosed')); onBack() } }
@@ -196,8 +216,15 @@ function RoomChat({ room:initialRoom, onBack }) {
     const onTypingStart = ({ roomId, userId }) => { if (roomId === room.id && userId !== user?.id) setTypingUsers(previous => [...new Set([...previous, userId])]) }
     const onTypingStop = ({ roomId, userId }) => { if (roomId === room.id) setTypingUsers(previous => previous.filter(item => item !== userId)) }
     socket.on('message:created', onCreated); socket.on('message:delete', onDeleted); socket.on('room:status', onStatus); socket.on('room:closed', onClosed); socket.on('consent:updated', onRules); socket.on('rules:updated', onRules); socket.on('consent-check:updated', onConsent); socket.on('intent-alignment:updated', onIntentions); socket.on('typing:start', onTypingStart); socket.on('typing:stop', onTypingStop)
-    return () => { socket.emit('room:leave', room.id); socket.off('message:created', onCreated); socket.off('message:delete', onDeleted); socket.off('room:status', onStatus); socket.off('room:closed', onClosed); socket.off('consent:updated', onRules); socket.off('rules:updated', onRules); socket.off('consent-check:updated', onConsent); socket.off('intent-alignment:updated', onIntentions); socket.off('typing:start', onTypingStart); socket.off('typing:stop', onTypingStop) }
-  }, [room.id, user?.id, onBack, t, applyConsentSummary, loadConsentCheckPresence])
+    return () => {
+      socket.emit('room:viewing', { roomId:room.id, viewing:false })
+      socket.emit('room:leave', room.id)
+      document.removeEventListener('visibilitychange', syncViewingState)
+      window.removeEventListener('pagehide', markNotViewing)
+      window.removeEventListener('pageshow', syncViewingState)
+      socket.off('message:created', onCreated); socket.off('message:delete', onDeleted); socket.off('room:status', onStatus); socket.off('room:closed', onClosed); socket.off('consent:updated', onRules); socket.off('rules:updated', onRules); socket.off('consent-check:updated', onConsent); socket.off('intent-alignment:updated', onIntentions); socket.off('typing:start', onTypingStart); socket.off('typing:stop', onTypingStop)
+    }
+  }, [room.id, user?.id, onBack, t, applyConsentSummary, loadConsentCheckPresence, scrollToLatest])
 
   const canSend = room.status === 'ACTIVE'
   const send = async () => {
@@ -217,9 +244,9 @@ function RoomChat({ room:initialRoom, onBack }) {
   const inactiveActionBtn = { ...actionBtn, color:C.muted, opacity:.42, filter:'saturate(.15)' }
   const hasRules = Boolean(consentSummary?.rules?.length)
 
-  return <div style={{ display:'flex', flexDirection:'column', height:'100vh', background:C.bg }}>
+  return <div className="room-chat" style={{ display:'flex', flexDirection:'column', minHeight:0, background:C.bg }}>
     {showRules && <RoomRulesModal roomId={room.id} onClose={() => setShowRules(false)} onChanged={load}/>} {showSafeExit && <RoomSafeExitModal room={room} onClose={() => setShowSafeExit(false)} onLeft={onBack}/>} {showConsent && <RoomConsentCheckModal key={refreshConsent} room={room} onClose={() => setShowConsent(false)}/>} {showIntentions && <IntentAlignmentModal key={refreshIntentions} room={room} onClose={() => setShowIntentions(false)}/>} 
-    <div style={{ background:C.surface, borderBottom:`1px solid ${C.border}`, padding:'10px 16px' }}>
+    <div style={{ background:C.surface, borderBottom:`1px solid ${C.border}`, padding:'10px 16px', flexShrink:0 }}>
       <div style={{ display:'flex', alignItems:'center', gap:10 }}><button aria-label="back" onClick={onBack} style={{ background:'none', border:'none', color:C.muted, fontSize:22, cursor:'pointer' }}>←</button><div style={{ flex:1, minWidth:0 }}><div style={{ fontSize:15, fontWeight:500, color:C.text, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{room.title || t('rooms.privateRoom')}</div><div style={{ fontSize:11, color:C.muted }}>{formatNumber(room.members?.length || 0)} {t('rooms.participants')} · <span style={{ color:STATUS_COLOR[room.status] }}>{t(`rooms.statuses.${room.status}`, room.status)}</span></div></div><div style={{ display:'flex' }}>{(room.members || []).slice(0,4).map((member,index) => <div key={member.userId} style={{ marginLeft:index ? -8 : 0, zIndex:4-index }}><Avatar profile={member.user?.profile} size={28}/></div>)}</div></div>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:7, paddingTop:7, borderTop:`1px solid ${C.border}` }}>
         {consentSummary && <button onClick={() => setShowRules(true)} style={{ flex:1, minWidth:0, background:'transparent', border:'none', padding:0, cursor:'pointer', textAlign:'left', color:C.text2, fontSize:11, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>📌 {formatNumber(consentSummary.approvedCount)}/{formatNumber(consentSummary.requiredCount)} {t('rooms.pinnedRules')} {formatNumber(consentSummary.version)} {t('rooms.tapRules')}</button>}
@@ -227,8 +254,8 @@ function RoomChat({ room:initialRoom, onBack }) {
       </div>
     </div>
     {error && <div style={{ color:C.danger, fontSize:12, padding:'8px 16px' }}>{error}</div>}
-    <div style={{ flex:1, overflowY:'auto', padding:16, display:'flex', flexDirection:'column', gap:10 }}>{messages.length === 0 && <div style={{ textAlign:'center', color:C.muted, fontSize:14, margin:'auto' }}><div style={{ fontSize:32, marginBottom:8 }}>◎</div><div>{t('rooms.noMessages')}</div></div>}{messages.map(message => <MessageBubble key={message.id} message={message} mine={message.senderUserId === user?.id}/>)}{typingUsers.length > 0 && <div style={{ fontSize:11, color:C.muted, fontStyle:'italic' }}>{t('rooms.typing')}</div>}<div ref={bottomRef}/></div>
-    <div style={{ background:C.surface, borderTop:`1px solid ${C.border}`, padding:'8px 16px calc(10px + env(safe-area-inset-bottom))' }}>
+    <div ref={messagesRef} style={{ flex:1, minHeight:0, overflowY:'auto', overscrollBehavior:'contain', WebkitOverflowScrolling:'touch', padding:16, display:'flex', flexDirection:'column', gap:10 }}>{messages.length === 0 && <div style={{ textAlign:'center', color:C.muted, fontSize:14, margin:'auto' }}><div style={{ fontSize:32, marginBottom:8 }}>◎</div><div>{t('rooms.noMessages')}</div></div>}{messages.map(message => <MessageBubble key={message.id} message={message} mine={message.senderUserId === user?.id}/>)}{typingUsers.length > 0 && <div style={{ fontSize:11, color:C.muted, fontStyle:'italic' }}>{t('rooms.typing')}</div>}</div>
+    <div style={{ background:C.surface, borderTop:`1px solid ${C.border}`, padding:'8px 16px 10px', flexShrink:0 }}>
       <div style={{ display:'flex', gap:6, marginBottom:8, flexWrap:'wrap' }}>
         <button onClick={() => setShowConsent(true)} style={hasConsentChecks ? highlightedActionBtn : inactiveActionBtn}>✅ {t('rooms.consentTitle')}</button>
         <button onClick={() => setShowIntentions(true)} style={actionBtn}>🧭 {t('rooms.intentions')}</button>
@@ -275,7 +302,15 @@ export default function RoomsLocalizedScreen() {
   const [searchParams, setSearchParams] = useSearchParams()
   const load = useCallback(() => { setLoading(true); api.get('/rooms').then(response => setRooms(response.data.rooms || [])).catch(() => setError(t('rooms.genericError'))).finally(() => setLoading(false)) }, [t])
   useEffect(() => { load() }, [load])
-  useEffect(() => { const matchId = searchParams.get('matchId'); if (!matchId || !rooms.length) return; const room = rooms.find(item => item.matchId === matchId); if (room) setActiveRoom(room); setSearchParams({}, { replace:true }) }, [rooms, searchParams, setSearchParams])
+  useEffect(() => {
+    if (!rooms.length) return
+    const roomId = searchParams.get('roomId')
+    const matchId = searchParams.get('matchId')
+    if (!roomId && !matchId) return
+    const room = rooms.find(item => roomId ? item.id === roomId : item.matchId === matchId)
+    if (room) setActiveRoom(room)
+    setSearchParams({}, { replace:true })
+  }, [rooms, searchParams, setSearchParams])
   if (activeRoom) return <RoomChat room={activeRoom} onBack={() => { setActiveRoom(null); load() }}/>
   return <div className="app-screen app-screen--rooms" style={{ padding:'calc(16px + env(safe-area-inset-top)) 16px 0', maxWidth:480, margin:'0 auto' }}>
     {showCreate && <CreateRoomModal onClose={() => setShowCreate(false)} onCreated={room => { setRooms(previous => [room, ...previous]); setActiveRoom(room) }}/>} 

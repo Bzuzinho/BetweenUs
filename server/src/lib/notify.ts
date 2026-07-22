@@ -5,11 +5,15 @@ const createNotification = async (
   userId: string, type: string, title: string, body: string, data?: Record<string,any>
 ) => {
   try {
-    await (prisma as any).notification.create({
+    const notification = await (prisma as any).notification.create({
       data: { userId, type, title, body, data: data ? JSON.stringify(data) : null }
     })
+    const { getIo } = await import('./socketRegistry')
+    getIo()?.to(`user:${userId}`).emit('notification:new', notification)
+    return notification
   } catch (err: any) {
     console.error('[NOTIFY CREATE]', err.message)
+    return null
   }
 }
 
@@ -51,12 +55,7 @@ export const notifyAdmins = async (
     ))
 
     // Send push
-    const tab = typeof data?.tab === 'string' ? data.tab : ''
-    const subtab = typeof data?.subtab === 'string' ? data.subtab : ''
-    const url = tab
-      ? `/admin/${tab}${subtab ? `?tab=${encodeURIComponent(subtab)}` : ''}`
-      : '/admin'
-    await sendPush(adminIds, { title, body, url, tag: type })
+    await sendPush(adminIds, { title, body, url: '/admin', tag: type })
 
     console.log(`[NOTIFY] ${type} → ${adminIds.length} admins`)
   } catch (err: any) {
@@ -104,9 +103,20 @@ export const notifyProfileMembers = async (
 export const notifyUser = async (
   userId: string, type: string, title: string, body: string, data?: Record<string,any>
 ) => {
+  return notifyUserChannels(userId, type, title, body, data, { bell:true, push:true })
+}
+
+export const notifyUserChannels = async (
+  userId: string,
+  type: string,
+  title: string,
+  body: string,
+  data: Record<string,any> | undefined,
+  channels: { bell: boolean; push: boolean }
+) => {
   try {
-    await createNotification(userId, type, title, body, data)
-    await sendPush([userId], { title, body, url: data?.tab ? `/${data.tab}` : '/', tag: type })
+    if (channels.bell) await createNotification(userId, type, title, body, data)
+    if (channels.push) await sendPush([userId], { title, body, url:data?.url || (data?.tab ? `/${data.tab}` : '/'), tag: type })
     console.log(`[NOTIFY USER] ${type} → ${userId}`)
   } catch (err: any) {
     console.error('[NOTIFY USER]', err.message)

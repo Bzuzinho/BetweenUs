@@ -200,6 +200,7 @@ io.use((socket, next) => {
 
 io.on('connection', socket => {
   const userId = (socket.data as any).userId as string
+  socket.join('user:' + userId)
 
   socket.on('join_conversation', async (id: string) => {
     const { resolveConversationMembership } = await import('./lib/conversationAuthorizationService')
@@ -222,7 +223,22 @@ io.on('connection', socket => {
     socket.join('room:' + roomId)
   })
 
-  socket.on('room:leave', (roomId: string) => socket.leave('room:' + roomId))
+  socket.on('room:leave', (roomId: string) => {
+    socket.leave('room:' + roomId)
+    if ((socket.data as any).activeRoomId === roomId) delete (socket.data as any).activeRoomId
+  })
+
+  socket.on('room:viewing', async (payload: { roomId?: string; viewing?: boolean }) => {
+    const roomId = payload?.roomId
+    if (!roomId) return
+    if (!payload.viewing) {
+      if ((socket.data as any).activeRoomId === roomId) delete (socket.data as any).activeRoomId
+      return
+    }
+    const { resolveRoomMembership } = await import('./lib/roomAuthorizationService')
+    const auth = await resolveRoomMembership(roomId, userId)
+    if (auth.ok) (socket.data as any).activeRoomId = roomId
+  })
 
   socket.on('message:send', async (payload: { roomId: string; body?: string; messageType?: string; mediaId?: string; ttl?: string }) => {
     const { sendRoomMessage } = await import('./lib/roomMessageService')

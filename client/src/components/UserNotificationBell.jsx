@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import { useI18n } from '../i18n/I18nContext'
 import { setAppBadge } from '../lib/push'
+import { getSocket } from '../lib/socket'
 
 const C = {
   surface: '#102129', border: '#1E3340',
@@ -27,6 +28,18 @@ export default function UserNotificationBell({ appBadgeEnabled = true }) {
     const interval = setInterval(load, 20000)
     return () => clearInterval(interval)
   }, [load])
+
+  useEffect(() => {
+    const socket = getSocket()
+    if (!socket.connected) socket.connect()
+    const onNotification = notification => {
+      setNotifs(previous => previous.some(item => item.id === notification.id)
+        ? previous
+        : [notification, ...previous].slice(0, 50))
+    }
+    socket.on('notification:new', onNotification)
+    return () => socket.off('notification:new', onNotification)
+  }, [])
 
   useEffect(() => {
     const handler = event => { if (ref.current && !ref.current.contains(event.target)) setOpen(false) }
@@ -72,7 +85,10 @@ export default function UserNotificationBell({ appBadgeEnabled = true }) {
     const data = parseData(notification)
     if (data.tab) {
       setOpen(false)
-      navigate(`/${data.tab}`)
+      const params = new URLSearchParams()
+      if (data.roomId) params.set('roomId', data.roomId)
+      const query = params.toString()
+      navigate(`/${data.tab}${query ? `?${query}` : ''}`)
     }
   }
 

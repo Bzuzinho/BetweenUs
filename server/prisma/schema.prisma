@@ -376,6 +376,8 @@ model User {
   avatarPath        String?    // Account avatar URL
   pushNotificationsEnabled Boolean @default(true)
   appIconBadgeEnabled       Boolean @default(true)
+  roomMessageNotificationsEnabled Boolean @default(true)
+  roomMessagePushEnabled          Boolean @default(true)
   // BETA.1 — explicit test-account marker for the beta seed dataset. NEVER
   // inferred from email domain (deliberate spec requirement — a domain
   // heuristic is trivial to spoof/forget and gives no audit trail). Does

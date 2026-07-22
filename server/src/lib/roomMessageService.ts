@@ -50,6 +50,8 @@ export const sendRoomMessage = async (roomId: string, senderUserId: string, inpu
     },
     include: { sender: { select: { id: true, profile: { select: { displayName: true } } } } }
   })
+  const { notifyRoomMessageRecipients } = await import('./roomMessageNotificationService')
+  void notifyRoomMessageRecipients(roomId, senderUserId, message)
   return { ok: true, message }
 }
 

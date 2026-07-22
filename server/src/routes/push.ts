@@ -51,7 +51,12 @@ router.get('/preferences', requireAuth, async (req: AuthRequest, res: Response) 
   try {
     const user = await prisma.user.findUnique({
       where: { id:req.userId! },
-      select: { pushNotificationsEnabled:true, appIconBadgeEnabled:true }
+      select: {
+        pushNotificationsEnabled:true,
+        appIconBadgeEnabled:true,
+        roomMessageNotificationsEnabled:true,
+        roomMessagePushEnabled:true,
+      }
     })
     if (!user) return res.status(404).json({ error:'Utilizador não encontrado.' })
     res.json(user)
@@ -63,14 +68,21 @@ router.get('/preferences', requireAuth, async (req: AuthRequest, res: Response) 
 
 router.put('/preferences', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const { pushNotificationsEnabled, appIconBadgeEnabled } = req.body
+    const { pushNotificationsEnabled, appIconBadgeEnabled, roomMessageNotificationsEnabled, roomMessagePushEnabled } = req.body
     const user = await prisma.user.update({
       where: { id:req.userId! },
       data: {
         ...(pushNotificationsEnabled !== undefined && { pushNotificationsEnabled:Boolean(pushNotificationsEnabled) }),
         ...(appIconBadgeEnabled !== undefined && { appIconBadgeEnabled:Boolean(appIconBadgeEnabled) }),
+        ...(roomMessageNotificationsEnabled !== undefined && { roomMessageNotificationsEnabled:Boolean(roomMessageNotificationsEnabled) }),
+        ...(roomMessagePushEnabled !== undefined && { roomMessagePushEnabled:Boolean(roomMessagePushEnabled) }),
       },
-      select: { pushNotificationsEnabled:true, appIconBadgeEnabled:true }
+      select: {
+        pushNotificationsEnabled:true,
+        appIconBadgeEnabled:true,
+        roomMessageNotificationsEnabled:true,
+        roomMessagePushEnabled:true,
+      }
     })
     res.json(user)
   } catch (err: any) {

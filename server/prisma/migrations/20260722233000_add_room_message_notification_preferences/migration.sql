@@ -1,0 +1,3 @@
+ALTER TABLE "users"
+  ADD COLUMN "roomMessageNotificationsEnabled" BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN "roomMessagePushEnabled" BOOLEAN NOT NULL DEFAULT TRUE;

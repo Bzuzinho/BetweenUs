@@ -24,7 +24,7 @@ self.addEventListener('push', e => {
     icon:    '/apple-touch-icon.png',
     badge:   '/icon-144.png',
     tag:     data.tag || 'between-us',
-    data:    data.data || {},
+    data:    { ...(data.data || {}), url:data.url || '/' },
     actions: data.actions || [],
     silent:  false,
     vibrate: [200, 100, 200],
@@ -49,9 +49,7 @@ self.addEventListener('notificationclick', e => {
       // Focus existing tab if open
       for (const client of cls) {
         if (client.url.includes(self.location.origin) && 'focus' in client) {
-          client.focus()
-          client.postMessage({ type: 'NAVIGATE', url })
-          return
+          return client.navigate(url).then(navigated => navigated?.focus())
         }
       }
       // Otherwise open new tab
