@@ -140,19 +140,46 @@ function RoomChat({ room:initialRoom, onBack }) {
   const [showConsent, setShowConsent] = useState(false)
   const [showIntentions, setShowIntentions] = useState(false)
   const [consentSummary, setConsentSummary] = useState(null)
+  const [hasConsentChecks, setHasConsentChecks] = useState(false)
   const [typingUsers, setTypingUsers] = useState([])
   const [refreshConsent, setRefreshConsent] = useState(0)
   const [refreshIntentions, setRefreshIntentions] = useState(0)
   const [error, setError] = useState('')
   const bottomRef = useRef(null)
+  const rulesAutoOpenRef = useRef(false)
+
+  const applyConsentSummary = useCallback(consent => {
+    setConsentSummary(consent)
+    if (!consent?.ruleSetId || rulesAutoOpenRef.current) return
+
+    const storageKey = `room-rules-viewed:${user?.id || 'user'}:${room.id}:${consent.ruleSetId}`
+    let alreadyViewed = false
+    try { alreadyViewed = localStorage.getItem(storageKey) === '1' } catch {}
+
+    rulesAutoOpenRef.current = true
+    if (!alreadyViewed) {
+      setShowRules(true)
+      try { localStorage.setItem(storageKey, '1') } catch {}
+    }
+  }, [room.id, user?.id])
+
+  const loadConsentCheckPresence = useCallback(() => {
+    if (!room.matchId) {
+      setHasConsentChecks(false)
+      return Promise.resolve()
+    }
+    return api.get(`/consent/match/${room.matchId}`)
+      .then(response => setHasConsentChecks((response.data.checks || []).length > 0))
+  }, [room.matchId])
 
   const load = useCallback(() => {
     Promise.all([
       api.get(`/rooms/${room.id}`).then(response => setRoom(previous => ({ ...previous, ...response.data }))),
-      api.get(`/rooms/${room.id}/rules`).then(response => setConsentSummary(response.data.consent)),
+      api.get(`/rooms/${room.id}/rules`).then(response => applyConsentSummary(response.data.consent)),
       api.get(`/rooms/${room.id}/messages`).then(response => setMessages(response.data.messages || [])),
+      loadConsentCheckPresence(),
     ]).catch(() => setError(t('rooms.genericError'))).finally(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior:'smooth' }), 80))
-  }, [room.id, t])
+  }, [room.id, t, applyConsentSummary, loadConsentCheckPresence])
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
@@ -163,14 +190,14 @@ function RoomChat({ room:initialRoom, onBack }) {
     const onDeleted = ({ messageId }) => setMessages(previous => previous.filter(item => item.id !== messageId))
     const onStatus = ({ roomId, status }) => { if (roomId === room.id) setRoom(previous => ({ ...previous, status })) }
     const onClosed = ({ roomId }) => { if (roomId === room.id) { window.alert(t('rooms.roomClosed')); onBack() } }
-    const onRules = ({ roomId }) => { if (roomId === room.id) api.get(`/rooms/${roomId}/rules`).then(response => setConsentSummary(response.data.consent)).catch(() => {}) }
-    const onConsent = ({ roomId }) => { if (roomId === room.id) setRefreshConsent(value => value + 1) }
+    const onRules = ({ roomId }) => { if (roomId === room.id) api.get(`/rooms/${roomId}/rules`).then(response => applyConsentSummary(response.data.consent)).catch(() => {}) }
+    const onConsent = ({ roomId }) => { if (roomId === room.id) { setRefreshConsent(value => value + 1); loadConsentCheckPresence().catch(() => {}) } }
     const onIntentions = ({ roomId }) => { if (roomId === room.id) setRefreshIntentions(value => value + 1) }
     const onTypingStart = ({ roomId, userId }) => { if (roomId === room.id && userId !== user?.id) setTypingUsers(previous => [...new Set([...previous, userId])]) }
     const onTypingStop = ({ roomId, userId }) => { if (roomId === room.id) setTypingUsers(previous => previous.filter(item => item !== userId)) }
     socket.on('message:created', onCreated); socket.on('message:delete', onDeleted); socket.on('room:status', onStatus); socket.on('room:closed', onClosed); socket.on('consent:updated', onRules); socket.on('rules:updated', onRules); socket.on('consent-check:updated', onConsent); socket.on('intent-alignment:updated', onIntentions); socket.on('typing:start', onTypingStart); socket.on('typing:stop', onTypingStop)
     return () => { socket.emit('room:leave', room.id); socket.off('message:created', onCreated); socket.off('message:delete', onDeleted); socket.off('room:status', onStatus); socket.off('room:closed', onClosed); socket.off('consent:updated', onRules); socket.off('rules:updated', onRules); socket.off('consent-check:updated', onConsent); socket.off('intent-alignment:updated', onIntentions); socket.off('typing:start', onTypingStart); socket.off('typing:stop', onTypingStop) }
-  }, [room.id, user?.id, onBack, t])
+  }, [room.id, user?.id, onBack, t, applyConsentSummary, loadConsentCheckPresence])
 
   const canSend = room.status === 'ACTIVE'
   const send = async () => {
@@ -186,18 +213,34 @@ function RoomChat({ room:initialRoom, onBack }) {
   const notifyTyping = start => getSocket().emit(start ? 'typing:start' : 'typing:stop', room.id)
   const privacy = room.status === 'ACTIVE' ? t('rooms.privateActive') : room.status === 'WAITING_CONSENT' ? t('rooms.privateWaiting') : room.status === 'PAUSED' ? t('rooms.privatePaused') : room.status === 'SAFETY_LOCKED' ? t('rooms.privateLocked') : t('rooms.privateDefault')
   const actionBtn = { background:C.input, border:`1px solid ${C.border}`, borderRadius:20, padding:'6px 12px', fontSize:11, color:C.text2, cursor:'pointer' }
+  const highlightedActionBtn = { ...actionBtn, background:C.primaryDim, borderColor:'rgba(184,167,255,.35)', color:C.primary }
+  const inactiveActionBtn = { ...actionBtn, color:C.muted, opacity:.42, filter:'saturate(.15)' }
+  const hasRules = Boolean(consentSummary?.rules?.length)
 
   return <div style={{ display:'flex', flexDirection:'column', height:'100vh', background:C.bg }}>
     {showRules && <RoomRulesModal roomId={room.id} onClose={() => setShowRules(false)} onChanged={load}/>} {showSafeExit && <RoomSafeExitModal room={room} onClose={() => setShowSafeExit(false)} onLeft={onBack}/>} {showConsent && <RoomConsentCheckModal key={refreshConsent} room={room} onClose={() => setShowConsent(false)}/>} {showIntentions && <IntentAlignmentModal key={refreshIntentions} room={room} onClose={() => setShowIntentions(false)}/>} 
     <div style={{ background:C.surface, borderBottom:`1px solid ${C.border}`, padding:'10px 16px' }}>
       <div style={{ display:'flex', alignItems:'center', gap:10 }}><button aria-label="back" onClick={onBack} style={{ background:'none', border:'none', color:C.muted, fontSize:22, cursor:'pointer' }}>←</button><div style={{ flex:1, minWidth:0 }}><div style={{ fontSize:15, fontWeight:500, color:C.text, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{room.title || t('rooms.privateRoom')}</div><div style={{ fontSize:11, color:C.muted }}>{formatNumber(room.members?.length || 0)} {t('rooms.participants')} · <span style={{ color:STATUS_COLOR[room.status] }}>{t(`rooms.statuses.${room.status}`, room.status)}</span></div></div><div style={{ display:'flex' }}>{(room.members || []).slice(0,4).map((member,index) => <div key={member.userId} style={{ marginLeft:index ? -8 : 0, zIndex:4-index }}><Avatar profile={member.user?.profile} size={28}/></div>)}</div></div>
-      <div style={{ marginTop:8, background:C.primaryDim, borderRadius:8, padding:'6px 10px', fontSize:11, color:C.primary }}>🔒 {privacy}</div>
-      {consentSummary && <button onClick={() => setShowRules(true)} style={{ width:'100%', marginTop:6, background:'transparent', border:'none', borderTop:`1px solid ${C.border}`, paddingTop:8, cursor:'pointer', textAlign:'left', color:C.text2, fontSize:11 }}>📌 {formatNumber(consentSummary.approvedCount)}/{formatNumber(consentSummary.requiredCount)} {t('rooms.pinnedRules')} {formatNumber(consentSummary.version)} {t('rooms.tapRules')}</button>}
-      <div style={{ display:'flex', gap:6, marginTop:8, flexWrap:'wrap' }}><button onClick={() => setShowConsent(true)} style={actionBtn}>✅ {t('rooms.consentTitle')}</button><button onClick={() => setShowIntentions(true)} style={actionBtn}>🧭 {t('rooms.intentions')}</button><button onClick={() => setShowRules(true)} style={actionBtn}>📌 {t('rooms.rules')}</button><button onClick={() => setShowSafeExit(true)} style={{ ...actionBtn, color:C.danger, borderColor:'rgba(248,113,113,.3)' }}>🚪 {t('rooms.safeExit')}</button></div>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:7, paddingTop:7, borderTop:`1px solid ${C.border}` }}>
+        {consentSummary && <button onClick={() => setShowRules(true)} style={{ flex:1, minWidth:0, background:'transparent', border:'none', padding:0, cursor:'pointer', textAlign:'left', color:C.text2, fontSize:11, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>📌 {formatNumber(consentSummary.approvedCount)}/{formatNumber(consentSummary.requiredCount)} {t('rooms.pinnedRules')} {formatNumber(consentSummary.version)} {t('rooms.tapRules')}</button>}
+        <button onClick={() => setShowSafeExit(true)} style={{ ...actionBtn, marginLeft:'auto', flexShrink:0, color:C.danger, borderColor:'rgba(248,113,113,.3)' }}>🚪 {t('rooms.safeExit')}</button>
+      </div>
     </div>
     {error && <div style={{ color:C.danger, fontSize:12, padding:'8px 16px' }}>{error}</div>}
-    <div style={{ flex:1, overflowY:'auto', padding:16, display:'flex', flexDirection:'column', gap:10 }}>{messages.length === 0 && <div style={{ textAlign:'center', color:C.muted, fontSize:14, margin:'auto' }}><div style={{ fontSize:32, marginBottom:8 }}>◎</div><div>{t('rooms.noMessages')}</div>{!canSend && <div style={{ fontSize:12, marginTop:8, color:C.warning }}>{t('rooms.acceptToMessage')}</div>}</div>}{messages.map(message => <MessageBubble key={message.id} message={message} mine={message.senderUserId === user?.id}/>)}{typingUsers.length > 0 && <div style={{ fontSize:11, color:C.muted, fontStyle:'italic' }}>{t('rooms.typing')}</div>}<div ref={bottomRef}/></div>
-    <div style={{ background:C.surface, borderTop:`1px solid ${C.border}`, padding:'10px 16px', display:'flex', gap:10, alignItems:'center' }}><input value={body} onChange={event => { setBody(event.target.value); notifyTyping(true) }} onBlur={() => notifyTyping(false)} onKeyDown={event => event.key === 'Enter' && !event.shiftKey && (event.preventDefault(), send())} placeholder={canSend ? t('rooms.messagePlaceholder') : t('rooms.cannotMessage')} disabled={!canSend} style={{ flex:1, background:C.input, border:`1.5px solid ${C.border}`, borderRadius:50, padding:'11px 16px', color:C.text, fontSize:14, outline:'none', opacity:canSend ? 1 : .5 }}/><button aria-label="send" onClick={send} disabled={!body.trim() || sending || !canSend} style={{ width:42, height:42, borderRadius:'50%', border:'none', background:body.trim() && canSend ? C.primary : C.elevated, color:body.trim() && canSend ? '#0A141A' : C.muted, fontSize:18, cursor:'pointer', opacity:sending ? .6 : 1 }}>↑</button></div>
+    <div style={{ flex:1, overflowY:'auto', padding:16, display:'flex', flexDirection:'column', gap:10 }}>{messages.length === 0 && <div style={{ textAlign:'center', color:C.muted, fontSize:14, margin:'auto' }}><div style={{ fontSize:32, marginBottom:8 }}>◎</div><div>{t('rooms.noMessages')}</div></div>}{messages.map(message => <MessageBubble key={message.id} message={message} mine={message.senderUserId === user?.id}/>)}{typingUsers.length > 0 && <div style={{ fontSize:11, color:C.muted, fontStyle:'italic' }}>{t('rooms.typing')}</div>}<div ref={bottomRef}/></div>
+    <div style={{ background:C.surface, borderTop:`1px solid ${C.border}`, padding:'8px 16px calc(10px + env(safe-area-inset-bottom))' }}>
+      <div style={{ display:'flex', gap:6, marginBottom:8, flexWrap:'wrap' }}>
+        <button onClick={() => setShowConsent(true)} style={hasConsentChecks ? highlightedActionBtn : inactiveActionBtn}>✅ {t('rooms.consentTitle')}</button>
+        <button onClick={() => setShowIntentions(true)} style={actionBtn}>🧭 {t('rooms.intentions')}</button>
+        <button onClick={() => setShowRules(true)} style={hasRules ? highlightedActionBtn : inactiveActionBtn}>📌 {t('rooms.rules')}</button>
+      </div>
+      <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+        {canSend
+          ? <input value={body} onChange={event => { setBody(event.target.value); notifyTyping(true) }} onBlur={() => notifyTyping(false)} onKeyDown={event => event.key === 'Enter' && !event.shiftKey && (event.preventDefault(), send())} placeholder={t('rooms.messagePlaceholder')} style={{ flex:1, minWidth:0, background:C.input, border:`1.5px solid ${C.border}`, borderRadius:50, padding:'11px 16px', color:C.text, fontSize:14, outline:'none' }}/>
+          : <div role="status" aria-live="polite" style={{ flex:1, minWidth:0, background:C.input, border:`1.5px solid ${C.border}`, borderRadius:50, padding:'11px 16px', color:C.warning, fontSize:13, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>🔒 {privacy}</div>}
+        <button aria-label="send" onClick={send} disabled={!body.trim() || sending || !canSend} style={{ width:42, height:42, flexShrink:0, borderRadius:'50%', border:'none', background:body.trim() && canSend ? C.primary : C.elevated, color:body.trim() && canSend ? '#0A141A' : C.muted, fontSize:18, cursor:'pointer', opacity:sending ? .6 : 1 }}>↑</button>
+      </div>
+    </div>
   </div>
 }
 

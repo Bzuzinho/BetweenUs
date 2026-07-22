@@ -65,7 +65,7 @@ export function RoomRulesModal({ roomId, onClose, onChanged }) {
       </div>)}
       <div style={{ display:'flex', gap:10, marginTop:16 }}>
         {consent.status !== 'ACTIVE'
-          ? <button onClick={() => update('accept')} disabled={busy} style={{ flex:1, background:C.primary, border:'none', borderRadius:50, padding:12, color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer', opacity:busy ? .6 : 1 }}>{t('rooms.acceptRules')}</button>
+          ? <><button onClick={onClose} disabled={busy} style={{ flex:1, background:'none', border:`1px solid ${C.border}`, borderRadius:50, padding:12, color:C.muted, fontSize:13, cursor:'pointer' }}>{t('rooms.notNow')}</button><button onClick={() => update('accept')} disabled={busy} style={{ flex:2, background:C.primary, border:'none', borderRadius:50, padding:12, color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer', opacity:busy ? .6 : 1 }}>{t('rooms.acceptRules')}</button></>
           : <button onClick={() => update('revoke')} disabled={busy} style={{ flex:1, background:'none', border:`1px solid ${C.border}`, borderRadius:50, padding:12, color:C.muted, fontSize:13, cursor:'pointer', opacity:busy ? .6 : 1 }}>{t('rooms.revokeRules')}</button>}
       </div>
     </>}
