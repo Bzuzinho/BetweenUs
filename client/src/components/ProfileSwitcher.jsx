@@ -44,7 +44,17 @@ export default function ProfileSwitcher() {
   const active = user?.activeProfileContext || user?.individualProfile || null
   const canSwitchProfile = contexts.length > 1
 
-  const realName = firstAndLastName(user?.accountName) || t('common.user')
+  // The header identifies the person by the public "Nome visível" of their
+  // individual profile. `accountName` is private account data and may be
+  // empty for older accounts, which previously made the card fall back to
+  // the generic "Utilizador" label even when the profile had a valid name.
+  // Keep the active context only for the second line (profile type + role),
+  // so switching to a couple/group does not replace the person's name with
+  // the shared profile name.
+  const visibleName = firstAndLastName(user?.individualProfile?.displayName)
+    || firstAndLastName(user?.profile?.type === 'INDIVIDUAL' ? user.profile.displayName : '')
+    || firstAndLastName(user?.accountName)
+    || t('common.user')
   const activeTypeLabel = t(TYPE_KEY[active?.type] || 'common.individualProfile')
   const activeRoleLabel = t(roleLabelKey(active))
 
@@ -78,11 +88,11 @@ export default function ProfileSwitcher() {
         background:'rgba(184,167,255,0.12)', color:C.primary,
         fontSize:13, fontWeight:700,
       }}>
-        {realName.charAt(0).toUpperCase()}
+        {visibleName.charAt(0).toUpperCase()}
       </span>
       <span style={{ minWidth:0, textAlign:'left', lineHeight:1.2 }}>
         <span style={{ display:'block', color:C.text, fontSize:13, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-          {realName}
+          {visibleName}
         </span>
         <span style={{ display:'block', color:C.muted, fontSize:10, marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
           {activeTypeLabel} · {activeRoleLabel}
