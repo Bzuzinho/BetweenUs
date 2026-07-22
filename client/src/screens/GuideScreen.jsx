@@ -16,6 +16,64 @@ function buildFallback(t) {
   }))
 }
 
+function renderInlineMarkdown(text) {
+  return text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index} style={{ color:C.text, fontWeight:600 }}>{part.slice(2, -2)}</strong>
+    }
+    return part
+  })
+}
+
+function ArticleBody({ body }) {
+  const lines = body.split(/\r?\n/)
+  const blocks = []
+  let index = 0
+
+  while (index < lines.length) {
+    const line = lines[index].trim()
+    if (!line) { index += 1; continue }
+
+    if (line.startsWith('### ')) {
+      blocks.push(<h2 key={`heading-${index}`} style={{ color:C.text, fontSize:17, fontWeight:600, lineHeight:1.4, margin:'26px 0 10px' }}>{renderInlineMarkdown(line.slice(4))}</h2>)
+      index += 1
+      continue
+    }
+
+    if (/^-\s+/.test(line)) {
+      const items = []
+      while (index < lines.length && /^-\s+/.test(lines[index].trim())) {
+        items.push(lines[index].trim().replace(/^-\s+/, ''))
+        index += 1
+      }
+      blocks.push(<ul key={`list-${index}`} style={{ margin:'10px 0 18px', paddingLeft:22, color:C.text2 }}>{items.map((item, itemIndex) => <li key={itemIndex} style={{ marginBottom:8, paddingLeft:3 }}>{renderInlineMarkdown(item)}</li>)}</ul>)
+      continue
+    }
+
+    if (/^\d+\.\s+/.test(line)) {
+      const items = []
+      while (index < lines.length && /^\d+\.\s+/.test(lines[index].trim())) {
+        items.push(lines[index].trim().replace(/^\d+\.\s+/, ''))
+        index += 1
+      }
+      blocks.push(<ol key={`ordered-${index}`} style={{ margin:'10px 0 18px', paddingLeft:24, color:C.text2 }}>{items.map((item, itemIndex) => <li key={itemIndex} style={{ marginBottom:8, paddingLeft:3 }}>{renderInlineMarkdown(item)}</li>)}</ol>)
+      continue
+    }
+
+    const paragraph = [line]
+    index += 1
+    while (index < lines.length) {
+      const next = lines[index].trim()
+      if (!next || next.startsWith('### ') || /^-\s+/.test(next) || /^\d+\.\s+/.test(next)) break
+      paragraph.push(next)
+      index += 1
+    }
+    blocks.push(<p key={`paragraph-${index}`} style={{ margin:'0 0 16px' }}>{renderInlineMarkdown(paragraph.join(' '))}</p>)
+  }
+
+  return <div style={{ color:C.text2, fontSize:15, lineHeight:1.8 }}>{blocks}</div>
+}
+
 function GuideArticles() {
   const { t } = useI18n()
   const fallback = buildFallback(t)
@@ -69,9 +127,7 @@ function GuideArticles() {
           </h1>
           <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:20 }}>
             {detail.body ? (
-              <div style={{ color:C.text2, fontSize:15, lineHeight:1.8, whiteSpace:'pre-wrap' }}>
-                {detail.body}
-              </div>
+              <ArticleBody body={detail.body} />
             ) : (
               <>
                 <p style={{ color:C.text2, fontSize:15, lineHeight:1.7, margin:'0 0 16px' }}>{detail.summary}</p>
