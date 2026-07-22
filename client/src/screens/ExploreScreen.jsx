@@ -35,16 +35,19 @@ function GridTile({ profile, onOpen, t }) {
 }
 
 function ProfileCard({ profile, onLike, onPass, t }) {
-  const [actioned, setActioned] = useState(null)
+  const [actioned, setActioned] = useState(profile.liked ? 'like' : null)
   const [matched, setMatched] = useState(false)
+  const [error, setError] = useState('')
 
   const like = async () => {
     setActioned('like')
+    setError('')
     try {
       const result = await onLike(profile.id)
-      if (result?.match) setMatched(true)
-    } catch {
+      if (result?.matched) setMatched(true)
+    } catch (err) {
       setActioned(null)
+      setError(err?.response?.data?.error || t('explore.connectError'))
     }
   }
 
@@ -62,6 +65,7 @@ function ProfileCard({ profile, onLike, onPass, t }) {
         {profile.intentions?.length > 0 && <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:12 }}>{profile.intentions.slice(0,3).map(pi => <span key={pi.intention?.id} style={{ background:C.elevated, border:`1px solid ${C.border}`, borderRadius:20, padding:'4px 10px', fontSize:11, color:C.text2 }}>{pi.intention?.name || pi.intention?.slug}</span>)}</div>}
       </div>
       {profile.scoreExplanation && <div style={{ margin:'0 16px 10px', background:C.elevated, borderRadius:10, padding:'8px 12px', fontSize:11, color:C.muted }}>{profile.scoreExplanation}</div>}
+      {error && <div role="alert" style={{ margin:'0 16px 10px', background:'rgba(248,113,113,.08)', border:'1px solid rgba(248,113,113,.25)', borderRadius:10, padding:'8px 12px', fontSize:12, color:C.danger }}>{error}</div>}
       <div style={{ display:'flex', gap:10, padding:'0 16px 16px' }}>
         <button onClick={() => onPass(profile.id)} style={{ flex:1, background:'none', border:`1px solid ${C.border}`, borderRadius:12, padding:13, color:C.muted }}>{t('explore.pass')}</button>
         <button onClick={like} disabled={!!actioned} style={{ flex:2, background:C.primary, border:'none', borderRadius:12, padding:13, fontWeight:500, color:'#0A141A', opacity:actioned ? .7 : 1 }}>{actioned ? (matched ? `💫 ${t('explore.match')}` : `✓ ${t('explore.sent')}`) : t('explore.connect')}</button>

@@ -117,6 +117,12 @@ describe('Connection-request notifications fan out to every profile member', () 
     await prisma.profileAction.create({
       data: { actorProfileId: requesterProfileId, targetProfileId: accepterProfileId, action: 'LIKE' }
     })
+    await prisma.notification.create({
+      data: {
+        userId: accepter.id, type: 'connection_request', title: 'Pedido', body: 'Pedido pendente',
+        data: JSON.stringify({ fromProfileId: requesterProfileId, tab: 'matches' })
+      }
+    })
 
     const res = await request(app).post(`/api/matches/accept/${requesterProfileId}`)
       .set('Authorization', `Bearer ${accepter.accessToken}`)
@@ -126,6 +132,22 @@ describe('Connection-request notifications fan out to every profile member', () 
       prisma.notification.findFirst({ where: { userId: requester.id, type: 'match' } })
     )
     expect(notif).toBeTruthy()
+
+    const match = await prisma.match.findFirst({
+      where: { OR: [
+        { profileOneId: requesterProfileId, profileTwoId: accepterProfileId },
+        { profileOneId: accepterProfileId, profileTwoId: requesterProfileId },
+      ] },
+      include: { privateRoom: { include: { members: true } } }
+    })
+    expect(match?.status).toBe('ACTIVE')
+    expect(match?.privateRoom).toBeTruthy()
+    expect(match?.privateRoom?.members.map(member => member.userId).sort()).toEqual([requester.id, accepter.id].sort())
+
+    const resolvedRequest = await prisma.notification.findFirst({
+      where: { userId: accepter.id, type: 'connection_request' }
+    })
+    expect(resolvedRequest?.readAt).not.toBeNull()
   })
 
   it('accepting a request from a COUPLE/GROUP requester notifies all its active members', async () => {

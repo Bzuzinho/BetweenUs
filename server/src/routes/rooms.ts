@@ -115,12 +115,28 @@ const emitToRoom = async (roomId: string, event: string, payload: any) => {
 // GET /api/rooms
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
+    // Repair ACTIVE matches created before every connection was guaranteed
+    // to have a Private Room. Idempotent and scoped to the active profile.
+    const viewerProfileId = await resolveMyProfileId(req.userId!)
+    if (viewerProfileId) {
+      const missingRooms = await prisma.match.findMany({
+        where: {
+          status: 'ACTIVE', privateRoom: null,
+          OR: [{ profileOneId: viewerProfileId }, { profileTwoId: viewerProfileId }]
+        },
+        select: { id: true }
+      })
+      if (missingRooms.length) {
+        const { createFromMatch } = await import('../lib/privateRoomService')
+        await Promise.all(missingRooms.map(match => createFromMatch(match.id)))
+      }
+    }
     const memberships = await (prisma as any).privateRoomMember.findMany({
       where: { userId: req.userId!, leftAt: null, status: 'ACCEPTED' },
       include: { privateRoom: { select: roomSelect } },
       orderBy: { joinedAt: 'desc' }
     })
-    const viewer = { viewerUserId: req.userId!, viewerProfileId: await resolveMyProfileId(req.userId!) }
+    const viewer = { viewerUserId: req.userId!, viewerProfileId }
     res.json({ rooms: await Promise.all(memberships.map((m: any) => signRoomPhotos(m.privateRoom, viewer))) })
   } catch (err: any) {
     console.error('[ROOMS GET]', err.message)

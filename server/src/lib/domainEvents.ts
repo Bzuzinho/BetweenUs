@@ -80,33 +80,27 @@ on('MATCH_ACTIVATED', async (event) => {
     ...twoUserIds.map(uid => notifyUser(uid, 'match', '💫 Match confirmado!', `Tens um novo match com ${oneName}.`, { matchId: event.matchId, tab: 'matches' })),
   ])
 
-  // 6.6/7.9 — "Interesse enviado → Parceiro A confirmou → Parceiro B
-  // confirmou → Private Room desbloqueada": any match with 3+ total active
-  // members across both sides (couple+individual, couple+couple) gets its
-  // Private Room created here, the moment the match itself goes ACTIVE —
-  // that IS the "unlocked" moment. A plain individual-individual match (2
-  // total members) keeps using its already-created Conversation and gets
-  // no room. Room creation itself (type inference, membership, initial
-  // rule set) is now PrivateRoomService.createFromMatch's job (7.9) —
+  // 6.6/7.9 — every ACTIVE match gets its Private Room created here, the
+  // moment the match itself goes ACTIVE —
+  // that IS the "unlocked" moment. Room creation itself (type inference,
+  // membership, initial rule set) is PrivateRoomService.createFromMatch's
+  // job (7.9) —
   // this handler only decides WHETHER to call it and sends the
   // notification, matching the "unlocked" language even though the room
   // actually starts in WAITING_CONSENT (rules must be accepted first,
   // 7.4) rather than immediately ACTIVE.
-  const totalMembers = oneUserIds.length + twoUserIds.length
-  if (totalMembers >= 3) {
-    const { createFromMatch } = await import('./privateRoomService')
-    const result = await createFromMatch(event.matchId).catch((e: any) => {
-      console.error('[MATCH_ACTIVATED private room]', e.message)
-      return null
-    })
-    if (result?.ok && result.created) {
-      const allUserIds = [...oneUserIds, ...twoUserIds]
-      await Promise.all(allUserIds.map(uid => notifyUser(
-        uid, 'private_room', '🔓 Sala privada desbloqueada',
-        'O match tornou-se numa sala privada partilhada. Aceitem as regras da sala para começar.',
-        { matchId: event.matchId, tab: 'rooms' }
-      )))
-    }
+  const { createFromMatch } = await import('./privateRoomService')
+  const result = await createFromMatch(event.matchId).catch((e: any) => {
+    console.error('[MATCH_ACTIVATED private room]', e.message)
+    return null
+  })
+  if (result?.ok && result.created) {
+    const allUserIds = [...new Set([...oneUserIds, ...twoUserIds])]
+    await Promise.all(allUserIds.map(uid => notifyUser(
+      uid, 'private_room', '🔓 Sala privada desbloqueada',
+      'A ligação tem agora uma sala privada. Aceitem as regras da sala para começar.',
+      { matchId: event.matchId, roomId: result.room?.id, tab: 'rooms' }
+    )))
   }
 })
 

@@ -105,7 +105,7 @@ export default function UserNotificationBell({ appBadgeEnabled = true }) {
       </button>
 
       {open && (
-        <div style={{
+        <div className="user-notification-popover" style={{
           position:'absolute', top:44, right:0, width:300, maxHeight:420,
           background:C.surface, border:`1px solid ${C.border}`, borderRadius:16,
           boxShadow:'0 8px 32px rgba(0,0,0,0.4)', zIndex:200, overflow:'hidden',
@@ -118,7 +118,7 @@ export default function UserNotificationBell({ appBadgeEnabled = true }) {
               <div style={{ padding:20, textAlign:'center', color:C.muted, fontSize:13 }}>{t('notifications.empty')}</div>
             )}
             {notifs.map(notification => {
-              const isRequest = notification.type === 'connection_request'
+              const isRequest = notification.type === 'connection_request' && !notification.readAt
               return (
                 <div key={notification.id} onClick={() => !isRequest && onClickNotification(notification)} style={{
                   padding:'12px 14px', borderBottom:`1px solid ${C.border}`,

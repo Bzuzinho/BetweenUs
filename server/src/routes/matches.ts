@@ -56,6 +56,22 @@ const resolveVerified = async (profile: { userId: string | null; id: string }): 
 // second partner.
 const getUserProfileId = resolveMyProfileId
 
+const markConnectionRequestNotificationsRead = async (userId: string, fromProfileId: string): Promise<void> => {
+  const unread = await (prisma as any).notification.findMany({
+    where: { userId, type: 'connection_request', readAt: null },
+    select: { id: true, data: true }
+  })
+  const ids = unread.filter((notification: any) => {
+    try { return JSON.parse(notification.data || '{}').fromProfileId === fromProfileId } catch { return false }
+  }).map((notification: any) => notification.id)
+  if (ids.length) {
+    await (prisma as any).notification.updateMany({
+      where: { id: { in: ids }, userId },
+      data: { readAt: new Date() }
+    })
+  }
+}
+
 const verifyMatchMembership = async (matchId: string, profileId: string) => {
   const match = await prisma.match.findFirst({
     where: {
@@ -384,7 +400,14 @@ router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res:
         { profileOneId: fromProfile.id, profileTwoId: viewerProfile.id },
       ]}
     })
-    if (existing) return res.json({ ok: true, matchId: existing.id, alreadyMatched: true })
+    if (existing) {
+      if (existing.status === 'ACTIVE') {
+        const { createFromMatch } = await import('../lib/privateRoomService')
+        await createFromMatch(existing.id)
+      }
+      await markConnectionRequestNotificationsRead(req.userId!, fromProfile.id)
+      return res.json({ ok: true, matchId: existing.id, alreadyMatched: true })
+    }
 
     // BETA.4 — this route creates its Match row directly (predates
     // matchService.transition() being the documented single source of
@@ -416,15 +439,14 @@ router.post('/accept/:fromProfileId', requireAuth, async (req: AuthRequest, res:
       create: { actorProfileId: viewerProfile.id, targetProfileId: fromProfile.id, action: 'LIKE' }
     })
 
-    // Notify the requester — every member if fromProfile is a couple/group
-    // (BETA.4 fix; was `notifyUser(fromProfile.user.id, ...)`, which only
-    // ever worked for an INDIVIDUAL requester).
-    const { notifyProfileMembers } = await import('../lib/notify')
-    notifyProfileMembers(fromProfile.id, 'match',
-      '💫 Ligação aceite!',
-      `${viewerProfile.displayName || 'Alguém'} aceitou a tua ligação. Podem conversar agora.`,
-      { matchId: match.id, tab: 'matches' }
-    ).catch(() => {})
+    // Keep every ACTIVE-match side effect on the same path: notifications
+    // for both sides and creation of the match-derived Private Room.
+    const { dispatch } = await import('../lib/domainEvents')
+    await dispatch({
+      type: 'MATCH_ACTIVATED', matchId: match.id,
+      profileOneId: match.profileOneId, profileTwoId: match.profileTwoId,
+    })
+    await markConnectionRequestNotificationsRead(req.userId!, fromProfile.id)
 
     res.json({ ok: true, matchId: match.id })
   } catch (err: any) {
@@ -446,9 +468,9 @@ router.post('/reject/:fromProfileId', requireAuth, async (req: AuthRequest, res:
       update: { action: 'PASS' },
       create: { actorProfileId: viewerProfileId, targetProfileId: req.params.fromProfileId, action: 'PASS' }
     })
+    await markConnectionRequestNotificationsRead(req.userId!, req.params.fromProfileId)
     res.json({ ok: true })
   } catch (err: any) { res.status(500).json({ error: 'Erro interno.' }) }
 })
 
 export default router
-

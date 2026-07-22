@@ -31,6 +31,18 @@ const createActiveCouple = async (emailA: string, emailB: string) => {
 }
 
 describe('PrivateRoomService.createFromMatch', () => {
+  it('does not create a room before the match is ACTIVE', async () => {
+    const userA = await createTestUser({ email: 'room-pending-a@test.com' })
+    const userB = await createTestUser({ email: 'room-pending-b@test.com' })
+    const profileA = await createTestProfile(userA.id)
+    const profileB = await createTestProfile(userB.id)
+    const match = await prisma.match.create({ data: { profileOneId: profileA, profileTwoId: profileB, status: 'PENDING' } })
+
+    const result = await createFromMatch(match.id)
+    expect(result.ok).toBe(false)
+    expect(await (prisma as any).privateRoom.findUnique({ where: { matchId: match.id } })).toBeNull()
+  })
+
   it('INDIVIDUAL + INDIVIDUAL -> INDIVIDUAL_PAIR, with exactly the two matched users as members', async () => {
     const userA = await createTestUser({ email: 'room-ind-a@test.com' })
     const userB = await createTestUser({ email: 'room-ind-b@test.com' })

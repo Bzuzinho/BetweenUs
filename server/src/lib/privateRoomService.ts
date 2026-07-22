@@ -44,6 +44,7 @@ export const createFromMatch = async (matchId: string): Promise<CreateFromMatchR
     }
   })
   if (!match) return { ok: false, error: 'Match não encontrado.', created: false }
+  if (match.status !== 'ACTIVE') return { ok: false, error: 'O match ainda não está ativo.', created: false }
 
   const [oneMembers, twoMembers] = await Promise.all([
     getActiveMembers(match.profileOneId), getActiveMembers(match.profileTwoId)
@@ -54,16 +55,27 @@ export const createFromMatch = async (matchId: string): Promise<CreateFromMatchR
   const roomType = inferRoomType(match.profileOne.type, match.profileTwo.type)
   const title = `${match.profileOne.displayName} & ${match.profileTwo.displayName}`
 
-  const room = await (prisma as any).privateRoom.create({
-    data: {
-      matchId, title, roomType, status: 'DRAFT',
-      // Match-derived rooms deliberately assign no OWNER — see
-      // roomAuthorizationService.ts's comment on canManageRoom for why:
-      // membership here mirrors the match's own ProfileMembers, it isn't
-      // something any one participant unilaterally controls.
-      members: { create: allUserIds.map(userId => ({ userId, role: 'MEMBER', status: 'ACCEPTED', joinedAt: new Date() })) }
-    }
-  })
+  let room: any
+  try {
+    room = await (prisma as any).privateRoom.create({
+      data: {
+        matchId, title, roomType, status: 'DRAFT',
+        // Match-derived rooms deliberately assign no OWNER — see
+        // roomAuthorizationService.ts's comment on canManageRoom for why:
+        // membership here mirrors the match's own ProfileMembers, it isn't
+        // something any one participant unilaterally controls.
+        members: { create: allUserIds.map(userId => ({ userId, role: 'MEMBER', status: 'ACCEPTED', joinedAt: new Date() })) }
+      }
+    })
+  } catch (error: any) {
+    // Two members can open the Rooms screen at the same time while a
+    // legacy match is being repaired. matchId is unique, so the losing
+    // request returns the room created by the winner instead of a 500.
+    if (error?.code !== 'P2002') throw error
+    const concurrent = await (prisma as any).privateRoom.findUnique({ where: { matchId } })
+    if (!concurrent) throw error
+    return { ok: true, room: concurrent, created: false }
+  }
 
   // Immediately seed v1 rules and move the room into WAITING_CONSENT — a
   // match-derived room is never silently ACTIVE with zero agreed rules.
