@@ -4,7 +4,7 @@
 -- Ferreira quando existir; em instalações sem essa conta, usa o SUPER_ADMIN.
 
 -- Consentimento: 4 artigos
-+INSERT INTO "guide_articles" (
+INSERT INTO "guide_articles" (
   "id", "slug", "title", "category", "summary", "body", "icon", "authorId",
   "published", "publishedAt", "readingTime", "locale", "seoTitle", "seoDescription",
   "sortOrder", "createdAt", "updatedAt"
@@ -247,7 +247,7 @@ ON CONFLICT ("slug") DO UPDATE SET
   "updatedAt" = CURRENT_TIMESTAMP;
 
 -- Casais: 4 artigos
-+INSERT INTO "guide_articles" (
+INSERT INTO "guide_articles" (
   "id", "slug", "title", "category", "summary", "body", "icon", "authorId",
   "published", "publishedAt", "readingTime", "locale", "seoTitle", "seoDescription",
   "sortOrder", "createdAt", "updatedAt"
@@ -488,7 +488,7 @@ ON CONFLICT ("slug") DO UPDATE SET
   "updatedAt" = CURRENT_TIMESTAMP;
 
 -- Relações abertas: 4 artigos
-+INSERT INTO "guide_articles" (
+INSERT INTO "guide_articles" (
   "id", "slug", "title", "category", "summary", "body", "icon", "authorId",
   "published", "publishedAt", "readingTime", "locale", "seoTitle", "seoDescription",
   "sortOrder", "createdAt", "updatedAt"
@@ -737,7 +737,7 @@ ON CONFLICT ("slug") DO UPDATE SET
   "updatedAt" = CURRENT_TIMESTAMP;
 
 -- Poliamor: 4 artigos
-+INSERT INTO "guide_articles" (
+INSERT INTO "guide_articles" (
   "id", "slug", "title", "category", "summary", "body", "icon", "authorId",
   "published", "publishedAt", "readingTime", "locale", "seoTitle", "seoDescription",
   "sortOrder", "createdAt", "updatedAt"
@@ -967,7 +967,7 @@ ON CONFLICT ("slug") DO UPDATE SET
   "updatedAt" = CURRENT_TIMESTAMP;
 
 -- Privacidade: 4 artigos
-+INSERT INTO "guide_articles" (
+INSERT INTO "guide_articles" (
   "id", "slug", "title", "category", "summary", "body", "icon", "authorId",
   "published", "publishedAt", "readingTime", "locale", "seoTitle", "seoDescription",
   "sortOrder", "createdAt", "updatedAt"
@@ -1206,7 +1206,7 @@ ON CONFLICT ("slug") DO UPDATE SET
   "updatedAt" = CURRENT_TIMESTAMP;
 
 -- Segurança: 4 artigos
-+INSERT INTO "guide_articles" (
+INSERT INTO "guide_articles" (
   "id", "slug", "title", "category", "summary", "body", "icon", "authorId",
   "published", "publishedAt", "readingTime", "locale", "seoTitle", "seoDescription",
   "sortOrder", "createdAt", "updatedAt"
@@ -1446,7 +1446,7 @@ ON CONFLICT ("slug") DO UPDATE SET
   "updatedAt" = CURRENT_TIMESTAMP;
 
 -- Perfis: 4 artigos
-+INSERT INTO "guide_articles" (
+INSERT INTO "guide_articles" (
   "id", "slug", "title", "category", "summary", "body", "icon", "authorId",
   "published", "publishedAt", "readingTime", "locale", "seoTitle", "seoDescription",
   "sortOrder", "createdAt", "updatedAt"
@@ -1686,7 +1686,7 @@ ON CONFLICT ("slug") DO UPDATE SET
   "updatedAt" = CURRENT_TIMESTAMP;
 
 -- Primeiros encontros: 4 artigos
-+INSERT INTO "guide_articles" (
+INSERT INTO "guide_articles" (
   "id", "slug", "title", "category", "summary", "body", "icon", "authorId",
   "published", "publishedAt", "readingTime", "locale", "seoTitle", "seoDescription",
   "sortOrder", "createdAt", "updatedAt"
@@ -1924,7 +1924,7 @@ ON CONFLICT ("slug") DO UPDATE SET
   "updatedAt" = CURRENT_TIMESTAMP;
 
 -- Interesses privados: 4 artigos
-+INSERT INTO "guide_articles" (
+INSERT INTO "guide_articles" (
   "id", "slug", "title", "category", "summary", "body", "icon", "authorId",
   "published", "publishedAt", "readingTime", "locale", "seoTitle", "seoDescription",
   "sortOrder", "createdAt", "updatedAt"
