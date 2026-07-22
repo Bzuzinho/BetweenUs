@@ -61,7 +61,7 @@ export default function AccountPage() {
         await api.post('/auth/avatar', formData, { headers:{ 'Content-Type':'multipart/form-data' } }).catch(() => {})
       }
       await Promise.all([
-        api.put('/auth/account', { accountName:form.accountName, nif:form.nif }),
+        api.put('/auth/account', { accountName:form.accountName, nif:form.nif.trim() || null }),
         api.put('/push/language', { preferredLanguage:form.preferredLanguage }),
       ])
       await refreshUser()
@@ -77,15 +77,15 @@ export default function AccountPage() {
   const initials = (user?.accountName || user?.email || '?')[0].toUpperCase()
 
   return (
-    <div style={{ minHeight:'100vh', background:C.bg, padding:'calc(20px + env(safe-area-inset-top)) 16px calc(40px + env(safe-area-inset-bottom))' }}>
-      <div style={{ maxWidth:560, margin:'0 auto' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:28 }}>
+    <div className="account-page" style={{ minHeight:'100vh', background:C.bg, padding:'calc(20px + env(safe-area-inset-top)) 16px calc(40px + env(safe-area-inset-bottom))' }}>
+      <div className="account-page-inner" style={{ maxWidth:560, margin:'0 auto' }}>
+        <div className="account-page-header" style={{ display:'flex', alignItems:'center', gap:12, marginBottom:28 }}>
           <button onClick={() => navigate(-1)} style={{ background:'none', border:'none', color:C.muted, fontSize:22, cursor:'pointer', minWidth:44, minHeight:44 }}>←</button>
           <h1 style={{ fontSize:20, fontWeight:500, color:C.text, margin:0 }}>{t('account.title')}</h1>
           <button onClick={handleSave} disabled={saving} style={{ marginLeft:'auto', background:C.primary, border:'none', borderRadius:50, padding:'8px 20px', fontSize:14, fontWeight:500, color:'#0A141A', cursor:'pointer', opacity:saving ? 0.7 : 1 }}>{saving ? t('common.saving') : t('common.save')}</button>
         </div>
-        {msg && <div style={{ background:'rgba(74,222,128,0.08)', border:'1px solid rgba(74,222,128,0.25)', borderRadius:12, padding:'11px 14px', marginBottom:14, color:C.success, fontSize:14 }}>{msg}</div>}
-        {error && <div style={{ background:'rgba(248,113,113,0.08)', border:'1px solid rgba(248,113,113,0.25)', borderRadius:12, padding:'11px 14px', marginBottom:14, color:C.danger, fontSize:14 }}>{error}</div>}
+        {msg && <div className="account-feedback" style={{ background:'rgba(74,222,128,0.08)', border:'1px solid rgba(74,222,128,0.25)', borderRadius:12, padding:'11px 14px', marginBottom:14, color:C.success, fontSize:14 }}>{msg}</div>}
+        {error && <div className="account-feedback" style={{ background:'rgba(248,113,113,0.08)', border:'1px solid rgba(248,113,113,0.25)', borderRadius:12, padding:'11px 14px', marginBottom:14, color:C.danger, fontSize:14 }}>{error}</div>}
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:24, marginBottom:14 }}>
           <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:16 }}>{t('account.profileImage')}</div>
           <div style={{ display:'flex', alignItems:'center', gap:20 }}>

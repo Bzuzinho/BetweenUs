@@ -57,7 +57,7 @@ export default function ProfilePage() {
   const isVerified = verification?.status === 'APPROVED'
 
   return (
-    <div style={{ padding:'calc(20px + env(safe-area-inset-top)) 16px 32px', maxWidth:480, margin:'0 auto' }}>
+    <div className="app-screen app-screen--profile" style={{ padding:'calc(20px + env(safe-area-inset-top)) 16px 32px', maxWidth:480, margin:'0 auto' }}>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24 }}>
         <h1 style={{ fontSize:20, fontWeight:500, color:C.text, margin:0 }}>{tr('title')}</h1>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>

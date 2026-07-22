@@ -21,6 +21,13 @@ const TYPE_KEY = {
   GROUP: 'common.groupProfile',
 }
 
+const roleLabelKey = context => {
+  if (context?.type === 'INDIVIDUAL') return 'profileSwitcher.userRole'
+  return context?.role === 'OWNER'
+    ? 'profileSwitcher.creatorPartnerRole'
+    : 'profileSwitcher.partnerRole'
+}
+
 const firstAndLastName = value => {
   const parts = String(value || '').trim().split(/\s+/).filter(Boolean)
   if (parts.length <= 1) return parts[0] || ''
@@ -35,11 +42,11 @@ export default function ProfileSwitcher() {
 
   const contexts = user?.availableProfileContexts || []
   const active = user?.activeProfileContext || user?.individualProfile || null
-  const hasCoupleProfile = contexts.some(ctx => ctx.type === 'COUPLE')
-  const canSwitchProfile = hasCoupleProfile && contexts.length > 1
+  const canSwitchProfile = contexts.length > 1
 
   const realName = firstAndLastName(user?.accountName) || t('common.user')
   const activeTypeLabel = t(TYPE_KEY[active?.type] || 'common.individualProfile')
+  const activeRoleLabel = t(roleLabelKey(active))
 
   const handleSwitch = async (profileId) => {
     if (profileId === active?.profileId || profileId === active?.id) {
@@ -51,6 +58,10 @@ export default function ProfileSwitcher() {
     try {
       await api.post('/auth/active-profile', { profileId })
       await refreshUser()
+      // Every screen query is scoped by the server-side active profile.
+      // Reload so no discovery/match/room data from the previous context
+      // remains actionable after the switch.
+      window.location.reload()
     } catch {
       // Best effort: keep the current context if the request fails.
     } finally {
@@ -74,7 +85,7 @@ export default function ProfileSwitcher() {
           {realName}
         </span>
         <span style={{ display:'block', color:C.muted, fontSize:10, marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-          {activeTypeLabel}
+          {activeTypeLabel} · {activeRoleLabel}
         </span>
       </span>
       {canSwitchProfile && (
@@ -119,9 +130,7 @@ export default function ProfileSwitcher() {
           <div style={{ padding:'9px 12px', color:C.muted, fontSize:10, textTransform:'uppercase', letterSpacing:'0.06em', borderBottom:`1px solid ${C.border}` }}>
             {t('profileSwitcher.useAs')}
           </div>
-          {contexts
-            .filter(ctx => ctx.type === 'INDIVIDUAL' || ctx.type === 'COUPLE')
-            .map(ctx => {
+          {contexts.map(ctx => {
               const isActive = ctx.profileId === active?.profileId || ctx.profileId === active?.id
               const typeLabel = t(TYPE_KEY[ctx.type] || 'common.profile')
               return (
@@ -139,7 +148,7 @@ export default function ProfileSwitcher() {
                 >
                   <span style={{ fontWeight:600 }}>{ctx.displayName || typeLabel}</span>
                   <span style={{ color:C.muted, fontSize:11, marginTop:2 }}>
-                    {typeLabel}{isActive ? ` · ${t('common.active')}` : ''}
+                    {typeLabel} · {t(roleLabelKey(ctx))}{isActive ? ` · ${t('common.active')}` : ''}
                   </span>
                 </button>
               )

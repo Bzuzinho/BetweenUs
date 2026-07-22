@@ -39,7 +39,7 @@ export const translations = {
       realName: 'Nome real', private: 'privado', fullName: 'O teu nome completo', optional: 'opcional', taxpayer: 'Contribuinte',
       appLanguage: 'Idioma da aplicação', languageHelp: 'Esta preferência aplica-se à aplicação em todos os dispositivos após iniciares sessão.',
     },
-    profileSwitcher: { useAs: 'Usar a aplicação como', change: 'Mudar de perfil' },
+    profileSwitcher: { useAs: 'Usar a aplicação como', change: 'Mudar de perfil', userRole:'Utilizador', partnerRole:'Parceiro', creatorPartnerRole:'Parceiro criador' },
     notifications: { title: 'Notificações', empty: 'Sem notificações', accept: 'Aceitar', reject: 'Recusar', bellLabel: 'Abrir notificações' },
     guide: {
       title: 'Between Guide', subtitle: 'Conteúdo, eventos e comunidades para ligações adultas privadas e seguras.',
@@ -89,7 +89,7 @@ export const translations = {
       realName: 'Real name', private: 'private', fullName: 'Your full name', optional: 'optional', taxpayer: 'Tax number',
       appLanguage: 'Application language', languageHelp: 'This preference is applied to the application on every device after you log in.',
     },
-    profileSwitcher: { useAs: 'Use the application as', change: 'Change profile' },
+    profileSwitcher: { useAs: 'Use the application as', change: 'Change profile', userRole:'User', partnerRole:'Partner', creatorPartnerRole:'Creator partner' },
     notifications: { title: 'Notifications', empty: 'No notifications', accept: 'Accept', reject: 'Decline', bellLabel: 'Open notifications' },
     guide: {
       title: 'Between Guide', subtitle: 'Content, events and communities for private and safer adult connections.',
@@ -139,7 +139,7 @@ export const translations = {
       realName: 'Nom réel', private: 'privé', fullName: 'Votre nom complet', optional: 'facultatif', taxpayer: 'Numéro fiscal',
       appLanguage: 'Langue de l’application', languageHelp: 'Cette préférence s’applique à l’application sur tous vos appareils après connexion.',
     },
-    profileSwitcher: { useAs: 'Utiliser l’application en tant que', change: 'Changer de profil' },
+    profileSwitcher: { useAs: 'Utiliser l’application en tant que', change: 'Changer de profil', userRole:'Utilisateur', partnerRole:'Partenaire', creatorPartnerRole:'Partenaire créateur' },
     notifications: { title: 'Notifications', empty: 'Aucune notification', accept: 'Accepter', reject: 'Refuser', bellLabel: 'Ouvrir les notifications' },
     guide: {
       title: 'Between Guide', subtitle: 'Contenus, événements et communautés pour des rencontres adultes privées et plus sûres.',

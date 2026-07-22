@@ -234,7 +234,7 @@ export default function RoomsLocalizedScreen() {
   useEffect(() => { load() }, [load])
   useEffect(() => { const matchId = searchParams.get('matchId'); if (!matchId || !rooms.length) return; const room = rooms.find(item => item.matchId === matchId); if (room) setActiveRoom(room); setSearchParams({}, { replace:true }) }, [rooms, searchParams, setSearchParams])
   if (activeRoom) return <RoomChat room={activeRoom} onBack={() => { setActiveRoom(null); load() }}/>
-  return <div style={{ padding:'calc(16px + env(safe-area-inset-top)) 16px 0', maxWidth:480, margin:'0 auto' }}>
+  return <div className="app-screen app-screen--rooms" style={{ padding:'calc(16px + env(safe-area-inset-top)) 16px 0', maxWidth:480, margin:'0 auto' }}>
     {showCreate && <CreateRoomModal onClose={() => setShowCreate(false)} onCreated={room => { setRooms(previous => [room, ...previous]); setActiveRoom(room) }}/>} 
     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}><div><h1 style={{ fontSize:20, fontWeight:500, color:C.text, margin:0 }}>{t('rooms.title')}</h1><p style={{ fontSize:13, color:C.muted, margin:'4px 0 0' }}>{t('rooms.subtitle')}</p></div><button onClick={() => setShowCreate(true)} style={{ background:C.primary, border:'none', borderRadius:12, padding:'10px 16px', color:'#0A141A', fontWeight:600, fontSize:13, cursor:'pointer' }}>{t('rooms.newRoom')}</button></div>
     {error && <div style={{ color:C.danger, fontSize:12, marginBottom:12 }}>{error}</div>} {loading && <div style={{ textAlign:'center', padding:40, color:C.muted }}>{t('rooms.loading')}</div>}

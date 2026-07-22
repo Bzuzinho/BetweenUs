@@ -119,7 +119,7 @@ export default function MatchesListScreen() {
 
   const openMatch = match => navigate(`/rooms?matchId=${encodeURIComponent(match.id)}`)
 
-  return <div style={{ padding:'16px 16px 0', maxWidth:480, margin:'0 auto' }}>
+  return <div className="app-screen app-screen--matches" style={{ padding:'16px 16px 0', maxWidth:480, margin:'0 auto' }}>
     <div style={{ fontSize:22, fontWeight:700, marginBottom:20, color:C.primary }}>{t('matches.title')}</div>
     {error && <div style={{ background:'rgba(248,113,113,.08)', border:'1px solid rgba(248,113,113,.25)', borderRadius:12, padding:'10px 14px', color:C.danger, fontSize:13, marginBottom:14 }}>{error}</div>}
 
@@ -134,6 +134,7 @@ export default function MatchesListScreen() {
     </div>}
 
     {matches.length > 0 && <div style={{ fontSize:11, color:C.muted, textTransform:'uppercase', letterSpacing:'.05em', marginBottom:8, fontWeight:600 }}>{t('matches.activeConnections')}</div>}
+    <div className="matches-card-grid">
     {matches.map(match => <button key={match.id} onClick={() => openMatch(match)} style={{ width:'100%', background:C.surface, border:`1px solid ${C.border}`, borderRadius:18, padding:16, display:'flex', alignItems:'center', gap:14, marginBottom:12, cursor:'pointer', textAlign:'left' }}>
       <div style={{ width:52, height:52, borderRadius:16, flexShrink:0, background:'linear-gradient(135deg,#3D2060,#1A0A2E)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, border:`1.5px solid ${C.border}` }}>{match.profile?.type === 'COUPLE' ? '💑' : match.profile?.type === 'GROUP' ? '👥' : '🧑'}</div>
       <div style={{ flex:1, minWidth:0 }}>
@@ -146,5 +147,6 @@ export default function MatchesListScreen() {
         {match.unread > 0 && <div aria-label={`${formatNumber(match.unread)} ${t('matches.unread')}`} style={{ background:C.primary, color:'#1A0A2E', borderRadius:10, padding:'2px 7px', fontSize:10, fontWeight:700 }}>{formatNumber(match.unread)}</div>}
       </div>
     </button>)}
+    </div>
   </div>
 }

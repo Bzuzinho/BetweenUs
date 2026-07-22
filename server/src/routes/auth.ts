@@ -517,7 +517,10 @@ router.delete('/sessions', async (req: Request, res: Response) => {
 // ─── PUT /api/auth/account — account-level data (accountName/NIF), distinct from Profile
 const accountUpdateSchema = z.object({
   accountName: z.string().trim().min(2).max(80).optional().nullable(),
-  nif:         z.string().trim().regex(/^\d{9}$/, 'NIF deve ter 9 dígitos.').optional().nullable(),
+  nif: z.preprocess(
+    value => typeof value === 'string' && value.trim() === '' ? null : value,
+    z.string().trim().regex(/^\d{9}$/, 'NIF deve ter 9 dígitos.').optional().nullable()
+  ),
 })
 
 router.put('/account', async (req: Request, res: Response) => {

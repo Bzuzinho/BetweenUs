@@ -103,7 +103,7 @@ function GuideArticles() {
 
       {loading && <div style={{ textAlign:'center', padding:40, color:C.muted }}>{t('common.loading')}</div>}
 
-      <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+      <div className="guide-card-grid" style={{ display:'flex', flexDirection:'column', gap:10 }}>
         {filtered.map(article => (
           <div key={article.id} onClick={() => setOpenSlug(article.slug || article.id)} style={{
             background:C.surface, border:`1px solid ${C.border}`, borderRadius:16,
@@ -135,7 +135,7 @@ export default function GuideScreen() {
   ]
 
   return (
-    <div style={{ padding:'calc(16px + env(safe-area-inset-top)) 16px 0', maxWidth:480, margin:'0 auto' }}>
+    <div className="app-screen app-screen--guide" style={{ padding:'calc(16px + env(safe-area-inset-top)) 16px 0', maxWidth:480, margin:'0 auto' }}>
       <div style={{ marginBottom:14 }}>
         <h1 style={{ fontSize:20, fontWeight:500, color:C.text, margin:'0 0 4px' }}>{t('guide.title')}</h1>
         <p style={{ fontSize:13, color:C.muted, margin:0 }}>{t('guide.subtitle')}</p>
